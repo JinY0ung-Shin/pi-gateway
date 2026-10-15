@@ -21,7 +21,6 @@ export const SANDBOX_GID = 1000;
 export const SANDBOXD_ROUTES = {
   health: "/healthz",
   ensure: "/v1/sandboxes/ensure",
-  remove: "/v1/sandboxes/remove",
   list: "/v1/sandboxes",
   exec: "/v1/exec",
   fsRead: "/v1/fs/read",
@@ -80,13 +79,6 @@ export const SandboxInfo = z.object({
   memoryBytes: z.number().optional(),
 });
 export type SandboxInfo = z.infer<typeof SandboxInfo>;
-
-/** POST /v1/sandboxes/remove — 컨테이너를 제거한다. 기본은 workspace를 남긴다. */
-export const RemoveSandboxRequest = z.object({
-  user: principal,
-  deleteWorkspace: z.boolean().default(false),
-});
-export type RemoveSandboxRequest = z.input<typeof RemoveSandboxRequest>;
 
 /** GET /v1/sandboxes — 관리용 목록. 이 요청의 토큰 sub는 `_admin`이다. */
 export const ListSandboxesResponse = z.object({ sandboxes: z.array(SandboxInfo) });

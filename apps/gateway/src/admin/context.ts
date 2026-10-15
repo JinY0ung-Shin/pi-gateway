@@ -3,7 +3,6 @@ import { createMcpRegistry, isMcpRegistryService } from "../mcp-registry/index.j
 import type { McpRegistryService } from "../mcp-registry/service.js";
 import { isPluginService, PluginService } from "../plugins/index.js";
 import { isPromptManager, PromptManager } from "../prompts/index.js";
-import { isToolPolicyService, ToolPolicyService } from "../tool-policy/index.js";
 import { AdminAuth } from "./auth.js";
 import { type PlatformLogger, platformLogger } from "./logger.js";
 
@@ -13,7 +12,6 @@ export interface AdminContext {
   prompts: PromptManager;
   plugins: PluginService;
   mcp: McpRegistryService;
-  toolPolicy: ToolPolicyService;
   log: PlatformLogger;
 }
 
@@ -32,7 +30,6 @@ export function createAdminContext(deps: AdminDeps): AdminContext {
       ? deps.plugins
       : new PluginService(deps.db, deps.config, { registry: mcp, log: platformLogger(deps.config, "plugins") }),
     mcp,
-    toolPolicy: isToolPolicyService(deps.toolPolicy) ? deps.toolPolicy : new ToolPolicyService(deps.db),
     log,
   };
 }

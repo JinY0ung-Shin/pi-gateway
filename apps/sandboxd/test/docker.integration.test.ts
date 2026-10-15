@@ -5,12 +5,11 @@
 // egress 시험은 인터넷(https://example.com)이 필요하다.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import {
   ADMIN_PRINCIPAL,
-  anonPrincipal,
   type ExecEvent,
   type ExecRequest,
   SANDBOXD_ROUTES,
@@ -458,24 +457,6 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
     // 지워진 컨테이너는 다음 요청 때 다시 만든다
     const r = await sh("erin", "echo back");
     expect(r.stdout).toBe("back\n");
-  });
-
-  it("remove(deleteWorkspace)는 컨테이너와 workspace를 지우고, 익명 workspace는 보존 기간 뒤 정리된다", async () => {
-    await post(SANDBOXD_ROUTES.fsWrite, "frank", { path: "f.txt", content: "" });
-    const rm = await post(SANDBOXD_ROUTES.remove, "frank", { deleteWorkspace: true });
-    expect(rm.status).toBe(200);
-    expect(existsSync(join(wsRoot, userKey("frank")))).toBe(false);
-
-    const anon = anonPrincipal("12345678-1234-1234-1234-123456789abc");
-    let now = Date.now();
-    const clockManager = new SandboxManager(docker, config, new Workspaces(wsRoot), silentLogger, () => now);
-    const lease = await clockManager.acquire(anon);
-    lease.release();
-    await new Promise((r) => setTimeout(r, 100)); // 메타 쓰기
-    now += config.anonRetentionSeconds * 1000 + 1;
-    await clockManager.reapOnce();
-    expect(existsSync(join(wsRoot, userKey(anon)))).toBe(false);
-    expect(readdirSync(wsRoot)).not.toContain(userKey(anon));
   });
 
   it("지연 시간 (참고용)", async () => {

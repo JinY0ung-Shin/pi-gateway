@@ -406,7 +406,7 @@ describe("plugin installer (fixture marketplace)", () => {
   });
 });
 
-describe("plugin 업데이트·broker 장애·마이그레이션", () => {
+describe("plugin 업데이트·broker 장애", () => {
   const ID = "defect-agent-frontend@defect-agent-plugins";
   const daf = "plugins/defect-agent-frontend";
   const setMcp = (repo: string, version: string, env: Record<string, string>) => {
@@ -549,100 +549,6 @@ describe("plugin 업데이트·broker 장애·마이그레이션", () => {
       broker.setDown(false);
       await harness.close();
       await broker.close();
-    }
-  });
-
-  it("이전 레이아웃(버전 경로) 설치본을 고정 경로로 옮긴다", async () => {
-    const fixture = buildFixture(tempDir("fixture-layout"));
-    const harness = await buildHarness();
-    try {
-      await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
-      const { plugin } = await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
-      const pluginDir = dirname(plugin.installPath);
-      const versionDir = join(pluginDir, "1.9.0");
-      const toLegacy = (v: string) => v.split(plugin.installPath).join(versionDir);
-      // 이전 버전이 남긴 상태: current 링크 없음, 기록·md·sandbox 서버가 버전 경로를 가리킨다
-      rmSync(join(pluginDir, "current"));
-      const record = harness.plugins.store.getPlugin(ID)!;
-      harness.plugins.store.upsertPlugin({
-        ...record,
-        installPath: versionDir,
-        components: {
-          ...record.components,
-          skills: record.components.skills.map((s) => ({ ...s, filePath: toLegacy(s.filePath), baseDir: toLegacy(s.baseDir) })),
-          commands: record.components.commands.map((c) => ({ ...c, filePath: toLegacy(c.filePath) })),
-        },
-        mcp: record.mcp.map((m) => (m.baseline ? { ...m, baseline: JSON.parse(toLegacy(JSON.stringify(m.baseline))) } : m)),
-      });
-      const chart = join(versionDir, "skills/composite-ui/references/chart.md");
-      writeFileSync(chart, toLegacy(readFileSync(chart, "utf8")));
-      const server = harness.mcp.store.get("monsemi-frontend")!;
-      harness.mcp.store.upsert(JSON.parse(toLegacy(JSON.stringify(server))), "legacy");
-      harness.plugins.store.setSetting("plugins.migration", 2, "legacy");
-
-      const migrated = new PluginService(harness.db, harness.config, { registry: harness.mcp, log: captureLogger().logger, allowLocalSources: true });
-      const stable = join(pluginDir, "current");
-      expect(readlinkSync(stable)).toBe("1.9.0");
-      const after = migrated.store.getPlugin(ID)!;
-      expect(after.installPath).toBe(stable);
-      expect(after.components.skills.every((s) => s.filePath.startsWith(`${stable}/`) && existsSync(s.filePath))).toBe(true);
-      expect(JSON.stringify(after.mcp[0]!.baseline)).not.toContain(versionDir);
-      expect(readFileSync(chart, "utf8")).toContain(`${stable}/scripts`);
-      expect(harness.mcp.store.get("monsemi-frontend")!.transport).toMatchObject({ args: [join(stable, "mcp/server.js")], env: { CLAUDE_PLUGIN_ROOT: stable } });
-      expect(migrated.store.getSetting("plugins.migration", 0)).toBe(3);
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it("이전 버전 설치본을 시작할 때 옮긴다 (THREAD_ID 대문자, ORCHESTRATOR_URL 추가, 관리자 값 유지)", async () => {
-    const fixture = buildFixture(tempDir("fixture-migrate"));
-    const harness = await buildHarness();
-    try {
-      await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
-      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
-      // 이전 버전이 남긴 상태를 만든다
-      const record = harness.plugins.store.getPlugin(ID)!;
-      harness.plugins.store.setPluginMcp(ID, record.mcp.map(({ baseline: _b, ...rest }) => rest));
-      const current = harness.mcp.store.get("monsemi-frontend")!;
-      if (current.transport.type !== "stdio") throw new Error("stdio expected");
-      harness.mcp.store.upsert(
-        {
-          ...current,
-          scope: "per-session",
-          transport: {
-            ...current.transport,
-            env: {
-              CLAUDE_PLUGIN_ROOT: record.installPath,
-              CLAUDE_PLUGIN_DATA: "/workspace/.home/.plugin-data/defect-agent-plugins--defect-agent-frontend",
-              THREAD_ID: "{{metadata:thread_id}}",
-              SERVICE_URL: "http://admin-set:9000",
-            },
-          },
-        },
-        "legacy",
-      );
-      harness.plugins.store.setSetting("plugins.mcp_defaults", { env: { THREAD_ID: "{{metadata:thread_id}}" }, scope: "per-session" }, "legacy");
-      harness.plugins.store.setSetting("plugins.migration", 1, "legacy");
-
-      const migrated = new PluginService(harness.db, harness.config, { registry: harness.mcp, log: captureLogger().logger, allowLocalSources: true });
-      expect(migrated.getSettings().mcpDefaults).toEqual({
-        env: { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}" },
-        scope: "per-user",
-      });
-      const server = harness.mcp.store.get("monsemi-frontend")!;
-      expect(server.scope).toBe("per-session");
-      expect((server.transport as { env: Record<string, string> }).env).toEqual({
-        CLAUDE_PLUGIN_ROOT: record.installPath,
-        CLAUDE_PLUGIN_DATA: "/workspace/.home/.plugin-data/defect-agent-plugins--defect-agent-frontend",
-        THREAD_ID: "{{metadata:THREAD_ID}}",
-        ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}",
-        SERVICE_URL: "http://admin-set:9000",
-      });
-      expect(migrated.store.getPlugin(ID)!.mcp[0]!.baseline).toBeDefined();
-      expect(migrated.store.getSetting("plugins.migration", 0)).toBe(3);
-    } finally {
-      await harness.close();
     }
   });
 });

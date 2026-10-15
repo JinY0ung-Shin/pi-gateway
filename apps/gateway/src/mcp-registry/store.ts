@@ -11,9 +11,9 @@ const MIGRATIONS = [
      updated_at TEXT NOT NULL,
      updated_by TEXT NOT NULL
    );
-   CREATE INDEX mcp_sandbox_servers_plugin ON mcp_sandbox_servers(plugin_id);`,
-  // broker에 있다고 마지막으로 확인한 서버 id. broker가 안 될 때 sandbox 변경이 id를 겹치게 만드는지 판단하는 데 쓴다.
-  `CREATE TABLE mcp_broker_ids (
+   CREATE INDEX mcp_sandbox_servers_plugin ON mcp_sandbox_servers(plugin_id);
+   -- broker에 있다고 마지막으로 확인한 서버 id. broker가 안 될 때 sandbox 변경이 id를 겹치게 만드는지 판단하는 데 쓴다.
+   CREATE TABLE mcp_broker_ids (
      id TEXT PRIMARY KEY,
      seen_at TEXT NOT NULL
    );`,

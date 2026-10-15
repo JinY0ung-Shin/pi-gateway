@@ -4,7 +4,6 @@ import type { SandboxdConfig } from "./config.js";
 
 export const LABEL_SANDBOX = "pi-gateway.sandbox";
 export const LABEL_USER_KEY = "pi-gateway.user-key";
-export const LABEL_ANON = "pi-gateway.anon";
 export const LABEL_INSTANCE = "pi-gateway.instance";
 /** 컨테이너 스펙 버전. 다르면 다시 만든다 (예: 네트워크가 있던 예전 sandbox → network none). */
 export const LABEL_SPEC = "pi-gateway.spec";
@@ -21,22 +20,17 @@ export function containerName(config: Pick<SandboxdConfig, "containerPrefix">, k
   return `${config.containerPrefix}${key}`;
 }
 
-export interface SpecInput {
-  key: string;
-  anon: boolean;
-}
-
 /**
  * sandbox 컨테이너 스펙. 보안 옵션은 전부 여기서 고정한다 (호출자가 바꿀 수 없다).
  * DESIGN §3의 표와 test/spec.test.ts가 이 함수를 기준으로 맞춰져 있다.
  * sandbox는 network_mode none이고, 바깥으로는 egress 프록시(unix socket)로만 나간다.
  */
-export function buildContainerSpec(config: SandboxdConfig, input: SpecInput): Docker.ContainerCreateOptions {
-  if (!USER_KEY_PATTERN.test(input.key)) throw new Error(`invalid user key: ${input.key}`);
+export function buildContainerSpec(config: SandboxdConfig, key: string): Docker.ContainerCreateOptions {
+  if (!USER_KEY_PATTERN.test(key)) throw new Error(`invalid user key: ${key}`);
   const mounts: Docker.MountSettings[] = [
     {
       Type: "bind",
-      Source: `${config.workspacesHostDir}/${input.key}`,
+      Source: `${config.workspacesHostDir}/${key}`,
       Target: SANDBOX_WORKSPACE,
       ReadOnly: false,
       BindOptions: { Propagation: "rprivate" },
@@ -93,7 +87,7 @@ export function buildContainerSpec(config: SandboxdConfig, input: SpecInput): Do
   if (config.runtime) hostConfig.Runtime = config.runtime;
 
   return {
-    name: containerName(config, input.key),
+    name: containerName(config, key),
     Image: config.image,
     Cmd: ["/usr/local/bin/sbx-proxy-bridge"],
     User: `${SANDBOX_UID}:${SANDBOX_GID}`,
@@ -112,8 +106,7 @@ export function buildContainerSpec(config: SandboxdConfig, input: SpecInput): Do
     ],
     Labels: {
       [LABEL_SANDBOX]: "1",
-      [LABEL_USER_KEY]: input.key,
-      [LABEL_ANON]: input.anon ? "1" : "0",
+      [LABEL_USER_KEY]: key,
       [LABEL_INSTANCE]: config.instance,
       [LABEL_SPEC]: SPEC_VERSION,
     },

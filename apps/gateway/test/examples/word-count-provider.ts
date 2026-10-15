@@ -1,8 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { Type } from "typebox";
-import type { ToolCatalogEntry } from "../../src/contracts.js";
-import { staticEntryLookup, type ToolProvider } from "../../src/tools/provider.js";
+import type { ToolProvider } from "../../src/tools/provider.js";
 import { resolveSandboxPath } from "../../src/tools/remote-fs.js";
 
 /**
@@ -10,18 +9,11 @@ import { resolveSandboxPath } from "../../src/tools/remote-fs.js";
  * 사용자 파일을 다루므로 규칙 1에 따라 gateway가 아니라 sandbox에서 실행한다.
  */
 
-const ENTRIES: ToolCatalogEntry[] = [
-  { name: "word_count", description: "파일의 줄·단어·바이트 수", provider: "word-count", runsIn: "sandbox", enabledByDefault: true },
-];
-
 const Params = Type.Object({ path: Type.String({ description: "File path, relative to /workspace" }) });
 
 export function createWordCountProvider(): ToolProvider {
   return {
     id: "word-count",
-    description: "예시: sandbox에서 wc를 실행한다",
-    catalog: async () => ENTRIES,
-    entryFor: staticEntryLookup(ENTRIES),
     async createTools(ctx) {
       const tool: ToolDefinition<typeof Params> = {
         name: "word_count",

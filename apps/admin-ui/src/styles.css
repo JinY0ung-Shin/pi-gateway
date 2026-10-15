@@ -18,8 +18,6 @@
   --info-text: #224f9e;
   --violet-bg: #efe9fd;
   --violet-text: #5a36a8;
-  --diff-add: #e6f5ea;
-  --diff-del: #fbe9e9;
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
@@ -45,8 +43,6 @@
     --info-text: #9cbcf5;
     --violet-bg: #2b2342;
     --violet-text: #c3b0f5;
-    --diff-add: #173323;
-    --diff-del: #3d1c1c;
     color-scheme: dark;
   }
 }
@@ -549,40 +545,11 @@ button:focus-visible {
   margin: 0.5rem 0;
 }
 
-.diff pre {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.5rem 0;
-  max-height: 520px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
-.diff pre div {
-  padding: 0 0.75rem;
-}
 
-.diff .diff-add {
-  background: var(--diff-add);
-}
 
-.diff .diff-del {
-  background: var(--diff-del);
-}
 
-.diff-legend {
-  display: flex;
-  gap: 1rem;
-  font-size: 12px;
-}
 
-.diff-legend .diff-add,
-.diff-legend .diff-del {
-  padding: 0 0.4rem;
-  border-radius: 4px;
-}
 
 .cards {
   display: grid;

@@ -17,10 +17,9 @@ import type { Db } from "./db.js";
 // ── 시스템 프롬프트 (구현: src/prompts) ─────────────────────────────
 
 export interface PromptRenderInput {
-  /** 사용자 id 또는 `_anon-<sessionId>` */
+  /** 사용자 id */
   principal: string;
-  /** 익명이면 null */
-  user: string | null;
+  user: string;
   model: string;
   sessionId: string;
   now: Date;
@@ -79,44 +78,7 @@ export interface AdminDeps {
   stats: () => SessionStats;
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
-  /** core가 등록된 ToolProvider들에서 모은 도구 목록 (관리 화면 "도구" 페이지) */
-  tools?: ToolCatalog;
-  /** 도구 켜기/끄기 정책 (관리 화면에서 바꾼다) */
-  toolPolicy?: ToolPolicy;
 }
 
 /** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */
 export type RegisterAdminRoutes = (app: FastifyInstance, deps: AdminDeps) => Promise<void>;
-
-// ── 도구 확장 ──────────────────────────────────────────────────────
-//
-// 도구는 core의 ToolProvider 단위로 등록된다 (src/tools/providers/*, 인터페이스는 core 소유).
-// 새 도구를 추가하는 방법은 docs/EXTENDING.md에 정리한다. 이 파일에는 platform 레인이
-// 쓰는 부분(목록 표시와 켜기/끄기 정책)만 둔다.
-
-export interface ToolCatalogEntry {
-  /** 모델에 노출되는 도구 이름 (예: "bash", "AskUserQuestion", "mcp__github__create_issue") */
-  name: string;
-  description: string;
-  /** 도구를 제공하는 provider id (예: "sandbox", "ask-user", "mcp-broker", "mcp-sandbox") */
-  provider: string;
-  /** 실제로 실행되는 곳 */
-  runsIn: "sandbox" | "gateway" | "broker";
-  /** 정책에 설정이 없을 때 켜져 있는지 */
-  enabledByDefault: boolean;
-  /** 끌 수 없는 도구 (예: skill을 읽는 데 필요한 read) */
-  required?: boolean;
-  /** MCP 도구처럼 사용자·서버에 따라 바뀌는 도구는 대표 항목(예: "mcp__github__*")으로 보여준다 */
-  dynamic?: boolean;
-}
-
-export interface ToolCatalog {
-  list(): Promise<ToolCatalogEntry[]>;
-}
-
-/** 관리자가 정한 도구 켜기/끄기 (구현: src/tool-policy). core는 세션을 만들 때 이것으로 도구를 거른다. */
-export interface ToolPolicy {
-  isEnabled(entry: Pick<ToolCatalogEntry, "name" | "provider" | "enabledByDefault" | "required">, principal: string): boolean;
-  /** 정책이 바뀔 때마다 증가한다 */
-  revision(): number;
-}

@@ -19,7 +19,7 @@ const sandboxServer = {
   id: "monsemi-frontend",
   runIn: "sandbox",
   scope: "per-session",
-  transport: { type: "stdio", command: "node", args: ["/opt/plugins/x/server.js"], env: { THREAD_ID: "{{metadata:thread_id}}" } },
+  transport: { type: "stdio", command: "node", args: ["/opt/plugins/x/server.js"], env: { THREAD_ID: "{{metadata:THREAD_ID}}" } },
 };
 
 const brokerServer = {
@@ -254,23 +254,6 @@ describe("MCP registry", () => {
         env: { CLAUDE_PLUGIN_ROOT: "/opt/plugins/m/p/2", LOG: "text", MODE: "admin", SERVICE_URL: "http://svc", NEW: "n" },
       });
       expect((merged.transport as { env: Record<string, string> }).env.OLD).toBeUndefined(); // 관리자가 지웠고 plugin 값은 그대로
-    });
-
-    it("baseline이 없는 이전 설치본: 이전 기본값(THREAD_ID={{metadata:thread_id}}, per-session)만 새 매핑으로 바꾼다", () => {
-      const current = make("1", { THREAD_ID: "{{metadata:thread_id}}", SERVICE_URL: "http://svc" }, { scope: "per-session" });
-      const mapped = make("1", { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}" }, { scope: "per-session" });
-      const merged = mergeWithBaseline(null, current, mapped);
-      expect(merged.scope).toBe("per-session");
-      expect((merged.transport as { env: Record<string, string> }).env).toEqual({
-        CLAUDE_PLUGIN_ROOT: "/opt/plugins/m/p/1",
-        THREAD_ID: "{{metadata:THREAD_ID}}",
-        ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}",
-        SERVICE_URL: "http://svc",
-      });
-      // 기본값을 참조하지 않는 서버: 이전 기본값은 빠지고 per-user가 된다
-      const other = mergeWithBaseline(null, make("1", { THREAD_ID: "{{metadata:thread_id}}" }, { scope: "per-session" }), make("1", {}));
-      expect(other.scope).toBe("per-user");
-      expect((other.transport as { env: Record<string, string> }).env).toEqual({ CLAUDE_PLUGIN_ROOT: "/opt/plugins/m/p/1" });
     });
   });
 });

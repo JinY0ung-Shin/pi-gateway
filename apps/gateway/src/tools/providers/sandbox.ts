@@ -7,10 +7,9 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
-import type { ToolCatalogEntry } from "../../contracts.js";
 import { createSandboxBashTool } from "../bash.js";
 import { createSandboxGrepTool } from "../grep.js";
-import { staticEntryLookup, type ToolProvider } from "../provider.js";
+import type { ToolProvider } from "../provider.js";
 import { createRemoteFs, mapHomePath, PathNamespace } from "../remote-fs.js";
 
 /**
@@ -19,17 +18,6 @@ import { createRemoteFs, mapHomePath, PathNamespace } from "../remote-fs.js";
  * - ls/find: pi 정의 + 원격 operations (pi가 로컬 파일시스템을 보지 않는다)
  * - bash/grep: pi 스키마에 execute만 sandbox 실행으로 바꾼 것
  */
-
-const ENTRIES: ToolCatalogEntry[] = [
-  // skill은 모델이 read로 SKILL.md를 읽어서 쓴다. read가 없으면 skill이 동작하지 않는다.
-  { name: "read", description: "파일 읽기 (텍스트·이미지)", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true, required: true },
-  { name: "write", description: "파일 쓰기", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-  { name: "edit", description: "파일 부분 수정", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-  { name: "ls", description: "디렉토리 목록", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-  { name: "find", description: "glob으로 파일 찾기", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-  { name: "bash", description: "bash 명령 실행", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-  { name: "grep", description: "ripgrep으로 내용 검색", provider: "sandbox", runsIn: "sandbox", enabledByDefault: true },
-];
 
 function preparePath(def: ToolDefinition, map: (path: string) => string): ToolDefinition["prepareArguments"] {
   const original = def.prepareArguments;
@@ -71,9 +59,6 @@ function withNamespace(def: ToolDefinition, ns: PathNamespace): ToolDefinition {
 export function createSandboxToolProvider(): ToolProvider {
   return {
     id: "sandbox",
-    description: "파일·명령 도구. 사용자별 sandbox 컨테이너 안에서 실행된다.",
-    catalog: async () => ENTRIES,
-    entryFor: staticEntryLookup(ENTRIES),
     async createTools(ctx) {
       const ns = new PathNamespace();
       const fs = createRemoteFs(ctx.sandbox, { unwrap: (p) => ns.unwrap(p) });

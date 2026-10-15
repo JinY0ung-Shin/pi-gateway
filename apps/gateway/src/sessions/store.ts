@@ -17,8 +17,7 @@ export interface PromptRef {
 export interface SessionRecord {
   id: string;
   principal: string;
-  /** 익명이면 null */
-  user: string | null;
+  user: string;
   model: string;
   thinkingLevel: string;
   /** commit된 마지막 turn 번호 (0 = 아직 없음) */
@@ -42,7 +41,7 @@ export interface SessionRecord {
 interface Row {
   id: string;
   principal: string;
-  user: string | null;
+  user: string;
   model: string;
   thinking_level: string;
   turn: number;
@@ -164,14 +163,6 @@ export class SessionStore {
 
   delete(id: string): void {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-  }
-
-  /** 마지막 활동이 cutoff보다 오래된 익명 세션 */
-  expiredAnonymous(cutoffIso: string, limit = 100): SessionRecord[] {
-    const rows = this.db
-      .prepare("SELECT * FROM sessions WHERE user IS NULL AND last_active_at < ? ORDER BY last_active_at LIMIT ?")
-      .all(cutoffIso, limit) as Row[];
-    return rows.map(fromRow);
   }
 
   count(): number {

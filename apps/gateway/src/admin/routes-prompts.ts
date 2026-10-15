@@ -22,43 +22,15 @@ export function registerPromptRoutes(app: FastifyInstance, ctx: AdminContext): v
     prompts.updateDescription(req.params.name, req.body?.description, actorOf(req)),
   );
 
-  app.delete<NameParams>("/prompts/:name", async (req, reply) => {
-    prompts.remove(req.params.name, actorOf(req));
-    return reply.code(204).send();
-  });
-
-  app.post<NameParams & { Body: { content?: unknown; message?: unknown; base_version?: unknown; baseVersion?: unknown } }>(
-    "/prompts/:name/versions",
-    { bodyLimit: BODY_LIMIT },
-    async (req, reply) => {
-      const body = req.body ?? {};
-      const version = prompts.addVersion(
-        req.params.name,
-        { content: body.content, message: body.message, baseVersion: body.baseVersion ?? body.base_version },
-        actorOf(req),
-      );
-      return reply.code(201).send(version);
-    },
+  app.post<NameParams & { Body: unknown }>("/prompts/:name/versions", { bodyLimit: BODY_LIMIT }, async (req, reply) =>
+    reply.code(201).send(prompts.addVersion(req.params.name, req.body, actorOf(req))),
   );
 
-  app.post<NameParams & { Body: { version?: unknown; note?: unknown; expected_revision?: unknown; expectedRevision?: unknown } }>(
-    "/prompts/:name/deploy",
-    async (req) => {
-      const body = req.body ?? {};
-      return prompts.deploy(
-        req.params.name,
-        { version: body.version, note: body.note, expectedRevision: body.expectedRevision ?? body.expected_revision },
-        actorOf(req),
-      );
-    },
-  );
+  app.post<NameParams & { Body: unknown }>("/prompts/:name/deploy", async (req) => prompts.deploy(req.params.name, req.body, actorOf(req)));
 
   app.get("/prompt-live", async () => prompts.live());
 
-  app.post<{ Body: { note?: unknown; expected_revision?: unknown; expectedRevision?: unknown } }>("/prompt-live/reset", async (req) => {
-    const body = req.body ?? {};
-    return prompts.reset({ note: body.note, expectedRevision: body.expectedRevision ?? body.expected_revision }, actorOf(req));
-  });
+  app.post<{ Body: unknown }>("/prompt-live/reset", async (req) => prompts.reset(req.body, actorOf(req)));
 
   app.get<{ Querystring: { limit?: string } }>("/prompt-deployments", async (req) => ({
     deployments: prompts.deployments(Number(req.query.limit ?? 50) || 50),

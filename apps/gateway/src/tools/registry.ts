@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
-import type { McpRegistry, ToolCatalog, ToolCatalogEntry, ToolPolicy } from "../contracts.js";
+import type { McpRegistry } from "../contracts.js";
 import type { McpToolCache } from "../mcp-client/connections.js";
 import type { ToolProvider, ToolSessionContext } from "./provider.js";
 import { createAskUserToolProvider } from "./providers/ask-user.js";
@@ -10,7 +10,7 @@ import { createSandboxMcpToolProvider } from "./providers/mcp-sandbox.js";
 import { createSandboxToolProvider } from "./providers/sandbox.js";
 
 /**
- * 도구 provider들을 합치고 ToolPolicy로 거른다.
+ * 도구 provider들을 합친다.
  * 결과는 pi createAgentSession의 `tools`(allowlist)와 `customTools`가 된다.
  * 새 provider는 아래 createDefaultToolProviders 한 곳에만 추가한다.
  */
@@ -45,23 +45,11 @@ export interface SessionToolset {
   toolNames: string[];
 }
 
-export class ToolRegistry implements ToolCatalog {
+export class ToolRegistry {
   constructor(
     private readonly providers: readonly ToolProvider[],
-    private readonly policy: ToolPolicy,
     private readonly log: Logger,
   ) {}
-
-  /** 관리 화면용 전체 목록. 실패한 provider는 빠진다. */
-  async list(): Promise<ToolCatalogEntry[]> {
-    const results = await Promise.allSettled(this.providers.map((p) => p.catalog()));
-    const entries: ToolCatalogEntry[] = [];
-    results.forEach((r, i) => {
-      if (r.status === "fulfilled") entries.push(...r.value);
-      else this.log.warn({ err: r.reason, provider: this.providers[i]!.id }, "tool catalog failed");
-    });
-    return entries;
-  }
 
   async createSessionTools(ctx: ToolSessionContext): Promise<SessionToolset> {
     const customTools: ToolDefinition[] = [];
@@ -80,15 +68,6 @@ export class ToolRegistry implements ToolCatalog {
           ctx.log.warn({ tool: def.name, provider: provider.id }, "duplicate tool name; keeping the first provider's tool");
           continue;
         }
-        const meta = provider.entryFor?.(def.name) ?? { enabledByDefault: true };
-        const required = meta.required === true;
-        const enabled =
-          required ||
-          this.policy.isEnabled(
-            { name: def.name, provider: provider.id, enabledByDefault: meta.enabledByDefault, ...(required ? { required } : {}) },
-            ctx.principal,
-          );
-        if (!enabled) continue;
         names.add(def.name);
         customTools.push(def);
       }

@@ -17,7 +17,7 @@ export interface RequestContext {
 }
 
 export interface InternalClaims {
-  /** principal (사용자 id 또는 `_anon-<sessionId>`) */
+  /** principal (사용자 id) */
   sub: string;
   /** gateway 세션 id */
   sid?: string;

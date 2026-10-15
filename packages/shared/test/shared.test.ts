@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUD_BROKER,
   AUD_SANDBOXD,
-  anonPrincipal,
   isValidPrincipal,
-  isValidUserId,
   jwtSecretBytes,
   McpServerConfig,
   mcpToolName,
@@ -19,10 +17,7 @@ const secret = jwtSecretBytes("x".repeat(32));
 const otherSecret = jwtSecretBytes("y".repeat(32));
 
 describe("principal / userKey", () => {
-  it("익명 principal은 실제 사용자 id 패턴과 겹치지 않는다", () => {
-    const anon = anonPrincipal("123e4567-e89b-12d3-a456-426614174000");
-    expect(isValidUserId(anon)).toBe(false);
-    expect(isValidPrincipal(anon)).toBe(true);
+  it("principal은 사용자 id 형식만 허용한다", () => {
     expect(isValidPrincipal("alice@example.com")).toBe(true);
     expect(isValidPrincipal("../etc")).toBe(false);
   });

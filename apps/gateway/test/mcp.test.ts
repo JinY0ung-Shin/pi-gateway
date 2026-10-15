@@ -125,14 +125,6 @@ describe("MCP inside the sandbox", () => {
   });
 });
 
-describe("tool catalog", () => {
-  it("lists MCP servers as dynamic entries", async () => {
-    const catalog = await h.gateway.tools.list();
-    expect(catalog).toContainEqual(expect.objectContaining({ name: "mcp__demo__*", provider: "mcp-broker", runsIn: "broker", dynamic: true }));
-    expect(catalog).toContainEqual(expect.objectContaining({ name: "mcp__local__*", provider: "mcp-sandbox", runsIn: "sandbox", dynamic: true }));
-  });
-});
-
 describe("sandbox MCP plugin integration", () => {
   let p: Harness;
   beforeAll(async () => {

@@ -264,7 +264,8 @@ export class McpRegistryService implements McpRegistry {
       const sameOwner =
         existing.source.kind === "plugin" && mapped.source.kind === "plugin" && existing.source.pluginId === mapped.source.pluginId;
       if (!sameOwner) throw new PlatformError(409, "mcp_id_taken", `MCP server id '${mapped.id}' is already used by another server`);
-      next = mergeWithBaseline(baseline, existing, mapped);
+      // 지난 매핑이 없으면 관리자가 바꾼 값을 알 수 없으므로 새 매핑을 쓴다
+      if (baseline) next = mergeWithBaseline(baseline, existing, mapped);
     }
     return this.upsert(next, actor);
   }
@@ -378,9 +379,6 @@ export class McpRegistryService implements McpRegistry {
 // ── plugin 서버 병합 ────────────────────────────────────────────────
 
 const SCOPE_RANK: Record<McpScope, number> = { shared: 0, "per-user": 1, "per-session": 2 };
-/** 이전 버전이 모든 sandbox plugin 서버에 넣던 기본값 (baseline이 없는 설치본을 옮길 때 기본값으로 본다) */
-const LEGACY_DEFAULT_ENV: Record<string, string> = { THREAD_ID: "{{metadata:thread_id}}" };
-const LEGACY_DEFAULT_SCOPE: McpScope = "per-session";
 
 const eq = (a: unknown, b: unknown) => isDeepStrictEqual(a, b);
 
@@ -411,41 +409,12 @@ function mergeMap(
   return out;
 }
 
-/** 지난 매핑이 없는 (이전 버전으로 설치한) 서버: 현재 값이 새 매핑 또는 이전 기본값과 같으면 관리자가 안 바꾼 것으로 본다. */
-function legacyBaseline(current: McpServerConfig, mapped: McpServerConfig): McpServerConfig {
-  const base: McpServerConfig = structuredClone(current);
-  const notOverridden = <T>(c: T, m: T, legacy: T[] = []) => eq(c, m) || legacy.some((l) => eq(c, l));
-  // 현재 값을 baseline으로 두면 pick()이 새 매핑을 고른다. 관리자 값으로 볼 때는 baseline을 일부러 다르게 둔다.
-  const overridden = Symbol("overridden") as unknown;
-  if (!notOverridden(current.enabled, mapped.enabled)) base.enabled = overridden as boolean;
-  if (!notOverridden(current.scope, mapped.scope, [LEGACY_DEFAULT_SCOPE])) base.scope = overridden as McpScope;
-  if (!notOverridden(current.timeoutSec, mapped.timeoutSec)) base.timeoutSec = overridden as number;
-  for (const key of ["toolAllow", "toolDeny", "displayName", "description"] as const) {
-    if (!notOverridden(current[key], mapped[key])) (base as Record<string, unknown>)[key] = overridden;
-  }
-  const baseMap = (c: Record<string, string>, m: Record<string, string>) =>
-    Object.fromEntries(
-      Object.entries(c).filter(
-        ([key, value]) => key.startsWith("CLAUDE_PLUGIN_") || value === m[key] || LEGACY_DEFAULT_ENV[key] === value,
-      ),
-    );
-  if (base.transport.type === "stdio" && mapped.transport.type === "stdio" && current.transport.type === "stdio") {
-    base.transport = { ...base.transport, env: baseMap(current.transport.env, mapped.transport.env) };
-  }
-  if (base.transport.type === "http" && mapped.transport.type === "http" && current.transport.type === "http") {
-    base.transport = { ...base.transport, headers: baseMap(current.transport.headers, mapped.transport.headers) };
-  }
-  return base;
-}
-
 /**
  * plugin 업데이트 병합. baseline은 지난번 설치 때의 매핑 결과(관리자 수정 전)다.
  * - 관리자가 바꾼 값(현재 ≠ baseline)은 유지하고, 그 밖에는 새 매핑을 쓴다.
- * - command·args·cwd·url과 CLAUDE_PLUGIN_* env는 항상 새 매핑을 쓴다 (설치 경로가 버전마다 바뀐다).
- * - baseline이 없으면 legacyBaseline으로 추정한다.
+ * - command·args·cwd·url과 CLAUDE_PLUGIN_* env는 항상 새 매핑을 쓴다.
  */
-export function mergeWithBaseline(baseline: McpServerConfig | null, current: McpServerConfig, mapped: McpServerConfig): McpServerConfig {
-  const base = baseline ?? legacyBaseline(current, mapped);
+export function mergeWithBaseline(base: McpServerConfig, current: McpServerConfig, mapped: McpServerConfig): McpServerConfig {
   const merged: McpServerConfig = {
     ...mapped,
     enabled: pick(current.enabled, base.enabled, mapped.enabled),

@@ -41,7 +41,6 @@ export function testConfig(overrides: Partial<SandboxdConfig> = {}): SandboxdCon
     tmpSize: "64m",
     shmSizeBytes: 64 * 1024 * 1024,
     idleSeconds: 900,
-    anonRetentionSeconds: 86_400,
     reapIntervalMs: 60_000,
     containerPrefix: "pi-sbx-test-",
     instance: "unit",

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import { anonPrincipal, isValidUserId, type RequestContext } from "@pi-gateway/shared";
+import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels } from "../agent/runtime.js";
@@ -19,7 +19,7 @@ import { executeTurn, rewindTurn, type TurnOutcome } from "./turn.js";
 
 /**
  * POST /v1/responses — OpenAI Responses 호환 (oh-my-gateway 계약).
- * 세션 id·turn 규칙, 오류 형식, SSE 이벤트 순서는 docs/DESIGN.md §6, §7을 따른다.
+ * 세션 id·turn 규칙, SSE 이벤트, AskUserQuestion은 README.md의 `/v1/responses` 절을 따른다.
  */
 
 export interface ResponsesDeps {
@@ -57,7 +57,7 @@ interface TurnPlan {
   sessionId: string;
   isNew: boolean;
   principal: string;
-  user: string | null;
+  user: string;
   prev: string | null;
   prevTurn: number;
   body: ResponseCreateRequest;
@@ -76,12 +76,13 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
     const input = parseInput(body);
 
-    let user: string | null;
+    let user: string;
     if (auth.kind === "user") {
       user = auth.user;
     } else {
-      user = body.user ?? null;
-      if (user !== null && !isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
+      if (!body.user) throw badRequest("user is required");
+      if (!isValidUserId(body.user)) throw badRequest(`Invalid user '${body.user}'`);
+      user = body.user;
     }
 
     const prev = body.previous_response_id ?? null;
@@ -104,7 +105,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
       if (input.kind === "answer") throw badRequest("function_call_output requires previous_response_id");
       sessionId = randomUUID();
     }
-    const principal = user ?? anonPrincipal(sessionId);
+    const principal = user;
 
     // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
     if (prev) {
@@ -161,7 +162,7 @@ function newRecord(deps: ResponsesDeps, plan: TurnPlan): SessionRecord {
   const instructions = plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null);
   const append: string[] = [];
   if (instructions?.trim()) append.push(instructions.trim());
-  if (plan.user) append.push(`Current user: ${plan.user}`);
+  append.push(`Current user: ${plan.user}`);
   const reasoning = deps.models.config(plan.model)?.reasoning ?? false;
   const iso = now.toISOString();
   return {

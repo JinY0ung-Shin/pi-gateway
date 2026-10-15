@@ -162,27 +162,6 @@ export interface PluginView {
   mcp: McpRecord[];
 }
 
-export interface ToolView {
-  name: string;
-  description: string;
-  provider: string;
-  runsIn: "sandbox" | "gateway" | "broker";
-  enabledByDefault: boolean;
-  required?: boolean;
-  dynamic?: boolean;
-  enabled: boolean;
-  explicit: boolean;
-  updatedBy: string | null;
-  updatedAt: string | null;
-}
-
-export interface ToolList {
-  catalogAvailable: boolean;
-  revision: number;
-  tools: ToolView[];
-  orphans: { name: string; enabled: boolean; updatedBy: string; updatedAt: string }[];
-}
-
 export interface StatusView {
   stats: { liveSessions: number; activeTurns: number; queuedTurns: number };
   sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string; memoryBytes?: number }[]; error?: string };

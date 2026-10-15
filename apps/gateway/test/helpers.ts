@@ -6,7 +6,7 @@ import { jwtSecretBytes, type McpServerConfig, type VisibleServer } from "@pi-ga
 import pino from "pino";
 import { createGateway, type Gateway, type GatewayOverrides } from "../src/app.js";
 import { type GatewayConfig, loadConfig } from "../src/config.js";
-import type { McpRegistry, PluginResources, PromptService, ToolPolicy } from "../src/contracts.js";
+import type { McpRegistry, PluginResources, PromptService } from "../src/contracts.js";
 import { openDatabase } from "../src/db.js";
 import { type FakeBroker, type FakeBrokerTool, startFakeBroker } from "./fixtures/fake-broker.js";
 import { type FakeLlm, startFakeLlm } from "./fixtures/fake-llm.js";
@@ -32,7 +32,6 @@ export interface HarnessOptions {
   fakeSandbox?: { stallAttach?: boolean };
   brokerServers?: Record<string, FakeBrokerTool[]>;
   sandboxServers?: McpServerConfig[];
-  toolPolicy?: ToolPolicy;
   skills?: Skill[];
   promptTemplates?: PromptTemplate[];
   overrides?: Partial<GatewayOverrides>;
@@ -114,7 +113,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     prompts,
     plugins,
     mcpRegistry,
-    ...(options.toolPolicy ? { toolPolicy: options.toolPolicy } : {}),
     registerAdminRoutes: async () => {},
     piSettings: { retry: { enabled: false } },
     reaperIntervalMs: 0,

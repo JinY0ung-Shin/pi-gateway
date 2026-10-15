@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { SandboxClient, SandboxError } from "../src/sandbox/client.js";
 import { TurnLimiter } from "../src/sessions/limiter.js";
-import { BOB_KEY, type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
+import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
 /** core 리뷰에서 나온 버그들의 회귀 테스트 */
 
@@ -192,7 +192,7 @@ describe("5. shutdown is prompt and rejects queued requests", () => {
     h.llm.enqueue({ textChunks: ["x", "y"], chunkDelayMs: 800 }, { textChunks: ["q1", "q2", "q3"], chunkDelayMs: 1000 });
     const a = h.stream({ input: "long A" });
     await sleep(200);
-    const b = h.post({ input: "queued B" }, { key: SERVICE_KEY });
+    const b = h.post({ input: "queued B" }, { key: BOB_KEY });
     await sleep(200);
     const before = h.llm.requests.length;
     const t0 = Date.now();
@@ -207,7 +207,7 @@ describe("5. shutdown is prompt and rejects queued requests", () => {
   });
 });
 
-describe("6-9. empty replies, merged questions, cache isolation, anonymous purge", () => {
+describe("6-8. empty replies, merged questions, cache isolation", () => {
   let h: Harness;
   beforeAll(async () => {
     h = await startHarness({
@@ -271,18 +271,5 @@ describe("6-9. empty replies, merged questions, cache isolation, anonymous purge
     await h.post({ input: "bob" }, { key: BOB_KEY });
     const bobUpload = h.llm.requests[b]!.tools!.find((t) => t.function.name === "mcp__plugin__upload")!;
     expect(bobUpload.function.description).toBe("upload a file");
-  });
-
-  it("9. the anonymous purge re-checks expiry under the lock (a just-resumed session survives)", async () => {
-    const res = await h.post({ input: "anon" }, { key: SERVICE_KEY });
-    const sid = sessionOf(res.json.id);
-    const stale = { ...h.gateway.store.get(sid)!, lastActiveAt: "2000-01-01T00:00:00.000Z" };
-    const cutoff = new Date(Date.now() - 60_000).toISOString();
-    // 목록을 읽은 뒤 세션이 다시 쓰였다 (store의 lastActiveAt은 최근이다)
-    expect(await h.gateway.hub.purgeAnonymous(stale, cutoff)).toBe(false);
-    expect(h.gateway.store.get(sid)).toBeDefined();
-    const later = new Date(Date.now() + 60_000).toISOString();
-    expect(await h.gateway.hub.purgeAnonymous(stale, later)).toBe(true);
-    expect(h.gateway.store.get(sid)).toBeUndefined();
   });
 });

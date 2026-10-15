@@ -1,7 +1,6 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
-import type { ToolCatalogEntry } from "../contracts.js";
 import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
 
 /**
@@ -17,10 +16,9 @@ import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
  */
 
 export interface ToolSessionContext {
-  /** 사용자 id 또는 `_anon-<sessionId>` */
+  /** 사용자 id */
   principal: string;
-  /** 익명이면 null */
-  user: string | null;
+  user: string;
   sessionId: string;
   model: string;
   sandboxClient: SandboxClient;
@@ -33,24 +31,11 @@ export interface ToolSessionContext {
   signal: AbortSignal;
 }
 
-export type ToolEntryMeta = Pick<ToolCatalogEntry, "enabledByDefault" | "required">;
-
 export interface ToolProvider {
-  /** catalog의 provider 값. 정책·관리 화면에서 이 id로 보인다. */
+  /** 로그에 쓰는 이름 */
   id: string;
-  description: string;
-  /** 관리 화면용 목록. 사용자·서버에 따라 바뀌는 도구는 dynamic 대표 항목으로 보여준다. */
-  catalog(): Promise<ToolCatalogEntry[]>;
   /** 세션 하나에 붙일 도구 정의 */
   createTools(ctx: ToolSessionContext): Promise<ToolDefinition[]>;
   /** 세션이 정리될 때 연결·프로세스를 닫는다 */
   disposeSession?(sessionId: string): Promise<void>;
-  /** 도구 이름 → 정책 기본값. 없으면 enabledByDefault=true, required=false. */
-  entryFor?(toolName: string): ToolEntryMeta | undefined;
-}
-
-/** 고정된 도구 목록을 가진 provider의 entryFor 구현 */
-export function staticEntryLookup(entries: readonly ToolCatalogEntry[]): (name: string) => ToolEntryMeta | undefined {
-  const byName = new Map(entries.map((e) => [e.name, { enabledByDefault: e.enabledByDefault, ...(e.required ? { required: true } : {}) }]));
-  return (name) => byName.get(name);
 }

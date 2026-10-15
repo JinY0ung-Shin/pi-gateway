@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, LineDiff, Notice, Section, useAction } from "../components";
+import { Badge, Notice, Section, useAction } from "../components";
 import type { PromptDeployment, PromptDetail, PromptList } from "../types";
 
 type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" };
@@ -70,10 +70,6 @@ export function PromptsPage() {
             name={selection.name}
             list={list}
             onChanged={reload}
-            onDeleted={async () => {
-              await reload();
-              setSelection({ kind: "default" });
-            }}
           />
         )}
         <Deployments revision={list.live.revision} />
@@ -103,7 +99,7 @@ function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void>
               onClick={() =>
                 confirm("배포를 취소하고 기본 프롬프트로 되돌릴까요? 새 세션부터 적용됩니다.") &&
                 action.run(async () => {
-                  await api("POST", "/prompt-live/reset", { expected_revision: live.revision });
+                  await api("POST", "/prompt-live/reset", {});
                   await props.onChanged();
                 }, "기본 프롬프트로 되돌렸습니다")
               }
@@ -169,11 +165,11 @@ function NewPrompt(props: { onCreated: (name: string) => Promise<void> }) {
   );
 }
 
-function PromptEditor(props: { name: string; list: PromptList; onChanged: () => Promise<void>; onDeleted: () => Promise<void> }) {
+function PromptEditor(props: { name: string; list: PromptList; onChanged: () => Promise<void> }) {
   const [detail, setDetail] = useState<PromptDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"edit" | "diff" | "preview">("edit");
+  const [view, setView] = useState<"edit" | "preview">("edit");
   const [preview, setPreview] = useState<{ text: string; unknown: string[] } | null>(null);
   const [shown, setShown] = useState<number | null>(null);
   const action = useAction();
@@ -194,14 +190,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
 
   const saveVersion = () =>
     action.run(async () => {
-      try {
-        await api("POST", `/prompts/${enc(props.name)}/versions`, { content: draft, message, base_version: latest.version });
-      } catch (error) {
-        if (error instanceof Error && "code" in error && (error as { code: string }).code === "conflict") {
-          throw new Error("다른 사람이 먼저 새 버전을 저장했습니다. 새로고침한 뒤 다시 편집하세요.");
-        }
-        throw error;
-      }
+      await api("POST", `/prompts/${enc(props.name)}/versions`, { content: draft, message });
       setMessage("");
       await load();
       await props.onChanged();
@@ -211,7 +200,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
     const rollback = live.name === props.name && live.version !== null && version < live.version;
     if (!confirm(`${props.name} v${version}을 ${rollback ? "롤백 배포" : "배포"}할까요? 새 세션부터 적용됩니다.`)) return;
     void action.run(async () => {
-      await api("POST", `/prompts/${enc(props.name)}/deploy`, { version, expected_revision: live.revision });
+      await api("POST", `/prompts/${enc(props.name)}/deploy`, { version });
       await props.onChanged();
       await load();
     }, `v${version}을 배포했습니다`);
@@ -220,34 +209,13 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
   return (
     <Section
       title={props.name}
-      actions={
-        <>
-          {detail.liveVersion !== null && <Badge tone="green">v{detail.liveVersion} 배포 중</Badge>}
-          <button
-            class="danger"
-            disabled={detail.liveVersion !== null}
-            title={detail.liveVersion !== null ? "배포 중인 프롬프트는 지울 수 없습니다" : ""}
-            onClick={() =>
-              confirm(`프롬프트 ${props.name}과 모든 버전을 지울까요?`) &&
-              action.run(async () => {
-                await api("DELETE", `/prompts/${enc(props.name)}`);
-                await props.onDeleted();
-              })
-            }
-          >
-            삭제
-          </button>
-        </>
-      }
+      actions={detail.liveVersion !== null && <Badge tone="green">v{detail.liveVersion} 배포 중</Badge>}
     >
       {action.view}
       <p class="muted">{detail.description || "설명 없음"}</p>
       <div class="tabs">
         <button class={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>
           편집
-        </button>
-        <button class={view === "diff" ? "active" : ""} onClick={() => setView("diff")}>
-          배포본과 비교
         </button>
         <button
           class={view === "preview" ? "active" : ""}
@@ -276,7 +244,6 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
           </div>
         </div>
       )}
-      {view === "diff" && <LineDiff before={live.content} after={draft} beforeLabel={live.isDefault ? "기본 프롬프트 (배포 중)" : `${live.name} v${live.version} (배포 중)`} afterLabel="편집 중인 내용" />}
       {view === "preview" && preview && (
         <>
           {preview.unknown.length > 0 && <Notice tone="warn">알 수 없는 변수는 그대로 남습니다: {preview.unknown.join(", ")}</Notice>}

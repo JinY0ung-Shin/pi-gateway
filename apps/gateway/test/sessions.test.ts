@@ -1,15 +1,15 @@
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { SANDBOXD_ROUTES, userKey } from "@pi-gateway/shared";
+import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Harness, last, SERVICE_KEY, startHarness } from "./helpers.js";
+import { BOB_KEY, type Harness, last, startHarness } from "./helpers.js";
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
 describe("session lifecycle", () => {
   let h: Harness;
   beforeAll(async () => {
-    h = await startHarness({ env: { SESSION_IDLE_SECONDS: "0", ANON_SESSION_TTL_SECONDS: "0" } });
+    h = await startHarness({ env: { SESSION_IDLE_SECONDS: "0" } });
   });
   afterAll(async () => {
     await h.close();
@@ -38,21 +38,6 @@ describe("session lifecycle", () => {
     const sent = JSON.stringify(req.messages);
     expect(sent).toContain("the number is 42");
     expect(sent).toContain("remember 42");
-  });
-
-  it("anonymous sessions are purged after their TTL (record, JSONL and sandbox workspace)", async () => {
-    const res = await h.post({ input: "anon" }, { key: SERVICE_KEY });
-    expect(res.status).toBe(200);
-    const sid = sessionOf(res.json.id);
-    const file = h.gateway.store.get(sid)!.sessionFile!;
-    expect(existsSync(file)).toBe(true);
-    await h.gateway.hub.reap();
-    expect(h.gateway.store.get(sid)).toBeUndefined();
-    expect(existsSync(file)).toBe(false);
-    const removal = h.sandbox.calls.find((c) => c.route === SANDBOXD_ROUTES.remove && c.user === `_anon-${sid}`);
-    expect(removal?.body.deleteWorkspace).toBe(true);
-    const cont = await h.post({ input: "again", previous_response_id: res.json.id }, { key: SERVICE_KEY });
-    expect(cont.status).toBe(404);
   });
 
   it("a session whose transcript disappeared is treated as expired (404) and cleaned up", async () => {
@@ -90,7 +75,7 @@ describe("concurrency and cancellation", () => {
     h.llm.enqueue({ text: "slow", delayMs: 1800 });
     const slow = h.stream({ input: "slow one" });
     await new Promise((r) => setTimeout(r, 150));
-    const blocked = await h.post({ input: "blocked" }, { key: SERVICE_KEY });
+    const blocked = await h.post({ input: "blocked" }, { key: BOB_KEY });
     expect(blocked.status).toBe(503);
     expect(blocked.headers.get("retry-after")).toBe("30");
     expect(blocked.json.error).toMatchObject({ type: "server_overloaded", code: "concurrency_limit_exceeded", retry_after: 30 });
@@ -101,7 +86,7 @@ describe("concurrency and cancellation", () => {
     h.llm.enqueue({ text: "short", delayMs: 300 });
     const first = h.post({ input: "short one" });
     await new Promise((r) => setTimeout(r, 50));
-    const second = await h.post({ input: "waits" }, { key: SERVICE_KEY });
+    const second = await h.post({ input: "waits" }, { key: BOB_KEY });
     expect(second.status).toBe(200);
     expect((await first).status).toBe(200);
   });

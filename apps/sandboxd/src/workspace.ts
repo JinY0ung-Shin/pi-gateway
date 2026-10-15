@@ -1,15 +1,8 @@
-import { chmod, lchown, lstat, mkdir, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lchown, lstat, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { SANDBOX_GID, SANDBOX_UID } from "@pi-gateway/shared";
 import { SandboxError } from "./errors.js";
 import { USER_KEY_PATTERN } from "./spec.js";
-
-const META_DIR = ".meta";
-
-export interface WorkspaceMeta {
-  anon: boolean;
-  lastActive: number;
-}
 
 /**
  * 호스트의 workspace 디렉토리 관리. `<root>/<userKey>`만 다룬다.
@@ -64,83 +57,5 @@ export class Workspaces {
    */
   private async giveToSandbox(path: string): Promise<void> {
     if (process.getuid?.() === 0) await lchown(path, SANDBOX_UID, SANDBOX_GID);
-  }
-
-  /**
-   * workspace를 지운다. 링크는 따라가지 않고(링크 자체만 지운다) root 밖으로 나가지 않는다.
-   * agent가 권한을 막아 둔 디렉토리도 소유자 권한으로 풀고 지운다.
-   */
-  async remove(key: string): Promise<void> {
-    const dir = this.dir(key);
-    let st;
-    try {
-      st = await lstat(dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw err;
-    }
-    if (!st.isDirectory()) throw new SandboxError("internal", "workspace path is not a directory");
-    if ((await realpath(dir)) !== join(await this.rootReal(), key)) {
-      throw new SandboxError("internal", "workspace path escapes the workspaces root");
-    }
-    await unlockTree(dir);
-    await rm(dir, { recursive: true, force: true });
-    await rm(this.metaPath(key), { force: true });
-  }
-
-  private metaPath(key: string): string {
-    return join(this.root, META_DIR, `${key}.json`);
-  }
-
-  async writeMeta(key: string, meta: WorkspaceMeta): Promise<void> {
-    await mkdir(join(this.root, META_DIR), { recursive: true, mode: 0o700 });
-    await writeFile(this.metaPath(key), JSON.stringify(meta), { mode: 0o600 });
-  }
-
-  /** 익명 workspace 중 마지막 활동이 cutoff보다 오래된 것의 key */
-  async staleAnon(cutoff: number): Promise<string[]> {
-    const stale: string[] = [];
-    let dir;
-    try {
-      dir = await opendir(join(this.root, META_DIR));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return stale;
-      throw err;
-    }
-    for await (const entry of dir) {
-      const key = entry.name.replace(/\.json$/, "");
-      if (!entry.isFile() || !USER_KEY_PATTERN.test(key)) continue;
-      try {
-        const meta = JSON.parse(await readFile(join(this.root, META_DIR, entry.name), "utf8")) as WorkspaceMeta;
-        if (meta.anon && meta.lastActive < cutoff) stale.push(key);
-      } catch {
-        // 깨진 메타는 무시한다
-      }
-    }
-    return stale;
-  }
-}
-
-/**
- * 트리 안의 디렉토리에 소유자 rwx를 다시 준다. 링크는 따라가지 않는다: lstat으로 링크가 아닌
- * 디렉토리일 때만 chmod한다. 삭제는 컨테이너를 지운 뒤 같은 사용자 lock 안에서만 하므로,
- * 그 사이에 트리를 바꿀 프로세스가 없다 (lstat과 chmod 사이의 경쟁이 생기지 않는다).
- */
-async function unlockTree(dir: string): Promise<void> {
-  try {
-    const st = await lstat(dir);
-    if (!st.isDirectory()) return;
-    await chmod(dir, 0o700);
-  } catch {
-    return;
-  }
-  let handle;
-  try {
-    handle = await opendir(dir);
-  } catch {
-    return;
-  }
-  for await (const entry of handle) {
-    if (entry.isDirectory()) await unlockTree(join(dir, entry.name));
   }
 }

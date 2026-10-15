@@ -147,10 +147,6 @@ export class SandboxHandle {
     return this.postJson<SandboxInfo>(SANDBOXD_ROUTES.ensure, {});
   }
 
-  async remove(deleteWorkspace: boolean): Promise<void> {
-    await this.post(SANDBOXD_ROUTES.remove, { deleteWorkspace });
-  }
-
   /** 명령을 실행하고 NDJSON 스트림을 끝까지 읽는다. signal이 abort되면 Error("aborted")를 던진다. */
   async exec(input: ExecInput, handlers: ExecHandlers = {}): Promise<ExecResult> {
     const controller = new AbortController();

@@ -1,4 +1,4 @@
-import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { constants } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PlatformError } from "../admin/errors.js";
@@ -68,23 +68,6 @@ export async function readContainedFile(
   const maxBytes = options.maxBytes ?? MAX_MANIFEST_BYTES;
   if (info.size > maxBytes) throw new PlatformError(400, "plugin_too_large", `${label} is larger than ${maxBytes} bytes`);
   return readFile(real, "utf8");
-}
-
-/** readContainedFile의 동기 버전 (시작 시 마이그레이션용). 거절할 때는 undefined를 돌려준다. */
-export function readContainedFileSync(root: string, relPath: string, maxBytes = MAX_MANIFEST_BYTES): string | undefined {
-  const label = relPath.replace(/^\.\//, "");
-  if (!label || isAbsolute(label) || label.includes("\\") || label.split("/").includes("..")) return undefined;
-  try {
-    const rootReal = realpathSync(root);
-    const target = join(rootReal, label);
-    const info = lstatSync(target);
-    if (info.isSymbolicLink() || !info.isFile() || info.size > maxBytes) return undefined;
-    const real = realpathSync(target);
-    if (!isInside(rootReal, real)) return undefined;
-    return readFileSync(real, "utf8");
-  } catch {
-    return undefined;
-  }
 }
 
 /**

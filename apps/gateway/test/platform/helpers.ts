@@ -22,12 +22,11 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import type { PlatformLogger } from "../../src/admin/logger.js";
 import { registerAdminRoutes } from "../../src/admin/index.js";
 import { type GatewayConfig, loadConfig } from "../../src/config.js";
-import type { AdminDeps, ToolCatalog } from "../../src/contracts.js";
+import type { AdminDeps } from "../../src/contracts.js";
 import { type Db, openDatabase } from "../../src/db.js";
 import { McpRegistryService } from "../../src/mcp-registry/service.js";
 import { PluginService } from "../../src/plugins/service.js";
 import { PromptManager } from "../../src/prompts/service.js";
-import { ToolPolicyService } from "../../src/tool-policy/index.js";
 
 export const ADMIN_KEY = "admin-key-for-tests-0123456789";
 export const BROKER_ADMIN_TOKEN = "broker-admin-token-0123456789-abcdefgh";
@@ -77,7 +76,6 @@ export interface Harness {
   prompts: PromptManager;
   mcp: McpRegistryService;
   plugins: PluginService;
-  toolPolicy: ToolPolicyService;
   logs: string[];
   dbPath: string;
   /** Fastify와 DB를 닫는다 (임시 디렉토리는 cleanupTempDirs가 지운다) */
@@ -87,8 +85,6 @@ export interface Harness {
 export async function buildHarness(options: {
   config?: GatewayConfig;
   env?: Record<string, string | undefined>;
-  tools?: ToolCatalog;
-  omitToolPolicy?: boolean;
   allowLocalSources?: boolean;
 } = {}): Promise<Harness> {
   const dataDir = tempDir("data");
@@ -105,7 +101,6 @@ export async function buildHarness(options: {
     gitTimeoutMs: 60_000,
   });
   const prompts = new PromptManager(db, config);
-  const toolPolicy = new ToolPolicyService(db);
   const lines: string[] = captured.lines;
   const stream = new Writable({
     write(chunk, _enc, cb) {
@@ -122,8 +117,6 @@ export async function buildHarness(options: {
     mcp,
     stats: () => ({ liveSessions: 2, activeTurns: 1, queuedTurns: 0 }),
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
-    ...(options.tools ? { tools: options.tools } : {}),
-    ...(options.omitToolPolicy ? {} : { toolPolicy }),
   };
   await registerAdminRoutes(app, deps);
   await app.ready();
@@ -131,7 +124,7 @@ export async function buildHarness(options: {
     await app.close();
     if (db.open) db.close();
   };
-  return { app, db, config, prompts, mcp, plugins, toolPolicy, logs: lines, dbPath, close };
+  return { app, db, config, prompts, mcp, plugins, logs: lines, dbPath, close };
 }
 
 export const adminHeaders = { authorization: `Bearer ${ADMIN_KEY}` };

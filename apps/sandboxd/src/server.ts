@@ -14,7 +14,6 @@ import {
   FsStatRequest,
   FsWriteRequest,
   isValidPrincipal,
-  RemoveSandboxRequest,
   SANDBOXD_ROUTES,
   type VerifiedInternalClaims,
   verifyInternalToken,
@@ -116,13 +115,6 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     const body = parse(EnsureSandboxRequest, req.body);
     assertPrincipal(req, body.user);
     return runtime.ensure(body.user);
-  });
-
-  app.post(SANDBOXD_ROUTES.remove, async (req) => {
-    const body = parse(RemoveSandboxRequest, req.body);
-    assertPrincipal(req, body.user);
-    await runtime.remove(body.user, body.deleteWorkspace);
-    return { ok: true };
   });
 
   app.get(SANDBOXD_ROUTES.list, async (req) => {

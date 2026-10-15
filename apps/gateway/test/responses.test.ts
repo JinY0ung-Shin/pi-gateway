@@ -94,17 +94,14 @@ describe("authentication", () => {
     expect(bob2.status).toBe(404);
   });
 
-  it("the service key trusts body.user, and anonymous sessions are bound to no user", async () => {
+  it("the service key trusts body.user and requires it", async () => {
     const named = await h.post({ input: "hi", user: "carol" }, { key: SERVICE_KEY });
     expect(named.status).toBe(200);
     const wrongUser = await h.post({ input: "x", previous_response_id: named.json.id, user: "dave" }, { key: SERVICE_KEY });
     expect(wrongUser.status).toBe(404);
-    const anon = await h.post({ input: "hi" }, { key: SERVICE_KEY });
-    expect(anon.status).toBe(200);
-    const anonCont = await h.post({ input: "x", previous_response_id: anon.json.id }, { key: SERVICE_KEY });
-    expect(anonCont.status).toBe(200);
-    const hijack = await h.post({ input: "x", previous_response_id: anonCont.json.id, user: "carol" }, { key: SERVICE_KEY });
-    expect(hijack.status).toBe(404);
+    const noUser = await h.post({ input: "hi" }, { key: SERVICE_KEY });
+    expect(noUser.status).toBe(400);
+    expect(noUser.json.error.message).toBe("user is required");
   });
 
   it("rejects an invalid body.user with 400", async () => {

@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import type { FastifyRequest } from "fastify";
 import { AdminAuth } from "../../src/admin/auth.js";
-import { parseCidr } from "../../src/config.js";
 import { openDatabase } from "../../src/db.js";
 import { ADMIN_KEY, adminHeaders, buildHarness, cleanupTempDirs, type Harness, makeConfig, tempDir } from "./helpers.js";
 
@@ -148,82 +147,26 @@ describe("admin auth hardening", () => {
     expect((await status(adminHeaders, "10.9.9.9")).statusCode).toBe(200);
   });
 
-  it("잠금 시간은 실패할 때마다 두 배로 늘고 상한이 있으며, 오래 실패가 없으면 잊는다", () => {
-    let now = 1_000_000;
+  it("실패 기록은 주소 수 상한(10,000)을 넘으면 가장 오래된 것부터 지운다", () => {
     const config = makeConfig({ dataDir: tempDir("auth-data"), pluginsDir: tempDir("auth-plugins") });
-    const auth = new AdminAuth(openDatabase(":memory:"), config, {
-      freeAttempts: 2,
-      baseDelayMs: 1000,
-      maxDelayMs: 8000,
-      forgetAfterMs: 60_000,
-      now: () => now,
-    });
-    const req = { ip: "1.2.3.4", headers: { authorization: "Bearer bad" } } as unknown as FastifyRequest;
-    const delays: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      expect(auth.authenticate(req)).toBeNull(); // 잠기지 않은 상태에서 실패
-      delays.push(auth.retryAfterSeconds("1.2.3.4"));
-      if (delays.at(-1)! > 0) expect(() => auth.authenticate(req)).toThrow(expect.objectContaining({ status: 429 }));
-      now += 10_000; // 잠금이 풀린 뒤 다시 시도
-    }
-    // 무료 2번 뒤 1·2·4·8초, 그리고 상한 8초
-    expect(delays).toEqual([0, 0, 1, 2, 4, 8, 8]);
-    now += 120_000; // 오래 지나면 잊는다
-    expect(auth.authenticate(req)).toBeNull();
-    expect(auth.retryAfterSeconds("1.2.3.4")).toBe(0);
-  });
-
-  it("실패 기록은 주소 수 상한을 넘으면 가장 오래된 것부터 지운다", () => {
-    const config = makeConfig({ dataDir: tempDir("auth-data"), pluginsDir: tempDir("auth-plugins") });
-    const auth = new AdminAuth(openDatabase(":memory:"), config, { maxTrackedAddresses: 3, freeAttempts: 1 });
+    const auth = new AdminAuth(openDatabase(":memory:"), config);
     const req = (ip: string) => ({ ip, headers: { authorization: "Bearer bad" } }) as unknown as FastifyRequest;
-    auth.authenticate(req("1.1.1.1"));
-    auth.authenticate(req("1.1.1.1"));
+    for (let i = 0; i < 6; i++) auth.authenticate(req("1.1.1.1"));
     expect(() => auth.authenticate(req("1.1.1.1"))).toThrow(expect.objectContaining({ status: 429 }));
-    for (const ip of ["2.2.2.2", "3.3.3.3", "4.4.4.4"]) auth.authenticate(req(ip));
-    expect(auth.trackedAddresses).toBe(3);
+    for (let i = 0; i < 10_000; i++) auth.authenticate(req(`10.0.${i >> 8}.${i & 255}`));
     // 가장 오래된 1.1.1.1이 밀려나 잠금도 풀렸다
     expect(auth.authenticate(req("1.1.1.1"))).toBeNull();
   });
 
-  it("ADMIN_ALLOWED_CIDRS 밖의 주소는 관리 API와 UI 모두 403", async () => {
-    h = await buildHarness({ env: { ADMIN_ALLOWED_CIDRS: "10.0.0.0/8, fd00::/8" } });
-    expect((await status(adminHeaders, "10.1.2.3")).statusCode).toBe(200);
-    expect((await status(adminHeaders, "::ffff:10.1.2.3")).statusCode).toBe(200);
-    expect((await status(adminHeaders, "fd12::5")).statusCode).toBe(200);
-    const denied = await status(adminHeaders, "192.168.0.10");
-    expect(denied.statusCode).toBe(403);
-    expect(denied.json().error.code).toBe("address_not_allowed");
-    expect((await status(adminHeaders)).statusCode).toBe(403); // inject 기본 주소 127.0.0.1
-    const ui = await h.app.inject({ method: "GET", url: "/admin/", remoteAddress: "192.168.0.10" });
-    expect(ui.statusCode).toBe(403);
-    expect(ui.body).toBe("Forbidden");
-    const login = await h.app.inject({
-      method: "POST",
-      url: "/admin/api/login",
-      remoteAddress: "192.168.0.10",
-      headers: { "x-admin-request": "1", "content-type": "application/json" },
-      payload: { apiKey: ADMIN_KEY },
-    });
-    expect(login.statusCode).toBe(403);
-  });
-
-  it("설정: TRUST_PROXY·ADMIN_ALLOWED_CIDRS 값을 검사한다", () => {
+  it("설정: TRUST_PROXY 값을 검사한다", () => {
     const dirs = { dataDir: tempDir("cfg-data"), pluginsDir: tempDir("cfg-plugins") };
     const cfg = (env: Record<string, string>) => makeConfig({ ...dirs, env });
     expect(cfg({}).trustProxy).toBe(false);
     expect(cfg({ TRUST_PROXY: "true" }).trustProxy).toBe(true);
     expect(() => cfg({ TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
     expect(cfg({ TRUST_PROXY: "0" }).trustProxy).toBe(false);
-    // X-Forwarded-For를 무조건 믿으면 CIDR 제한·로그인 지연을 우회할 수 있으므로 함께 쓸 수 없다
-    expect(() => cfg({ TRUST_PROXY: "true", ADMIN_ALLOWED_CIDRS: "10.0.0.0/8" })).toThrow(/cannot be combined/);
-    expect(cfg({ TRUST_PROXY: "172.18.0.1", ADMIN_ALLOWED_CIDRS: "10.0.0.0/8" }).trustProxy).toEqual(["172.18.0.1"]);
     expect(cfg({ TRUST_PROXY: "10.0.0.1, 172.16.0.0/12" }).trustProxy).toEqual(["10.0.0.1", "172.16.0.0/12"]);
     expect(() => cfg({ TRUST_PROXY: "proxy.local" })).toThrow(/TRUST_PROXY/);
-    expect(cfg({ ADMIN_ALLOWED_CIDRS: "10.0.0.0/8,::1" }).admin.allowedCidrs).toEqual(["10.0.0.0/8", "::1"]);
-    expect(() => cfg({ ADMIN_ALLOWED_CIDRS: "10.0.0.0/33" })).toThrow(/ADMIN_ALLOWED_CIDRS/);
-    expect(parseCidr("fd00::/8")).toEqual({ address: "fd00::", prefix: 8, family: "ipv6" });
-    expect(parseCidr("10.0.0.0/8/1")).toBeNull();
   });
 });
 

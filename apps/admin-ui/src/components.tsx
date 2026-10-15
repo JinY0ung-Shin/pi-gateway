@@ -81,50 +81,6 @@ export function useAction() {
   return { busy, run, view, setMessage };
 }
 
-/** 줄 단위 diff (LCS). 너무 큰 입력은 비교하지 않는다. */
-export function LineDiff(props: { before: string; after: string; beforeLabel: string; afterLabel: string }) {
-  const a = props.before.split("\n");
-  const b = props.after.split("\n");
-  if (a.length * b.length > 4_000_000) return <Notice tone="warn">내용이 너무 커서 비교할 수 없습니다.</Notice>;
-  const dp: Uint32Array[] = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-  const lines: { kind: "same" | "del" | "add"; text: string }[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      lines.push({ kind: "same", text: a[i]! });
-      i++;
-      j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) lines.push({ kind: "del", text: a[i++]! });
-    else lines.push({ kind: "add", text: b[j++]! });
-  }
-  while (i < a.length) lines.push({ kind: "del", text: a[i++]! });
-  while (j < b.length) lines.push({ kind: "add", text: b[j++]! });
-  const changed = lines.some((l) => l.kind !== "same");
-  return (
-    <div class="diff">
-      <div class="diff-legend">
-        <span class="diff-del">− {props.beforeLabel}</span>
-        <span class="diff-add">+ {props.afterLabel}</span>
-      </div>
-      {!changed && <p class="muted">차이가 없습니다.</p>}
-      <pre>
-        {lines.map((l, k) => (
-          <div key={k} class={`diff-${l.kind}`}>
-            {l.kind === "del" ? "− " : l.kind === "add" ? "+ " : "  "}
-            {l.text}
-          </div>
-        ))}
-      </pre>
-    </div>
-  );
-}
-
 /** `KEY=VALUE` 줄 ↔ 객체 */
 export function recordToLines(record: Record<string, string> | undefined, sep = "="): string {
   return Object.entries(record ?? {})

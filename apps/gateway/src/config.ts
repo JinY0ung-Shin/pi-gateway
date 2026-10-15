@@ -63,8 +63,6 @@ export interface GatewayConfig {
     maxConcurrentTurnsPerUser: number;
     queueTimeoutSeconds: number;
     maxQueuedTurns: number;
-    /** 익명 세션(사용자 없음)의 기록·sandbox를 지우기까지의 유휴 시간 */
-    anonTtlSeconds: number;
     /** 비스트리밍 요청의 최대 실행 시간 */
     nonStreamTimeoutSeconds: number;
   };
@@ -80,8 +78,6 @@ export interface GatewayConfig {
   admin: {
     /** 관리 화면 세션 쿠키 서명 키 */
     cookieSecret: string;
-    /** 관리 화면·API에 접근할 수 있는 주소 (ADMIN_ALLOWED_CIDRS). 비어 있으면 제한하지 않는다. */
-    allowedCidrs: string[];
   };
   sse: {
     keepaliveSeconds: number;
@@ -94,7 +90,7 @@ export interface GatewayConfig {
 }
 
 /** "10.0.0.0/8", "192.168.1.5", "fd00::/8" 형식을 읽는다. 잘못되면 null. */
-export function parseCidr(value: string): { address: string; prefix: number; family: "ipv4" | "ipv6" } | null {
+function parseCidr(value: string): { address: string; prefix: number; family: "ipv4" | "ipv6" } | null {
   const parts = value.trim().split("/");
   if (parts.length > 2) return null;
   const [address, prefixText] = parts;
@@ -185,17 +181,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const sandboxdSecret = readSecret(env, "SANDBOXD_JWT_SECRET");
   if (!sandboxdSecret) throw new Error("SANDBOXD_JWT_SECRET (or _FILE) is required");
 
-  const adminAllowedCidrs = list(env.ADMIN_ALLOWED_CIDRS);
-  for (const entry of adminAllowedCidrs) {
-    if (!parseCidr(entry)) throw new Error(`ADMIN_ALLOWED_CIDRS has an invalid entry '${entry}'`);
-  }
   const trustProxy = parseTrustProxy(env.TRUST_PROXY);
-  // true면 아무 클라이언트의 X-Forwarded-For나 믿게 되어 req.ip를 꾸밀 수 있다 → 관리 화면 CIDR 제한·로그인 잠금이 무력해진다.
-  if (trustProxy === true && adminAllowedCidrs.length > 0) {
-    throw new Error(
-      "TRUST_PROXY=true cannot be combined with ADMIN_ALLOWED_CIDRS: any client could then spoof its IP with X-Forwarded-For and bypass the admin CIDR gate and lockout. Set TRUST_PROXY to the reverse proxy's IP/CIDR list instead (e.g. TRUST_PROXY=172.18.0.1).",
-    );
-  }
 
   const brokerUrl = env.BROKER_URL;
   let broker: GatewayConfig["broker"] = null;
@@ -239,7 +225,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       maxConcurrentTurnsPerUser: int("MAX_CONCURRENT_TURNS_PER_USER", 3, env),
       queueTimeoutSeconds: int("TURN_QUEUE_TIMEOUT_SECONDS", 120, env),
       maxQueuedTurns: int("TURN_QUEUE_MAX_WAITERS", 256, env),
-      anonTtlSeconds: int("ANON_SESSION_TTL_SECONDS", 3600, env),
       nonStreamTimeoutSeconds: int("NON_STREAM_TIMEOUT_SECONDS", 600, env),
     },
     mcp: {
@@ -249,7 +234,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     prompts: { language: env.PROMPT_LANGUAGE || "Korean" },
     admin: {
       cookieSecret: readSecret(env, "ADMIN_COOKIE_SECRET") ?? adminApiKey ?? "",
-      allowedCidrs: adminAllowedCidrs,
     },
     sse: { keepaliveSeconds: int("SSE_KEEPALIVE_SECONDS", 15, env) },
     trustProxy,

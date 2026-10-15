@@ -7,12 +7,11 @@ import { copyFileSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { jwtSecretBytes, McpServerConfig } from "@pi-gateway/shared";
+import { McpServerConfig } from "@pi-gateway/shared";
 import Docker from "dockerode";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureProxyVolume } from "../../sandboxd/src/docker-setup.js";
-import { SandboxClient } from "../src/sandbox/client.js";
 import { SandboxManager } from "../../sandboxd/src/manager.js";
 import { DockerSandboxRuntime } from "../../sandboxd/src/runtime.js";
 import { buildServer } from "../../sandboxd/src/server.js";
@@ -28,11 +27,9 @@ const run = randomBytes(4).toString("hex");
 
 let docker: Docker;
 let sandboxd: FastifyInstance | undefined;
-let sandboxdUrl: string | undefined;
 let wsRoot: string | undefined;
 let pluginsDir: string | undefined;
 let h: Harness | undefined;
-const E2E_USERS = ["alice", "bob"];
 
 /** 임시 디렉토리를 지운다. 현재 사용자가 못 지우는 파일(다른 uid 소유)이 있으면 Docker로 root 권한으로 지운다. */
 function removeDir(dir: string): void {
@@ -88,7 +85,7 @@ describe.skipIf(!enabled)("gateway + sandboxd + Docker", () => {
     const runtime = new DockerSandboxRuntime(manager, config, silentLogger);
     sandboxd = await buildServer({ jwtSecret: config.jwtSecret, runtime, logger: silentLogger });
     await sandboxd.listen({ host: "127.0.0.1", port: 0 });
-    sandboxdUrl = `http://127.0.0.1:${(sandboxd.server.address() as AddressInfo).port}`;
+    const sandboxdUrl = `http://127.0.0.1:${(sandboxd.server.address() as AddressInfo).port}`;
     h = await startHarness({
       sandboxd: { url: sandboxdUrl, secret: SECRET_TEXT },
       env: { LLM_API_KEY: "llm-secret-should-never-reach-the-sandbox" },
@@ -105,11 +102,6 @@ describe.skipIf(!enabled)("gateway + sandboxd + Docker", () => {
 
   // 실패한 경우에도 돈다 (beforeAll이 중간에 실패해도). 각 단계는 앞 단계 실패와 상관없이 실행한다.
   afterAll(async () => {
-    // 1. sandbox 안에서 uid 1000으로 만든 파일까지 sandboxd가 지우게 한다 (컨테이너와 workspace 제거)
-    if (sandboxdUrl) {
-      const client = new SandboxClient({ baseUrl: sandboxdUrl, jwtSecret: jwtSecretBytes(SECRET_TEXT) });
-      for (const user of E2E_USERS) await client.for(user).remove(true).catch(() => undefined);
-    }
     await h?.close().catch(() => undefined);
     await sandboxd?.close().catch(() => undefined);
     if (docker) {
@@ -117,7 +109,7 @@ describe.skipIf(!enabled)("gateway + sandboxd + Docker", () => {
       await Promise.all(leftovers.map((c) => docker.getContainer(c.Id).remove({ force: true }).catch(() => undefined)));
       await docker.getVolume(`pi-gw-e2e-proxy-${run}`).remove().catch(() => undefined);
     }
-    // 2. 남은 임시 디렉토리 (sandboxd가 못 지운 것 포함)
+    // sandbox가 uid 1000으로 만든 파일이 있어 removeDir가 필요하면 root 컨테이너로 지운다
     for (const dir of [wsRoot, pluginsDir]) if (dir) removeDir(dir);
   }, 120_000);
 

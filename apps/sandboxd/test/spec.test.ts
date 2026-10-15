@@ -2,12 +2,12 @@ import { userKey } from "@pi-gateway/shared";
 import { describe, expect, it } from "vitest";
 import { loadConfig, parseBytes } from "../src/config.js";
 import { decodeExit, Demuxer } from "../src/docker-exec.js";
-import { buildContainerSpec, LABEL_ANON, LABEL_INSTANCE, LABEL_SANDBOX, LABEL_SPEC, LABEL_USER_KEY } from "../src/spec.js";
+import { buildContainerSpec, LABEL_INSTANCE, LABEL_SANDBOX, LABEL_SPEC, LABEL_USER_KEY } from "../src/spec.js";
 import { SECRET_TEXT, testConfig } from "./helpers.js";
 
 describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () => {
   const key = userKey("alice");
-  const spec = buildContainerSpec(testConfig(), { key, anon: false });
+  const spec = buildContainerSpec(testConfig(), key);
   const host = spec.HostConfig!;
 
   it("rootfs 읽기 전용, 권한 전부 제거, 권한 상승 금지, init", () => {
@@ -43,7 +43,7 @@ describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () =>
   });
 
   it("plugins 경로가 없으면 workspace와 프록시 socket만 mount한다", () => {
-    const s = buildContainerSpec(testConfig({ pluginsHostDir: undefined }), { key, anon: false });
+    const s = buildContainerSpec(testConfig({ pluginsHostDir: undefined }), key);
     expect(s.HostConfig!.Mounts!.map((m) => m.Target)).toEqual(["/workspace", "/run/pi-proxy"]);
   });
 
@@ -70,7 +70,6 @@ describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () =>
     expect(spec.Labels).toEqual({
       [LABEL_SANDBOX]: "1",
       [LABEL_USER_KEY]: key,
-      [LABEL_ANON]: "0",
       [LABEL_INSTANCE]: "unit",
       [LABEL_SPEC]: "2",
     });
@@ -92,15 +91,14 @@ describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () =>
   });
 
   it("gVisor 같은 runtime을 설정할 수 있다", () => {
-    const s = buildContainerSpec(testConfig({ runtime: "runsc" }), { key, anon: true });
+    const s = buildContainerSpec(testConfig({ runtime: "runsc" }), key);
     expect(s.HostConfig!.Runtime).toBe("runsc");
-    expect(s.Labels![LABEL_ANON]).toBe("1");
     expect(host.Runtime).toBeUndefined();
   });
 
   it("이상한 key는 거부한다", () => {
-    expect(() => buildContainerSpec(testConfig(), { key: "../etc", anon: false })).toThrow();
-    expect(() => buildContainerSpec(testConfig(), { key: "u-XYZ", anon: false })).toThrow();
+    expect(() => buildContainerSpec(testConfig(), "../etc")).toThrow();
+    expect(() => buildContainerSpec(testConfig(), "u-XYZ")).toThrow();
   });
 });
 

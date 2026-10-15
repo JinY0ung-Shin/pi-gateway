@@ -7,12 +7,10 @@ import { McpPage } from "./pages/Mcp";
 import { PluginsPage } from "./pages/Plugins";
 import { PromptsPage } from "./pages/Prompts";
 import { StatusPage } from "./pages/Status";
-import { ToolsPage } from "./pages/Tools";
 import "./styles.css";
 
 const PAGES = [
   { id: "prompts", label: "프롬프트" },
-  { id: "tools", label: "도구" },
   { id: "mcp", label: "MCP" },
   { id: "plugins", label: "plugin" },
   { id: "status", label: "상태" },
@@ -72,7 +70,6 @@ function App() {
       </header>
       <main class="content">
         {route.page === "prompts" && <PromptsPage />}
-        {route.page === "tools" && <ToolsPage />}
         {route.page === "mcp" && <McpPage focus={route.arg} />}
         {route.page === "plugins" && <PluginsPage />}
         {route.page === "status" && <StatusPage />}

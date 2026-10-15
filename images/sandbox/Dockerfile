@@ -5,11 +5,7 @@
 #
 #   docker build -t pi-gateway/sandbox:latest images/sandbox
 #
-# 도구 추가 (공백으로 구분, 기본은 비어 있음). 모두 시스템 경로(실행 중 읽기 전용)에 설치된다:
-#   --build-arg EXTRA_APT_PACKAGES="build-essential sqlite3"
-#   --build-arg EXTRA_PIP_PACKAGES="pandas openpyxl"      → /usr/local/lib/python3.12/site-packages
-#   --build-arg EXTRA_NPM_PACKAGES="typescript prettier"  → /usr/local/lib/node_modules, /usr/local/bin
-# 자세한 방법은 docs/OPERATIONS.md "sandbox에 도구 추가하기".
+# 도구를 더하려면 이 이미지를 FROM으로 쓰는 파생 이미지를 만든다 (docs/OPERATIONS.md "sandbox에 도구 추가하기").
 
 ARG PYTHON_IMAGE=python:3.12-slim-trixie
 ARG NODE_IMAGE=node:22-bookworm-slim
@@ -26,15 +22,11 @@ RUN mkdir -p /out \
  && gcc -O2 -static -Wall -Wextra -Werror -o /out/sbx-proxy-bridge /src/sbx-proxy-bridge.c
 
 FROM ${PYTHON_IMAGE}
-ARG EXTRA_APT_PACKAGES=""
-ARG EXTRA_PIP_PACKAGES=""
-ARG EXTRA_NPM_PACKAGES=""
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl wget git jq ripgrep fd-find procps less file \
       zip unzip xz-utils libstdc++6 \
-      ${EXTRA_APT_PACKAGES} \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
@@ -45,19 +37,10 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && node --version && npm --version
 
-# 추가 도구: 시스템 경로에 설치한다 (/workspace/.home이 아니라서 모든 사용자에게 같고 읽기 전용이다)
-RUN if [ -n "${EXTRA_PIP_PACKAGES}" ]; then \
-      pip install --no-cache-dir --root-user-action=ignore ${EXTRA_PIP_PACKAGES}; \
-    fi \
- && if [ -n "${EXTRA_NPM_PACKAGES}" ]; then \
-      npm install -g --prefix /usr/local --no-audit --no-fund --no-update-notifier ${EXTRA_NPM_PACKAGES} \
-      && npm cache clean --force; \
-    fi
-
 COPY --from=helpers /out/sbx-run /out/sbx-proxy-bridge /usr/local/bin/
 COPY sbx_fs.py /usr/local/lib/pi-sbx/sbx_fs.py
 
-# 최소한의 /etc, setuid/setgid 제거(추가 도구 포함), 표준 라이브러리 미리 컴파일, 도우미는 root 소유·쓰기 불가
+# 최소한의 /etc, setuid/setgid 제거, 표준 라이브러리 미리 컴파일, 도우미는 root 소유·쓰기 불가
 RUN printf '#!/usr/local/bin/python3 -IS\nimport sys\nsys.path.insert(0, "/usr/local/lib/pi-sbx")\nimport sbx_fs\nsbx_fs.main_entry()\n' > /usr/local/bin/sbx-fs \
  && chown -R root:root /usr/local/bin/sbx-run /usr/local/bin/sbx-proxy-bridge /usr/local/bin/sbx-fs /usr/local/lib/pi-sbx \
  && chmod 0755 /usr/local/bin/sbx-run /usr/local/bin/sbx-proxy-bridge /usr/local/bin/sbx-fs \

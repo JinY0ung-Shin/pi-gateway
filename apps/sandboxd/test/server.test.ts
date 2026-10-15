@@ -31,9 +31,6 @@ class FakeRuntime implements SandboxRuntime {
     this.calls.push(`ensure:${principal}`);
     return { key: "u-000000000000000000000000", containerName: "c", state: "running", created: true };
   }
-  async remove(principal: string, deleteWorkspace: boolean): Promise<void> {
-    this.calls.push(`remove:${principal}:${deleteWorkspace}`);
-  }
   async list(): Promise<SandboxInfo[]> {
     return [{ key: "u-000000000000000000000000", containerName: "c", state: "running" }];
   }

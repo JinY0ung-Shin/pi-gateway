@@ -1,10 +1,9 @@
 # pi-gateway 운영 가이드
 
-설치, 비밀값, sandbox 도구 추가, 네트워크 차단 규칙, 보안 점검, 용량 측정 방법을 다룬다.
-구조와 보안 경계는 [DESIGN.md](DESIGN.md) §2–3을 본다.
+설치, 비밀값, sandbox 도구 추가, 네트워크 차단 규칙, 보안 점검, 용량 참고값을 다룬다.
+구조와 보안 경계는 [README](../README.md)를 본다.
 
-> 이 문서의 수치는 개발 머신(WSL2, Docker 29.1.3)에서 잰 참고값이다.
-> 운영 용량은 운영 서버에서 [용량 측정](#9-용량-측정) 스크립트를 돌려서 정한다.
+> 이 문서의 수치는 개발 머신(WSL2, Docker 29.1.3)에서 잰 참고값이다. 운영 용량은 운영 서버에서 다시 확인한다.
 
 ## 1. 구성
 
@@ -116,8 +115,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 | 설정 | 권장값 | 이유 |
 |---|---|---|
 | `GATEWAY_BIND_ADDR` | `127.0.0.1` (기본) | 같은 호스트의 reverse proxy(nginx 등)가 TLS를 맡고 이 포트로 넘긴다. LAN에서 gateway 포트에 바로 닿지 않는다 |
-| `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 제한(IP별 지연)과 `ADMIN_ALLOWED_CIDRS`가 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 쓴다.** hop 수는 받지 않고, `true`는 `ADMIN_ALLOWED_CIDRS`와 함께 쓰면 gateway가 시작을 거부한다. `true`는 아무 클라이언트나 IP를 속일 수 있게 하므로 그 밖에도 쓰지 않는다. 직접 공개할 때는 `false` |
-| `ADMIN_ALLOWED_CIDRS` | 운영자 네트워크 (예: `10.10.0.0/16`) | 관리 화면과 관리 API는 운영자만 쓴다. sandbox가 호스트에 닿지 않더라도 관리 화면은 운영자 네트워크에서만 열리게 한다 |
+| `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 제한(IP별 지연)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 쓴다.** hop 수는 받지 않는다. `true`는 아무 클라이언트나 IP를 속일 수 있게 하므로 쓰지 않는다. 직접 공개할 때는 `false` |
 | `SANDBOX_PROXY_DENY` | 호스트의 공인 IP (있을 때) | egress 프록시는 사설·loopback·link-local을 기본으로 막지만 공인 주소는 인터넷으로 본다. 호스트 자신의 공인 IP(SSH, 공개한 포트)는 넣어서 막는다 ([§6](#6-네트워크-차단-규칙)) |
 | `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
@@ -130,7 +128,7 @@ docker network inspect pi-gateway_edge --format '{{(index .IPAM.Config 0).Gatewa
 
 - 이 주소는 네트워크를 다시 만들면 바뀔 수 있다. 고정하려면 `docker-compose.override.yml`에서 `networks.edge.ipam`으로 대역을 정한다.
 - dockerd를 `--userland-proxy=false`로 운영한다면 `127.0.0.1`도 함께 넣는다 (예: `TRUST_PROXY=172.18.0.1,127.0.0.1`).
-- `TRUST_PROXY=true`는 쓰지 않는다. `ADMIN_ALLOWED_CIDRS`와 함께 설정하면 gateway가 시작하지 않는다.
+- `TRUST_PROXY=true`는 쓰지 않는다.
 
 nginx 예시 (같은 호스트, TLS 종료):
 
@@ -201,64 +199,16 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 - `pip install`과 `npm install -g`는 agent의 workspace(`/workspace/.home`) 안에 설치된다.
 - 사용자마다 따로이고, 재시작해도 남는다.
 
-**관리자가 미리 넣는 경우**
-- 모든 사용자가 같이 쓰는 도구는 시스템 경로(실행 중 읽기 전용)에 미리 넣는다.
-- 방법은 두 가지다.
-
-### 5.1 build arg (간단한 추가)
-
-`.env`에 공백으로 구분해서 적고 이미지를 다시 빌드한다.
-
-```bash
-SANDBOX_EXTRA_APT_PACKAGES="build-essential sqlite3 libreoffice-core"
-SANDBOX_EXTRA_PIP_PACKAGES="pandas numpy matplotlib python-docx openpyxl"
-SANDBOX_EXTRA_NPM_PACKAGES="typescript prettier"
-```
-
-```bash
-docker compose build sandbox-image
-docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 바로 적용하려면 (workspace는 남는다)
-```
-
-| 종류 | 설치 위치 |
-|---|---|
-| apt | 시스템 경로 |
-| pip | `/usr/local/lib/python3.12/site-packages` (시스템 site-packages) |
-| npm | `/usr/local/lib/node_modules`. 실행 파일은 `/usr/local/bin`. `NODE_PATH`가 설정돼 있어 `require()`도 된다 |
-
-설치가 끝나면 setuid/setgid 비트를 다시 지운다.
-
-### 5.2 파생 이미지 (복잡한 설치, 사내 패키지, 별도 버전 관리)
-
-기본 이미지를 바탕으로 직접 이미지를 만들고 `SANDBOX_IMAGE`로 지정한다.
+**관리자가 미리 넣는 경우**: 모든 사용자가 같이 쓰는 도구는 기본 이미지를 `FROM`으로 쓰는 파생 이미지에 시스템 경로로 설치하고, `.env`의 `SANDBOX_IMAGE`로 지정한 뒤 `docker compose up -d sandboxd`와 `docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)`로 적용한다 (workspace는 남는다). 마지막 `USER`는 `1000:1000`이어야 하고, `/usr/local/bin/sbx-run`·`sbx-fs`·`sbx-proxy-bridge`와 `/usr/local/lib/pi-sbx`는 그대로 둔다. 설치 뒤 setuid/setgid 비트를 지우고(`find / -xdev -perm /6000 -type f -exec chmod a-s {} +`), 비밀값은 넣지 않는다.
 
 ```dockerfile
-# 예: images/sandbox-custom/Dockerfile (저장소 밖에 둬도 된다)
-ARG BASE=pi-gateway/sandbox:latest
-FROM ${BASE}
+FROM pi-gateway/sandbox:latest
 USER root
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libreoffice-core fonts-nanum \
- && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir --root-user-action=ignore python-docx openpyxl \
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-core && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir --root-user-action=ignore python-docx \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
-# 반드시 uid 1000으로 되돌린다
 USER 1000:1000
 ```
-
-```bash
-docker compose build sandbox-image                          # 기본 이미지 먼저
-docker build -t mycorp/pi-sandbox:1 images/sandbox-custom
-echo 'SANDBOX_IMAGE=mycorp/pi-sandbox:1' >> .env
-docker compose up -d sandboxd                               # sandboxd를 새 설정으로 다시 만든다
-docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
-```
-
-파생 이미지 규칙:
-- **실행 사용자**: 마지막 `USER`는 `1000:1000`이어야 한다. sandboxd도 uid 1000으로 실행한다.
-- **도우미 유지**: `/usr/local/bin/sbx-run`, `/usr/local/bin/sbx-fs`, `/usr/local/lib/pi-sbx`를 지우거나 바꾸지 않는다. sandboxd가 이 도우미로 명령과 파일 조작을 실행한다.
-- **비밀값 금지**: 키, 토큰, 사내 인증서의 개인키를 넣지 않는다. 이미지는 모든 사용자 sandbox에서 읽힌다.
-- **설치 위치**: 시스템 경로에 설치한다. `/workspace`는 실행할 때 사용자 workspace로 덮인다.
 
 ## 6. 네트워크 차단 규칙
 
@@ -334,14 +284,14 @@ docker compose up -d sandboxd
 docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
 ```
 
-명령 실행이 조금 느려질 수 있다. 적용한 뒤 [용량 측정](#9-용량-측정)과 보안 점검을 다시 돌린다.
+명령 실행이 조금 느려질 수 있다. 적용한 뒤 보안 점검을 다시 돌린다.
 
 ## 8. 보안 점검
 
 두 가지 점검을 돌린다.
 
 **1) sandbox 격리 점검: `scripts/security-check/run.mjs`**
-1. 살아 있는 sandboxd에 임시 사용자 두 명의 sandbox를 만든다.
+1. 살아 있는 sandboxd에 점검용 사용자 두 명(secchk-a, secchk-b)의 sandbox를 만든다.
 2. 그 안에서 실제로 격리를 깨려고 시도한다.
 3. 결과를 Markdown 리포트로 남긴다. 보안부서에 그대로 제출할 수 있다.
 
@@ -392,22 +342,11 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 - 차단 항목마다 **대조군**이 있다. 같은 방법으로 일부러 만든 "보여야 하는 것"이 실제로 보이는지 확인한다.
   - 대조군이 실패하면 그 항목은 `INVALID`이고 실패로 센다. 검사 방법이 틀려서 통과하는 일을 막기 위해서다.
 - `WARN`은 운영 설정(`SANDBOX_PROXY_DENY`)이 빠진 항목이다. `--strict`를 주면 실패로 센다. 운영에서는 `--strict`를 권장한다.
-- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--egress none`(인터넷이 막힌 환경), `--keep`(점검용 sandbox 보존).
+- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--egress none`(인터넷이 막힌 환경), `--keep`(점검용 workspace 보존).
 
-## 9. 용량 측정
+## 9. 용량 참고값
 
-운영 서버에서 돌린다. 개발 머신 수치는 참고만 한다.
-
-```bash
-# 유휴 sandbox 컨테이너당 메모리, docker exec·생성 지연
-./scripts/bench/container-overhead.sh pi-gateway/sandbox:latest 10
-# sandboxd API를 거친 도구 실행 지연 (gateway가 실제로 겪는 값)
-docker compose exec -T sandboxd node --input-type=module - < scripts/bench/sandboxd-latency.mjs
-# pi 세션 하나의 메모리 (gateway와 같은 Node·pi 버전으로)
-docker compose exec -T gateway node --expose-gc --input-type=module - < scripts/bench/pi-session-memory.mjs
-```
-
-개발 머신 참고값:
+개발 머신에서 잰 값이다. 운영 서버에서는 다시 확인한다.
 
 | 항목 | 값 |
 |---|---|
@@ -441,7 +380,6 @@ docker compose exec -T gateway node --expose-gc --input-type=module - < scripts/
 | 대상 | 기본 시간 | 동작 |
 |---|---|---|
 | sandbox | 15분 (`SANDBOX_IDLE_SECONDS`) | 컨테이너를 제거한다. workspace는 남는다 |
-| 익명 workspace | 24시간 (`SANDBOX_ANON_RETENTION_SECONDS`) | sandboxd가 지운다. gateway가 먼저 지우는 것이 정상이다 |
 | gateway 세션 | 5분 (`SESSION_IDLE_SECONDS`) | 메모리에서 내린다. 다음 요청 때 기록에서 되살린다 |
 
 **sandboxd 재시작**

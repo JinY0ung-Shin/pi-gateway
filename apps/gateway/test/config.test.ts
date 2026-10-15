@@ -18,16 +18,6 @@ describe("gateway config", () => {
     expect(() => loadConfig({ ...base, TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
   });
 
-  it("rejects TRUST_PROXY=true together with ADMIN_ALLOWED_CIDRS (X-Forwarded-For would be spoofable)", () => {
-    expect(() => loadConfig({ ...base, TRUST_PROXY: "true", ADMIN_ALLOWED_CIDRS: "10.0.0.0/8" })).toThrow(/cannot be combined with ADMIN_ALLOWED_CIDRS/);
-    // 프록시 주소 목록이면 함께 쓸 수 있다
-    const c = loadConfig({ ...base, TRUST_PROXY: "172.18.0.1", ADMIN_ALLOWED_CIDRS: "10.0.0.0/8" });
-    expect(c.trustProxy).toEqual(["172.18.0.1"]);
-    expect(c.admin.allowedCidrs).toEqual(["10.0.0.0/8"]);
-    // CIDR 제한이 없으면 true도 허용한다 (프록시 뒤에서만 쓰는 경우)
-    expect(loadConfig({ ...base, TRUST_PROXY: "true" }).trustProxy).toBe(true);
-  });
-
   it("treats empty env strings as unset", () => {
     const c = loadConfig({ ...base, DEFAULT_MODEL: "", LLM_API: "", HOST: "", DATA_DIR: "" });
     expect(c.llm.defaultModel).toBe("m");

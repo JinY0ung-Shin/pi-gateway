@@ -8,7 +8,7 @@ import { DockerSandboxRuntime } from "./runtime.js";
 import { buildServer } from "./server.js";
 import { Workspaces } from "./workspace.js";
 
-// workspace 메타 등 sandboxd가 만드는 파일은 소유자만 읽게 한다
+// sandboxd가 만드는 파일·디렉토리는 소유자만 읽게 한다
 process.umask(0o077);
 
 const config = loadConfig();

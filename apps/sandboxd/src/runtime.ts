@@ -70,7 +70,6 @@ export interface AttachProcess {
 /** HTTP 라우트가 의존하는 sandbox 동작. 테스트에서는 가짜 구현으로 바꿔 끼운다. */
 export interface SandboxRuntime {
   ensure(principal: string): Promise<SandboxInfo>;
-  remove(principal: string, deleteWorkspace: boolean): Promise<void>;
   list(): Promise<SandboxInfo[]>;
   /** 컨테이너를 준비하고 exec를 시작한다. 여기서 던진 오류는 스트림을 열기 전에 JSON 오류로 나간다. */
   prepareExec(principal: string, params: ExecParams): Promise<RunningExec>;
@@ -106,10 +105,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
       created: lease.created,
       lastActiveAt: new Date().toISOString(),
     };
-  }
-
-  remove(principal: string, deleteWorkspace: boolean): Promise<void> {
-    return this.manager.remove(principal, deleteWorkspace);
   }
 
   list(): Promise<SandboxInfo[]> {

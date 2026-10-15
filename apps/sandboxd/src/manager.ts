@@ -1,12 +1,11 @@
 import type Docker from "dockerode";
-import { isAnonPrincipal, type SandboxInfo, userKey } from "@pi-gateway/shared";
+import { type SandboxInfo, userKey } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { SandboxdConfig } from "./config.js";
 import { dockerStatus, errorMessage, SandboxError } from "./errors.js";
 import {
   buildContainerSpec,
   containerName,
-  LABEL_ANON,
   LABEL_INSTANCE,
   LABEL_SANDBOX,
   LABEL_SPEC,
@@ -18,16 +17,13 @@ import type { Workspaces } from "./workspace.js";
 
 /** 실행 중인지 확인한 결과를 이 시간 동안 믿는다. exec가 실패하면 즉시 다시 확인한다. */
 const VERIFY_TTL_MS = 30_000;
-const META_WRITE_INTERVAL_MS = 60_000;
 
 interface Entry {
   key: string;
-  anon: boolean;
   container: Docker.Container | null;
   verifiedAt: number;
   lastActive: number;
   inflight: number;
-  metaWrittenAt: number;
 }
 
 export interface Lease {
@@ -58,10 +54,10 @@ export class SandboxManager {
     private readonly now: () => number = Date.now,
   ) {}
 
-  private entry(key: string, anon: boolean): Entry {
+  private entry(key: string): Entry {
     let e = this.entries.get(key);
     if (!e) {
-      e = { key, anon, container: null, verifiedAt: 0, lastActive: this.now(), inflight: 0, metaWrittenAt: 0 };
+      e = { key, container: null, verifiedAt: 0, lastActive: this.now(), inflight: 0 };
       this.entries.set(key, e);
     }
     return e;
@@ -80,12 +76,11 @@ export class SandboxManager {
 
   async acquire(principal: string): Promise<Lease> {
     const key = userKey(principal);
-    const e = this.entry(key, isAnonPrincipal(principal));
+    const e = this.entry(key);
     e.inflight++;
     e.lastActive = this.now();
     try {
       const { container, created } = await this.serialize(key, () => this.ensureLocked(e));
-      this.noteActivity(e);
       let released = false;
       return {
         key,
@@ -96,7 +91,6 @@ export class SandboxManager {
           released = true;
           e.inflight = Math.max(0, e.inflight - 1);
           e.lastActive = this.now();
-          this.noteActivity(e);
         },
         invalidate: () => {
           e.verifiedAt = 0;
@@ -134,7 +128,7 @@ export class SandboxManager {
       });
     }
     await this.workspaces.ensure(e.key);
-    const spec = buildContainerSpec(this.config, { key: e.key, anon: e.anon });
+    const spec = buildContainerSpec(this.config, e.key);
     let container: Docker.Container;
     try {
       container = await this.docker.createContainer(spec);
@@ -149,28 +143,8 @@ export class SandboxManager {
     }
     e.container = container;
     e.verifiedAt = this.now();
-    this.log.info({ key: e.key, anon: e.anon }, "sandbox created");
+    this.log.info({ key: e.key }, "sandbox created");
     return { container, created: true };
-  }
-
-  private noteActivity(e: Entry): void {
-    if (!e.anon) return;
-    const now = this.now();
-    if (now - e.metaWrittenAt < META_WRITE_INTERVAL_MS) return;
-    e.metaWrittenAt = now;
-    this.workspaces.writeMeta(e.key, { anon: true, lastActive: now }).catch((err: unknown) => {
-      this.log.warn({ key: e.key, err: errorMessage(err) }, "failed to write workspace meta");
-    });
-  }
-
-  /** 컨테이너를 지운다. deleteWorkspace면 workspace도 지운다. */
-  async remove(principal: string, deleteWorkspace: boolean): Promise<void> {
-    const key = userKey(principal);
-    await this.serialize(key, async () => {
-      await this.removeContainer(key);
-      this.entries.delete(key);
-      if (deleteWorkspace) await this.workspaces.remove(key);
-    });
   }
 
   private async removeContainer(key: string): Promise<void> {
@@ -226,7 +200,7 @@ export class SandboxManager {
         continue;
       }
       if (!this.entries.has(key)) {
-        const e = this.entry(key, c.Labels?.[LABEL_ANON] === "1");
+        const e = this.entry(key);
         e.container = handle;
         e.verifiedAt = this.now();
         this.log.info({ key }, "adopted running sandbox");
@@ -234,7 +208,7 @@ export class SandboxManager {
     }
   }
 
-  /** 유휴 컨테이너와 오래된 익명 workspace를 정리한다. */
+  /** 유휴 컨테이너를 정리한다. workspace는 남긴다. */
   async reapOnce(): Promise<void> {
     if (this.reaping) return;
     this.reaping = true;
@@ -249,17 +223,6 @@ export class SandboxManager {
           if (this.entries.get(e.key) === e) this.entries.delete(e.key);
           this.log.info({ key: e.key }, "idle sandbox reaped");
         }).catch((err: unknown) => this.log.warn({ key: e.key, err: errorMessage(err) }, "reap failed"));
-      }
-      const cutoff = this.now() - this.config.anonRetentionSeconds * 1000;
-      for (const key of await this.workspaces.staleAnon(cutoff)) {
-        await this.serialize(key, async () => {
-          const e = this.entries.get(key);
-          if (e && (e.inflight > 0 || e.lastActive >= cutoff)) return;
-          await this.removeContainer(key);
-          this.entries.delete(key);
-          await this.workspaces.remove(key);
-          this.log.info({ key }, "stale anonymous workspace deleted");
-        }).catch((err: unknown) => this.log.warn({ key, err: errorMessage(err) }, "anon cleanup failed"));
       }
     } finally {
       this.reaping = false;

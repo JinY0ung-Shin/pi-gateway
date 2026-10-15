@@ -1,20 +1,20 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
-import { findTemplateRefs, MCP_SERVER_ID_PATTERN, McpScope, McpServerConfig, SANDBOX_HOME } from "@pi-gateway/shared";
+import { findTemplateRefs, MCP_SERVER_ID_PATTERN, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
 import type { PlatformLogger } from "../admin/logger.js";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources } from "../contracts.js";
 import type { Db } from "../db.js";
-import { mergeWithBaseline, policyProblems, type McpRegistryService } from "../mcp-registry/service.js";
+import { policyProblems, type McpRegistryService } from "../mcp-registry/service.js";
 import { normalizeActor } from "../prompts/service.js";
 import { discoverComponents, rewriteTextFiles } from "./components.js";
 import { gitFetch, normalizeGitUrl } from "./git.js";
-import { isObject, type JsonObject, parseJsonLenient, readPluginManifest, safeVersion, str } from "./manifest.js";
+import { type JsonObject, readPluginManifest, safeVersion, str } from "./manifest.js";
 import {
   describeSource,
   type MarketplaceEntry,
@@ -27,13 +27,12 @@ import {
   DEFAULT_PLUGIN_MCP_DEFAULTS,
   type MappedMcpServer,
   mapPluginMcpServer,
-  mcpServerMap,
   pluginEntryFiles,
   type PluginMcpDefaults,
   referencedDefaultEnv,
   sanitizeServerId,
 } from "./mcp-mapping.js";
-import { type CopyLimits, DEFAULT_COPY_LIMITS, readContainedFile, readContainedFileSync, safeCopyTree } from "./safe-copy.js";
+import { type CopyLimits, DEFAULT_COPY_LIMITS, readContainedFile, safeCopyTree } from "./safe-copy.js";
 import { type McpRecord, type MarketplaceRecord, type PluginRecord, PluginStore, type ResolvedSource } from "./store.js";
 
 const envKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -186,149 +185,6 @@ export class PluginService implements PluginResources {
     this.#allowLocal = options.allowLocalSources ?? process.env.PLUGIN_ALLOW_LOCAL_SOURCES === "1";
     this.#gitTimeoutMs = options.gitTimeoutMs ?? 120_000;
     this.#limits = options.copyLimits ?? DEFAULT_COPY_LIMITS;
-    this.#migrate();
-  }
-
-  /**
-   * 이전 버전으로 설치한 데이터를 옮긴다 (한 번만, 동기).
-   * - 저장된 plugin MCP 기본값: THREAD_ID={{metadata:thread_id}} → {{metadata:THREAD_ID}}, ORCHESTRATOR_URL 추가,
-   *   scope per-session → per-user ({{metadata}}를 쓰는 서버는 자동으로 per-session이 된다).
-   * - 설치된 plugin의 sandbox 서버: 설치본 파일로 다시 매핑하고 관리자가 바꾼 값만 남겨 병합한 뒤 baseline을 기록한다.
-   *   (broker 서버는 다음 업데이트 때 같은 규칙으로 병합된다.)
-   */
-  #migrate(): void {
-    const KEY = "plugins.migration";
-    const level = this.store.getSetting(KEY, 1);
-    if (level < 2) this.#migrateDefaultsAndBaselines();
-    if (level < 3) this.#migrateStablePaths();
-    if (level < 3) this.store.setSetting(KEY, 3, "system");
-  }
-
-  /** 2단계: plugin MCP 기본값과 baseline (위 #migrate 설명 참고) */
-  #migrateDefaultsAndBaselines(): void {
-    const stored = this.store.getSetting<PluginMcpDefaults | null>(SETTINGS_KEY, null);
-    if (stored) {
-      const env = { ...stored.env };
-      if (env.THREAD_ID === "{{metadata:thread_id}}") env.THREAD_ID = DEFAULT_PLUGIN_MCP_DEFAULTS.env.THREAD_ID!;
-      if ("THREAD_ID" in env && !("ORCHESTRATOR_URL" in env)) env.ORCHESTRATOR_URL = DEFAULT_PLUGIN_MCP_DEFAULTS.env.ORCHESTRATOR_URL!;
-      this.store.setSetting(SETTINGS_KEY, { env, scope: stored.scope === "per-session" ? "per-user" : stored.scope }, "migration");
-    }
-    const defaults = this.getSettings().mcpDefaults;
-    for (const plugin of this.store.listPlugins()) {
-      let changed = false;
-      const raws = this.#installedMcpRaw(plugin);
-      const mcp = plugin.mcp.map((record) => {
-        if (record.status !== "registered" || record.runIn !== "sandbox" || !record.id || record.baseline) return record;
-        const current = this.#registry.store.get(record.id);
-        const raw = raws[record.name];
-        if (!current || raw === undefined || current.source.kind !== "plugin" || current.source.pluginId !== plugin.id) return record;
-        const texts = pluginEntryFiles(raw)
-          .map((rel) => readContainedFileSync(plugin.installPath, rel))
-          .filter((t): t is string => t !== undefined);
-        const mapped = mapPluginMcpServer(record.name, raw, {
-          pluginId: plugin.id,
-          pluginName: plugin.name,
-          version: plugin.version,
-          root: plugin.installPath,
-          dataDir: pluginDataDir(plugin.marketplace, plugin.name),
-          description: str(plugin.manifest ?? {}, "description"),
-          defaults: { env: referencedDefaultEnv(raw, defaults.env, texts), scope: defaults.scope },
-          override: { id: record.id, enabled: plugin.enabled ? undefined : false },
-        });
-        if (!mapped.config || mapped.config.runIn !== "sandbox") return record;
-        const merged = McpServerConfig.safeParse(mergeWithBaseline(null, current, mapped.config));
-        if (!merged.success || policyProblems(merged.data).length > 0) {
-          this.#log.warn({ plugin: plugin.id, server: record.id }, "could not migrate plugin MCP server; left unchanged");
-          return record;
-        }
-        this.#registry.store.upsert(merged.data, "migration");
-        changed = true;
-        return { ...record, baseline: mapped.config };
-      });
-      if (changed) this.store.setPluginMcp(plugin.id, mcp);
-    }
-  }
-
-  /**
-   * 3단계: 버전 경로(`<plugin>/<version>`)로 기록된 설치본을 고정 경로(`<plugin>/current`)로 옮긴다.
-   * current 링크를 만들고, 기록·설치본 .md·sandbox 서버·baseline의 경로를 바꾼다.
-   * broker 서버는 다음 업데이트 때 고정 경로로 바뀐다 (그때 한 번 비밀키를 다시 넣어야 한다).
-   */
-  #migrateStablePaths(): void {
-    for (const plugin of this.store.listPlugins()) {
-      const pluginDir = dirname(plugin.installPath);
-      const stable = stablePluginPath(pluginDir);
-      if (plugin.installPath === stable) continue;
-      const versionDir = plugin.installPath;
-      try {
-        if (!lstatSync(versionDir).isDirectory()) continue;
-        pointCurrentAtSync(pluginDir, basename(versionDir));
-      } catch (error) {
-        this.#log.warn({ plugin: plugin.id, err: String(error) }, "could not create the stable plugin path; left unchanged");
-        continue;
-      }
-      const escaped = versionDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const boundary = new RegExp(`${escaped}(?=$|[^A-Za-z0-9._+-])`, "g");
-      const swap = (value: string) => value.replace(boundary, stable);
-      const swapConfig = (config: McpServerConfig): McpServerConfig => {
-        const t = config.transport;
-        const transport =
-          t.type === "stdio"
-            ? {
-                ...t,
-                command: swap(t.command),
-                args: t.args.map(swap),
-                env: Object.fromEntries(Object.entries(t.env).map(([k, v]) => [k, swap(v)])),
-                ...(t.cwd ? { cwd: swap(t.cwd) } : {}),
-              }
-            : { ...t, url: swap(t.url), headers: Object.fromEntries(Object.entries(t.headers).map(([k, v]) => [k, swap(v)])) };
-        return { ...config, transport };
-      };
-      rewriteMarkdownTreeSync(versionDir, swap);
-      const mcp = plugin.mcp.map((record) => {
-        if (record.runIn === "sandbox" && record.id) {
-          const current = this.#registry.store.get(record.id);
-          if (current && current.source.kind === "plugin" && current.source.pluginId === plugin.id) {
-            this.#registry.store.upsert(swapConfig(current), "migration");
-          }
-        }
-        return record.baseline ? { ...record, baseline: swapConfig(record.baseline) } : record;
-      });
-      this.store.upsertPlugin({
-        ...plugin,
-        installPath: stable,
-        components: {
-          ...plugin.components,
-          skills: plugin.components.skills.map((sk) => ({ ...sk, filePath: swap(sk.filePath), baseDir: swap(sk.baseDir) })),
-          commands: plugin.components.commands.map((c) => ({ ...c, filePath: swap(c.filePath) })),
-        },
-        mcp,
-      });
-      this.store.bumpRevision();
-    }
-  }
-
-  /** 설치본의 MCP 서버 원본 설정 (`.mcp.json` + manifest mcpServers). 동기로 읽고, 못 읽는 파일은 건너뛴다. */
-  #installedMcpRaw(plugin: PluginRecord): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    const readJson = (rel: string) => {
-      const text = readContainedFileSync(plugin.installPath, rel);
-      if (text === undefined) return undefined;
-      try {
-        return parseJsonLenient(text, rel);
-      } catch {
-        return undefined;
-      }
-    };
-    Object.assign(out, mcpServerMap(readJson(".mcp.json")));
-    const entry = this.store.getMarketplace(plugin.marketplace)?.manifest.plugins.find((p) => p.name === plugin.name);
-    const effective: JsonObject = plugin.manifest && "name" in plugin.manifest ? plugin.manifest : (entry?.raw ?? {});
-    const specs = Array.isArray(effective.mcpServers) ? effective.mcpServers : effective.mcpServers === undefined ? [] : [effective.mcpServers];
-    for (const spec of specs) {
-      if (typeof spec === "string") Object.assign(out, mcpServerMap(readJson(spec.replace(/^\.\//, ""))));
-      else if (isObject(spec)) Object.assign(out, mcpServerMap(spec));
-    }
-    return out;
   }
 
   // ── PluginResources ────────────────────────────────────────────
@@ -899,54 +755,22 @@ export class PluginService implements PluginResources {
 }
 
 /** 설치본의 고정 경로 이름. `<plugin>/current` → 현재 버전 디렉토리를 가리키는 상대 심볼릭 링크다. */
-export const CURRENT_LINK = "current";
+const CURRENT_LINK = "current";
 
-export function stablePluginPath(pluginDir: string): string {
+function stablePluginPath(pluginDir: string): string {
   return join(pluginDir, CURRENT_LINK);
 }
 
 /** `<plugin>/current`를 version으로 바꾼다. 임시 링크를 만든 뒤 rename으로 한 번에 바꾼다 (중간 상태가 없다). */
-export async function pointCurrentAt(pluginDir: string, version: string): Promise<void> {
+async function pointCurrentAt(pluginDir: string, version: string): Promise<void> {
   const tmp = join(pluginDir, `.current-${randomId()}`);
   await symlink(version, tmp);
-  const target = stablePluginPath(pluginDir);
-  try {
-    await rename(tmp, target);
-  } catch (error) {
-    // 링크가 아닌 것이 그 자리에 있으면(이전 버전의 잘못된 상태) 치우고 다시 시도한다.
-    const info = await lstat(target).catch(() => undefined);
-    if (info && !info.isSymbolicLink()) {
-      await rm(target, { recursive: true, force: true });
-      await rename(tmp, target);
-    } else {
-      await rm(tmp, { force: true });
-      throw error;
-    }
-  }
+  await rename(tmp, stablePluginPath(pluginDir)).catch(async (error: unknown) => {
+    await rm(tmp, { force: true });
+    throw error;
+  });
 }
 
-function pointCurrentAtSync(pluginDir: string, version: string): void {
-  const tmp = join(pluginDir, `.current-${randomId()}`);
-  symlinkSync(version, tmp);
-  renameSync(tmp, stablePluginPath(pluginDir));
-}
-
-/** dir 아래 .md 파일 내용을 바꾼다 (링크는 따라가지 않는다, 마이그레이션용) */
-function rewriteMarkdownTreeSync(dir: string, transform: (text: string) => string, depth = 0): void {
-  if (depth > 32) return;
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    const info = lstatSync(path);
-    if (info.isDirectory()) rewriteMarkdownTreeSync(path, transform, depth + 1);
-    else if (info.isFile() && name.toLowerCase().endsWith(".md") && info.size <= 2 * 1024 * 1024) {
-      const text = readFileSync(path, "utf8");
-      const next = transform(text);
-      if (next !== text) writeFileSync(path, next);
-    }
-  }
-}
-
-/** plugin 기록상 broker에 등록된 MCP 서버가 있는지 */
 /** plugin 기록상 broker에 서버가 있을 수 있는지 (등록하다 실패한 것도 broker에 남았을 수 있다) */
 function usesBroker(record: Pick<PluginRecord, "mcp">): boolean {
   return record.mcp.some((m) => m.runIn === "broker" && (m.status === "registered" || m.status === "error" || m.status === "broker_unavailable"));

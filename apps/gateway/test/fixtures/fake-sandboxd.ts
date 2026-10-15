@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { glob, lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { glob, lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -126,9 +126,6 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
         case SANDBOXD_ROUTES.ensure:
           dirs(user);
           return sendJson(res, 200, { key: userKey(user), containerName: `fake-${userKey(user)}`, state: "running", created: false });
-        case SANDBOXD_ROUTES.remove:
-          if (body.deleteWorkspace) await rm(dirs(user).ws, { recursive: true, force: true });
-          return sendJson(res, 200, { ok: true });
         case SANDBOXD_ROUTES.fsRead: {
           const host = toHost(user, String(body.path));
           const st = await stat(host).catch(() => null);

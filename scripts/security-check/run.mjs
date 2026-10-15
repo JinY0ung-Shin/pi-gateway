@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // pi-gateway sandbox 보안 점검
 //
-// 살아 있는 sandboxd에 임시 사용자 두 명의 sandbox를 만들고, 그 안에서 실제로 격리를 깨려고 시도한 뒤
+// 살아 있는 sandboxd에 점검용 사용자 두 명(secchk-a, secchk-b)의 sandbox를 만들고, 그 안에서 실제로 격리를 깨려고 시도한 뒤
 // 결과를 Markdown 리포트로 낸다. 각 차단 항목에는 "격리가 없었다면 새는 것이 보였을 것"을 보여주는
 // 대조군을 함께 둔다 (대조군이 실패하면 그 점검은 무효로 본다).
 //
@@ -22,7 +22,7 @@
 //   --lan IP:PORT          사내망 대상 (여러 번 가능). 결과는 INFO로만 낸다 (SANDBOX_EGRESS_ALLOW로 열었는지 확인용)
 //   --scan-secret-dir DIR  이 디렉토리의 파일 내용(비밀값)이 sandbox 어디에도 없는지 확인 (기본 /run/secrets)
 //   --out PATH             리포트 파일 (기본 stdout)
-//   --keep                 점검용 sandbox와 workspace를 지우지 않는다
+//   --keep                 점검용 workspace(secchk-a, secchk-b)를 비우지 않는다. 컨테이너는 어느 쪽이든 유휴 시간이 지나면 정리된다
 //   --strict               경고(WARN)도 실패로 친다
 //
 // 종료 코드: 0 = 실패 없음, 1 = 실패(FAIL) 있음, 2 = 점검을 돌리지 못함
@@ -181,8 +181,9 @@ const detail = (title, text) => details.push({ title, text: text.trim().slice(0,
 const short = (s, n = 160) => s.replace(/\s+/g, " ").trim().slice(0, n) || "(출력 없음)";
 
 const run = randomBytes(4).toString("hex");
-const A = `secchk-a-${run}`;
-const B = `secchk-b-${run}`;
+// 사용자 이름을 고정해 점검할 때마다 workspace가 늘지 않게 한다 (점검 후 비운다)
+const A = "secchk-a";
+const B = "secchk-b";
 const MARK = `pi-secchk-marker-${run}`;
 /**
  * sandbox 안에서 여러 대상에 직접 TCP 연결을 시도하고 상태를 돌려준다.
@@ -573,7 +574,7 @@ function render(meta) {
   lines.push("## 요약", "");
   lines.push(`- 결과: **${failed === 0 ? "통과" : "실패"}** — PASS ${count("PASS")}, FAIL ${count("FAIL")}, WARN ${count("WARN")}, INVALID ${count("INVALID")}, INFO ${count("INFO")}`);
   lines.push(`- 점검 시각: ${meta.started.toISOString()} ~ ${meta.finished.toISOString()}`);
-  lines.push(`- 대상: sandboxd ${opt.url}, 임시 사용자 \`${A}\`, \`${B}\` (점검 후 ${opt.keep ? "보존" : "삭제"})`);
+  lines.push(`- 대상: sandboxd ${opt.url}, 점검용 사용자 \`${A}\`, \`${B}\` (점검 후 workspace ${opt.keep ? "보존" : "비움"})`);
   lines.push("- 방법: 각 사용자 sandbox 안에서 실제 명령으로 접근을 시도했다. 차단 항목마다 대조군(격리가 없으면 보였을 것)을 함께 확인했다. 대조군이 실패한 항목은 INVALID로 표시하고 실패로 센다.", "");
   lines.push("## 결과", "");
   lines.push("| 영역 | 점검 | 결과 | 근거 | 대조군 |", "|---|---|---|---|---|");
@@ -604,7 +605,7 @@ try {
   exitCode = 2;
 } finally {
   if (!opt.keep) {
-    for (const u of [A, B]) await post("/v1/sandboxes/remove", u, { deleteWorkspace: true }).catch(() => undefined);
+    for (const u of [A, B]) await sh(u, "find /workspace -mindepth 1 -delete 2>/dev/null; true").catch(() => undefined);
   }
 }
 process.exit(exitCode);

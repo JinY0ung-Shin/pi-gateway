@@ -50,9 +50,6 @@ const MIGRATIONS = [
    );
    INSERT INTO prompt_live (id, name, version, revision, deployed_at, deployed_by)
    VALUES (1, NULL, NULL, lower(hex(randomblob(8))), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'system');`,
-  // 삭제는 표시만 한다 (버전과 배포 이력이 가리키는 내용을 남기고, 같은 이름을 다시 쓰지 못하게 한다).
-  `ALTER TABLE prompts ADD COLUMN deleted_at TEXT;
-   ALTER TABLE prompts ADD COLUMN deleted_by TEXT;`,
 ] as const;
 
 export const PROMPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -65,18 +62,14 @@ const Description = z.string().max(500).default("");
 const Note = z.string().max(500).default("");
 
 export const CreatePromptInput = z.object({ name: PromptName, description: Description, content: Content, message: Message });
-export const AddVersionInput = z.object({ content: Content, message: Message, baseVersion: z.number().int().min(0) });
-export const DeployInput = z.object({
-  version: z.number().int().min(1),
-  note: Note,
-  expectedRevision: z.string().optional(),
-});
-export const ResetInput = z.object({ note: Note, expectedRevision: z.string().optional() });
+export const AddVersionInput = z.object({ content: Content, message: Message });
+export const DeployInput = z.object({ version: z.number().int().min(1), note: Note });
+export const ResetInput = z.object({ note: Note });
 export const RenderInput = z.object({
   content: z.string().max(MAX_PROMPT_CHARS).optional(),
   name: PromptName.optional(),
   version: z.number().int().min(1).optional(),
-  user: z.string().max(200).nullable().optional(),
+  user: z.string().min(1).max(200).default("preview-user"),
   model: z.string().max(200).optional(),
 });
 
@@ -225,7 +218,6 @@ export class PromptManager implements PromptService {
            FROM prompts p
            JOIN prompt_versions v ON v.name = p.name
             AND v.version = (SELECT max(version) FROM prompt_versions m WHERE m.name = p.name)
-          WHERE p.deleted_at IS NULL
           ORDER BY p.name`,
       )
       .all() as {
@@ -260,7 +252,7 @@ export class PromptManager implements PromptService {
 
   get(name: string): PromptDetail {
     const prompt = this.#db
-      .prepare("SELECT name, description, created_at, updated_at, created_by FROM prompts WHERE name = ? AND deleted_at IS NULL")
+      .prepare("SELECT name, description, created_at, updated_at, created_by FROM prompts WHERE name = ?")
       .get(name) as { name: string; description: string; created_at: string; updated_at: string; created_by: string } | undefined;
     if (!prompt) throw notFound(`prompt '${name}' not found`);
     const versions = (
@@ -327,11 +319,10 @@ export class PromptManager implements PromptService {
       if (!row) throw notFound(`prompt '${req.name}' v${version} not found`);
       template = row.content;
     } else template = this.live().content;
-    const user = req.user === undefined ? "preview-user" : req.user;
     const text = renderPrompt(
       template,
       buildPromptVars(
-        { principal: user ?? "_anon-preview", user, model: req.model ?? "model", sessionId: "preview", now: new Date() },
+        { principal: req.user, user: req.user, model: req.model ?? "model", sessionId: "preview", now: new Date() },
         this.#language,
         this.#timeZone,
       ),
@@ -347,13 +338,7 @@ export class PromptManager implements PromptService {
     const actor = normalizeActor(actorInput);
     const at = now();
     this.#db.transaction(() => {
-      const exists = this.#db.prepare("SELECT deleted_at FROM prompts WHERE name = ?").get(req.name) as
-        | { deleted_at: string | null }
-        | undefined;
-      if (exists?.deleted_at) {
-        throw conflict("name_retired", `the name '${req.name}' belonged to a deleted prompt and cannot be reused (deployment history still points to it)`);
-      }
-      if (exists) throw conflict("exists", `prompt '${req.name}' already exists`);
+      if (this.#db.prepare("SELECT 1 FROM prompts WHERE name = ?").get(req.name)) throw conflict("exists", `prompt '${req.name}' already exists`);
       this.#db
         .prepare("INSERT INTO prompts (name, description, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?)")
         .run(req.name, req.description, at, at, actor);
@@ -366,23 +351,10 @@ export class PromptManager implements PromptService {
     const value = parse(Description, description);
     normalizeActor(actorInput);
     const result = this.#db
-      .prepare("UPDATE prompts SET description = ?, updated_at = ? WHERE name = ? AND deleted_at IS NULL")
+      .prepare("UPDATE prompts SET description = ?, updated_at = ? WHERE name = ?")
       .run(value, now(), name);
     if (result.changes === 0) throw notFound(`prompt '${name}' not found`);
     return this.get(name);
-  }
-
-  /** 삭제 표시만 한다. 버전·배포 이력은 남고, 같은 이름으로 다시 만들 수 없다. */
-  remove(name: string, actorInput?: string): void {
-    const actor = normalizeActor(actorInput);
-    this.#db.transaction(() => {
-      const live = this.#liveRow();
-      if (live.name === name) throw conflict("live", `prompt '${name}' is live; deploy another prompt or reset first`);
-      const result = this.#db
-        .prepare("UPDATE prompts SET deleted_at = ?, deleted_by = ? WHERE name = ? AND deleted_at IS NULL")
-        .run(now(), actor, name);
-      if (result.changes === 0) throw notFound(`prompt '${name}' not found`);
-    })();
   }
 
   addVersion(name: string, input: unknown, actorInput?: string): PromptVersion {
@@ -391,16 +363,10 @@ export class PromptManager implements PromptService {
     const at = now();
     let created: PromptVersion | undefined;
     this.#db.transaction(() => {
-      if (!this.#isActive(name)) throw notFound(`prompt '${name}' not found`);
       const latest = this.#db
         .prepare("SELECT version, content FROM prompt_versions WHERE name = ? ORDER BY version DESC LIMIT 1")
         .get(name) as { version: number; content: string } | undefined;
       if (!latest) throw notFound(`prompt '${name}' not found`);
-      if (req.baseVersion !== latest.version) {
-        throw conflict("conflict", `prompt '${name}' was changed (latest is v${latest.version}, edit was based on v${req.baseVersion})`, {
-          latestVersion: latest.version,
-        });
-      }
       if (latest.content === req.content) throw new PlatformError(422, "no_change", "content is identical to the latest version");
       created = this.#insertVersion(name, latest.version + 1, req.content, req.message, actor, at);
       this.#db.prepare("UPDATE prompts SET updated_at = ? WHERE name = ?").run(at, name);
@@ -414,8 +380,7 @@ export class PromptManager implements PromptService {
     let deploymentId: number | null = null;
     this.#db.transaction(() => {
       const live = this.#liveRow();
-      this.#checkRevision(live, req.expectedRevision);
-      const row = this.#isActive(name) ? this.#versionRow(name, req.version) : undefined;
+      const row = this.#versionRow(name, req.version);
       if (!row) throw notFound(`prompt '${name}' v${req.version} not found`);
       if (live.name === name && live.version === req.version) return; // 이미 배포된 버전
       const action = live.name === name && live.version !== null && req.version < live.version ? "rollback" : "deploy";
@@ -430,7 +395,6 @@ export class PromptManager implements PromptService {
     let deploymentId: number | null = null;
     this.#db.transaction(() => {
       const live = this.#liveRow();
-      this.#checkRevision(live, req.expectedRevision);
       if (live.name === null) return; // 이미 기본 프롬프트
       deploymentId = this.#setLive(live, { name: null, version: null, sha: null }, "reset", actor, req.note);
     })();
@@ -447,10 +411,6 @@ export class PromptManager implements PromptService {
     return row;
   }
 
-  #isActive(name: string): boolean {
-    return Boolean(this.#db.prepare("SELECT 1 FROM prompts WHERE name = ? AND deleted_at IS NULL").get(name));
-  }
-
   #versionRow(name: string, version: number): VersionRow | undefined {
     return this.#db
       .prepare("SELECT version, content, message, author, created_at, sha FROM prompt_versions WHERE name = ? AND version = ?")
@@ -465,14 +425,6 @@ export class PromptManager implements PromptService {
       )
       .run(name, version, content, message, author, at, sha);
     return { version, content, message, author, createdAt: at, sha };
-  }
-
-  #checkRevision(live: LiveRow, expected: string | undefined): void {
-    if (expected !== undefined && expected !== live.revision) {
-      throw conflict("live_changed", "the live prompt was changed by someone else; reload and try again", {
-        revision: live.revision,
-      });
-    }
   }
 
   #setLive(

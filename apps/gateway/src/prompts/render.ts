@@ -2,13 +2,8 @@ import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import type { PromptRenderInput } from "../contracts.js";
 
 /** 프롬프트 템플릿 변수. 이 밖의 `{{…}}`는 그대로 둔다. */
-export const PROMPT_VARIABLES = ["USER", "DATE", "DATETIME", "WORKSPACE", "WORKSPACE_PERSISTENCE", "MODEL", "LANGUAGE"] as const;
+export const PROMPT_VARIABLES = ["USER", "DATE", "DATETIME", "WORKSPACE", "MODEL", "LANGUAGE"] as const;
 
-/** 로그인 사용자의 workspace는 남고, 익명 세션의 workspace는 세션이 끝나면 지워진다. */
-export const WORKSPACE_PERSISTENCE = {
-  user: "kept between conversations with this user",
-  anonymous: "temporary and are deleted when this conversation ends",
-} as const;
 export type PromptVariable = (typeof PROMPT_VARIABLES)[number];
 export type PromptVars = Record<PromptVariable, string>;
 
@@ -28,11 +23,10 @@ export function buildPromptVars(input: PromptRenderInput, language: string, time
   const tz = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const date = datePart(input.now, tz);
   return {
-    USER: input.user ?? "anonymous",
+    USER: input.user,
     DATE: date,
     DATETIME: `${date} ${timePart(input.now, tz)} (${tz})`,
     WORKSPACE: SANDBOX_WORKSPACE,
-    WORKSPACE_PERSISTENCE: input.user ? WORKSPACE_PERSISTENCE.user : WORKSPACE_PERSISTENCE.anonymous,
     MODEL: input.model,
     LANGUAGE: language,
   };

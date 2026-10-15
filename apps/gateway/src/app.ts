@@ -6,7 +6,7 @@ import { registerAdminRoutes as defaultRegisterAdminRoutes } from "./admin/index
 import { createModelRuntime, type GatewayModels } from "./agent/runtime.js";
 import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
-import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes, ToolPolicy } from "./contracts.js";
+import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
 import { shuttingDownError } from "./errors.js";
 import { createMcpRegistry } from "./mcp-registry/index.js";
@@ -18,7 +18,6 @@ import { buildServer } from "./server.js";
 import { SessionHub } from "./sessions/hub.js";
 import { TurnLimiter } from "./sessions/limiter.js";
 import { SessionStore } from "./sessions/store.js";
-import { createToolPolicy } from "./tool-policy/index.js";
 import type { ToolProvider } from "./tools/provider.js";
 import { createDefaultToolProviders, ToolRegistry } from "./tools/registry.js";
 
@@ -32,7 +31,6 @@ export interface GatewayOverrides {
   prompts?: PromptService;
   plugins?: PluginResources;
   mcpRegistry?: McpRegistry;
-  toolPolicy?: ToolPolicy;
   /** 기본 provider 목록 대신 쓸 provider (테스트·확장용) */
   toolProviders?: (defaults: ToolProvider[]) => ToolProvider[];
   registerAdminRoutes?: RegisterAdminRoutes;
@@ -60,7 +58,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   const prompts = overrides.prompts ?? createPromptService(db, config);
   const plugins = overrides.plugins ?? createPluginResources(db, config);
   const mcpRegistry = overrides.mcpRegistry ?? createMcpRegistry(db, config);
-  const toolPolicy = overrides.toolPolicy ?? createToolPolicy(db, config);
 
   const models = await createModelRuntime(config);
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
@@ -71,14 +68,13 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     ...(overrides.mcpListTimeoutMs ? { mcpListTimeoutMs: overrides.mcpListTimeoutMs } : {}),
   });
   const providers = overrides.toolProviders ? overrides.toolProviders(defaults) : defaults;
-  const tools = new ToolRegistry(providers, toolPolicy, logger.child({ component: "tools" }));
+  const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));
 
   const store = new SessionStore(db);
   const hub = new SessionHub({
     store,
     config,
     tools,
-    sandboxClient,
     log: logger.child({ component: "sessions" }),
     factory: {
       config,
@@ -123,8 +119,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         return { liveSessions: h.liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
       sandboxes: () => sandboxClient.list(),
-      tools,
-      toolPolicy,
     },
     registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,
   });

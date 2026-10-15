@@ -20,12 +20,10 @@ afterAll(async () => {
 });
 
 describe("example ToolProvider (word_count)", () => {
-  it("is offered to the model and listed in the catalog", async () => {
+  it("is offered to the model", async () => {
     const before = h.llm.requests.length;
     await h.post({ input: "hi" });
     expect((h.llm.requests[before]!.tools ?? []).map((t) => t.function.name)).toContain("word_count");
-    const catalog = await h.gateway.tools.list();
-    expect(catalog).toContainEqual(expect.objectContaining({ name: "word_count", provider: "word-count", runsIn: "sandbox" }));
   });
 
   it("runs inside the sandbox", async () => {

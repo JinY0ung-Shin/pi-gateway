@@ -27,7 +27,6 @@ export interface SandboxdConfig {
   tmpSize: string;
   shmSizeBytes: number;
   idleSeconds: number;
-  anonRetentionSeconds: number;
   reapIntervalMs: number;
   containerPrefix: string;
   /** 같은 Docker 호스트에서 여러 sandboxd를 구분하는 label 값 (정리 범위) */
@@ -98,7 +97,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
     tmpSize: env.SANDBOX_TMP_SIZE ?? "256m",
     shmSizeBytes: parseBytes("SANDBOX_SHM_SIZE", env.SANDBOX_SHM_SIZE ?? "64m"),
     idleSeconds,
-    anonRetentionSeconds: int(env, "SANDBOX_ANON_RETENTION_SECONDS", 86_400, 60),
     reapIntervalMs: int(env, "SANDBOX_REAP_INTERVAL_SECONDS", Math.min(60, Math.max(5, Math.floor(idleSeconds / 4))), 1) * 1000,
     containerPrefix: prefix,
     instance,

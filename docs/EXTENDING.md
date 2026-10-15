@@ -23,8 +23,6 @@ agent가 쓸 수 있는 도구를 늘리는 방법이에요. 대부분은 코드
 | agent가 bash로 쓰는 CLI 프로그램 | [sandbox 이미지에 패키지 추가](#3-sandbox에-cli-패키지-추가-이미지-재빌드) | 없음 (이미지 재빌드) | 컨테이너 재생성 후 |
 | gateway와 깊게 연동되는 도구 | [새 ToolProvider 작성](#4-새-toolprovider-작성-코드-수정) | 있음 | gateway 재배포 후 |
 
-어떤 도구든 관리 화면의 **도구** 페이지에서 켜고 끌 수 있어요. `read`처럼 끌 수 없는 도구는 `required`로 표시돼요 (skill이 `read`로 `SKILL.md`를 읽기 때문이에요).
-
 ---
 
 ## 1. MCP 서버 추가 (코드 수정 없음)
@@ -90,7 +88,7 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 
 ### 모델에 보이는 이름
 
-`mcp__<서버 id>__<도구 이름>` (예: `mcp__github__create_issue`). 도구 페이지에는 서버마다 `mcp__github__*` 항목 하나로 보이고, 이걸 끄면 그 서버의 도구가 전부 꺼져요. `toolAllow`/`toolDeny`로 서버 안의 일부 도구만 노출할 수도 있어요.
+`mcp__<서버 id>__<도구 이름>` (예: `mcp__github__create_issue`). `toolAllow`/`toolDeny`로 서버 안의 일부 도구만 노출할 수 있어요.
 
 ---
 
@@ -111,20 +109,9 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 
 agent가 `bash`로 쓰는 프로그램은 sandbox 이미지에 미리 설치해요. 실행 중인 sandbox는 시스템 영역이 읽기 전용이라 `apt install`을 할 수 없어요 (pip·npm 패키지는 agent가 workspace 안에 직접 설치할 수 있어요).
 
-`.env`에 빌드 인자를 넣고 이미지를 다시 빌드해요:
-
-```bash
-SANDBOX_EXTRA_APT_PACKAGES="build-essential sqlite3"
-SANDBOX_EXTRA_PIP_PACKAGES="pandas openpyxl python-docx"
-SANDBOX_EXTRA_NPM_PACKAGES="typescript prettier"
-```
-
-```bash
-docker compose build sandbox-image
-```
+파생 이미지(`FROM pi-gateway/sandbox`)를 만들고 `SANDBOX_IMAGE`를 그 이미지로 바꿔요.
 
 - 이미 떠 있는 사용자 컨테이너는 예전 이미지를 써요. 유휴 시간이 지나 다시 만들어질 때 새 이미지가 적용돼요. 바로 적용하려면 해당 사용자 컨테이너(`pi-sbx-…`)를 지워요. 다음 도구 호출 때 새 이미지로 다시 만들어져요 (workspace는 남아요).
-- 패키지가 많아지면 파생 이미지(`FROM pi-gateway/sandbox`)를 만들고 `SANDBOX_IMAGE`만 바꿔도 돼요.
 - 운영 절차(빌드·배포·확인)는 [OPERATIONS.md §5 "sandbox에 도구 추가하기"](OPERATIONS.md#5-sandbox에-도구-추가하기)에 있어요.
 - broker에서 도는 stdio MCP 서버에 필요한 런타임은 `BROKER_EXTRA_APT_PACKAGES`/`_NPM_`/`_PIP_`로 broker 이미지에 넣어요.
 
@@ -139,7 +126,7 @@ MCP 서버나 skill로 안 되는 경우에만 써요. 예: 응답 흐름 자체
 ```
 apps/gateway/src/tools/
   provider.ts          ToolProvider·ToolSessionContext 인터페이스 (규칙 주석 포함)
-  registry.ts          provider 목록 → ToolPolicy로 거르기 → pi tools/customTools
+  registry.ts          provider 목록 → pi tools/customTools
   providers/
     sandbox.ts         read, write, edit, ls, find, bash, grep
     ask-user.ts        AskUserQuestion
@@ -149,17 +136,14 @@ apps/gateway/src/tools/
 
 ```ts
 interface ToolProvider {
-  id: string;                    // 관리 화면·정책에 보이는 provider 이름
-  description: string;
-  catalog(): Promise<ToolCatalogEntry[]>;                       // 관리 화면용 목록
+  id: string;                    // 로그에 쓰는 이름
   createTools(ctx: ToolSessionContext): Promise<ToolDefinition[]>; // 세션마다 호출
   disposeSession?(sessionId: string): Promise<void>;           // 세션 정리 때 연결 닫기
-  entryFor?(toolName: string): { enabledByDefault: boolean; required?: boolean } | undefined;
 }
 
 interface ToolSessionContext {
-  principal: string;          // 사용자 id 또는 `_anon-<sessionId>`
-  user: string | null;
+  principal: string;          // 사용자 id
+  user: string;
   sessionId: string;
   model: string;
   sandboxClient: SandboxClient;
@@ -182,17 +166,11 @@ interface ToolSessionContext {
 `apps/gateway/test/examples/word-count-provider.ts`:
 
 ```ts
-const ENTRIES: ToolCatalogEntry[] = [
-  { name: "word_count", description: "파일의 줄·단어·바이트 수", provider: "word-count", runsIn: "sandbox", enabledByDefault: true },
-];
 const Params = Type.Object({ path: Type.String({ description: "File path, relative to /workspace" }) });
 
 export function createWordCountProvider(): ToolProvider {
   return {
     id: "word-count",
-    description: "예시: sandbox에서 wc를 실행한다",
-    catalog: async () => ENTRIES,
-    entryFor: staticEntryLookup(ENTRIES),
     async createTools(ctx) {
       const tool: ToolDefinition<typeof Params> = {
         name: "word_count",
@@ -249,5 +227,4 @@ it("runs inside the sandbox", async () => {
 - [ ] 사용자마다 달라질 수 있는 것(도구 목록 등)을 캐시하면 키에 principal을 넣는다. 사용자 sandbox에서 만든 값을 다른 사용자에게 주지 않는다.
 - [ ] sandbox에서 프로그램을 띄우면 이름(`node`)이 아니라 시스템 디렉토리의 절대 경로로 띄운다 (`resolveSandboxCommand`). workspace의 PATH 디렉토리에 심은 실행 파일을 쓰지 않기 위해서다.
 - [ ] 연결·프로세스를 만들면 `disposeSession`에서 닫는다.
-- [ ] `catalog()`는 관리 화면에서 불리니 가볍게 만든다. 사용자마다 달라지는 도구는 `dynamic: true` 대표 항목으로 보여준다.
 - [ ] 도구 이름은 `[A-Za-z0-9_-]` 64자 이내이고 다른 provider와 겹치지 않는다.

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ToolPolicy } from "../src/contracts.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { type Harness, last, ofType, startHarness } from "./helpers.js";
 
@@ -25,15 +24,10 @@ function installFakeRg(): () => void {
 let uninstallFakeRg: (() => void) | undefined;
 
 let h: Harness;
-const disabled = new Set<string>();
-const policy: ToolPolicy = {
-  isEnabled: (entry) => entry.required === true || !disabled.has(entry.name),
-  revision: () => 0,
-};
 
 beforeAll(async () => {
   uninstallFakeRg = installFakeRg();
-  h = await startHarness({ toolPolicy: policy });
+  h = await startHarness();
 });
 afterAll(async () => {
   try {
@@ -173,32 +167,10 @@ describe("sandbox tools", () => {
   });
 });
 
-describe("tool policy", () => {
+describe("offered tools", () => {
   it("declares the default tools to the model", async () => {
     const before = h.llm.requests.length;
     await h.post({ input: "tools?" });
     expect(toolNames(before)).toEqual(["AskUserQuestion", "bash", "edit", "find", "grep", "ls", "read", "write"]);
-  });
-
-  it("disabled tools are not offered; required tools (read) cannot be disabled", async () => {
-    disabled.add("bash");
-    disabled.add("read");
-    try {
-      const before = h.llm.requests.length;
-      await h.post({ input: "tools?" });
-      const names = toolNames(before);
-      expect(names).not.toContain("bash");
-      expect(names).toContain("read");
-    } finally {
-      disabled.clear();
-    }
-  });
-
-  it("the tool catalog lists every provider", async () => {
-    const catalog = await h.gateway.tools.list();
-    const byName = new Map(catalog.map((e) => [e.name, e]));
-    expect(byName.get("read")).toMatchObject({ provider: "sandbox", runsIn: "sandbox", required: true });
-    expect(byName.get("bash")).toMatchObject({ provider: "sandbox", runsIn: "sandbox" });
-    expect(byName.get("AskUserQuestion")).toMatchObject({ provider: "ask-user", runsIn: "gateway" });
   });
 });

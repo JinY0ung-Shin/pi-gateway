@@ -4,12 +4,10 @@ import type { RegisterAdminRoutes } from "../contracts.js";
 import { type AdminVia, CSRF_HEADER, isMutating } from "./auth.js";
 import { type AdminContext, createAdminContext } from "./context.js";
 import { isPlatformError, PlatformError } from "./errors.js";
-import { createIpAllowlist } from "./net.js";
 import { registerMcpRoutes } from "./routes-mcp.js";
 import { registerPluginRoutes } from "./routes-plugins.js";
 import { registerPromptRoutes } from "./routes-prompts.js";
 import { registerStatusRoutes } from "./routes-status.js";
-import { registerToolRoutes } from "./routes-tools.js";
 import { registerAdminUi } from "./ui.js";
 
 export { PlatformError } from "./errors.js";
@@ -27,20 +25,7 @@ export function adminUiDir(): string {
 export const registerAdminRoutes: RegisterAdminRoutes = async (app, deps) => {
   const ctx = createAdminContext(deps);
   const uiDir = adminUiDir();
-  const allowed = createIpAllowlist(deps.config.admin.allowedCidrs ?? []);
   await app.register(async (admin) => {
-    if (allowed) {
-      // 허용 목록 밖 주소는 UI와 API 모두 막는다 (req.ip는 TRUST_PROXY 설정에 따라 결정된다).
-      admin.addHook("onRequest", async (req, reply) => {
-        if (allowed(req.ip)) return;
-        if (req.url.startsWith("/admin/api")) {
-          return reply.code(403).header("cache-control", "no-store").send({
-            error: { code: "address_not_allowed", message: "this address may not use the admin API" },
-          });
-        }
-        return reply.code(403).type("text/plain; charset=utf-8").send("Forbidden");
-      });
-    }
     admin.addHook("onSend", async (_req, reply, payload) => {
       reply.header("x-content-type-options", "nosniff");
       reply.header("x-frame-options", "DENY");
@@ -108,6 +93,5 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   registerPromptRoutes(api, ctx);
   registerMcpRoutes(api, ctx);
   registerPluginRoutes(api, ctx);
-  registerToolRoutes(api, ctx);
   registerStatusRoutes(api, ctx);
 }
