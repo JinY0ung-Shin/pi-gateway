@@ -1,0 +1,24 @@
+{
+  "name": "@pi-gateway/sandboxd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@fastify/websocket": "11.3.4",
+    "@pi-gateway/shared": "*",
+    "dockerode": "5.0.1",
+    "fastify": "5.12.7",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/dockerode": "4.0.2",
+    "@types/ws": "8.18.2",
+    "ws": "8.22.0"
+  }
+}

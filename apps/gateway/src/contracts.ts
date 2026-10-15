@@ -1,0 +1,122 @@
+import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
+import type { McpServerConfig, SandboxInfo, VisibleServer } from "@pi-gateway/shared";
+import type { FastifyInstance } from "fastify";
+import type { GatewayConfig } from "./config.js";
+import type { Db } from "./db.js";
+
+/**
+ * gateway 안의 레인 간 계약.
+ *
+ * - core 레인(src/agent, src/api, src/tools, src/sessions, src/sandbox, src/server.ts, src/main.ts)은
+ *   아래 인터페이스를 *사용*한다.
+ * - platform 레인(src/prompts, src/plugins, src/mcp-registry, src/admin, apps/admin-ui)은
+ *   아래 인터페이스를 *구현*한다. 각 디렉토리의 index.ts가 factory를 export한다.
+ * 시그니처를 바꿔야 하면 상대 레인과 먼저 합의한다.
+ */
+
+// ── 시스템 프롬프트 (구현: src/prompts) ─────────────────────────────
+
+export interface PromptRenderInput {
+  /** 사용자 id 또는 `_anon-<sessionId>` */
+  principal: string;
+  /** 익명이면 null */
+  user: string | null;
+  model: string;
+  sessionId: string;
+  now: Date;
+}
+
+export interface PromptSnapshot {
+  /** 렌더링이 끝난 시스템 프롬프트 (pi 기본 preamble을 대체한다) */
+  text: string;
+  /** 어떤 배포본에서 왔는지. 기본 프롬프트면 name/version이 null이다. */
+  ref: { name: string | null; version: number | null; revision: string };
+}
+
+export interface PromptService {
+  /** 세션을 만들 때 한 번 호출한다. 결과는 세션 메타에 저장되고 세션을 되살릴 때 다시 쓴다. */
+  snapshotForSession(input: PromptRenderInput): PromptSnapshot;
+}
+
+// ── plugin 리소스 (구현: src/plugins) ──────────────────────────────
+
+export interface PluginResources {
+  /** 활성 plugin의 skill. filePath는 PLUGINS_DIR 아래 절대 경로이고, sandbox에서도 같은 경로로 보인다. */
+  skills(): Skill[];
+  /** 활성 plugin의 command를 변환한 pi prompt template. 이름은 `<plugin>:<command>`. */
+  promptTemplates(): PromptTemplate[];
+  /** 설치·제거·활성화가 바뀔 때마다 증가한다. */
+  revision(): number;
+}
+
+// ── MCP 서버 목록 (구현: src/mcp-registry) ──────────────────────────
+
+export interface McpRegistry {
+  /** gateway DB에 있는 enabled 상태의 sandbox 실행 서버 */
+  sandboxServers(): McpServerConfig[];
+  /**
+   * broker가 이 principal에게 허용한 서버 (broker `GET /mcp/servers`).
+   * broker가 설정되지 않았거나 호출이 실패하면 빈 배열을 돌려주고 경고 로그를 남긴다.
+   */
+  brokerServersFor(principal: string, sessionId: string): Promise<VisibleServer[]>;
+}
+
+// ── 관리 화면 (구현: src/admin) ────────────────────────────────────
+
+export interface SessionStats {
+  liveSessions: number;
+  activeTurns: number;
+  queuedTurns: number;
+}
+
+export interface AdminDeps {
+  config: GatewayConfig;
+  db: Db;
+  prompts: PromptService;
+  plugins: PluginResources;
+  mcp: McpRegistry;
+  /** core가 제공하는 실시간 통계 */
+  stats: () => SessionStats;
+  /** sandboxd `GET /v1/sandboxes` */
+  sandboxes: () => Promise<SandboxInfo[]>;
+  /** core가 등록된 ToolProvider들에서 모은 도구 목록 (관리 화면 "도구" 페이지) */
+  tools?: ToolCatalog;
+  /** 도구 켜기/끄기 정책 (관리 화면에서 바꾼다) */
+  toolPolicy?: ToolPolicy;
+}
+
+/** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */
+export type RegisterAdminRoutes = (app: FastifyInstance, deps: AdminDeps) => Promise<void>;
+
+// ── 도구 확장 ──────────────────────────────────────────────────────
+//
+// 도구는 core의 ToolProvider 단위로 등록된다 (src/tools/providers/*, 인터페이스는 core 소유).
+// 새 도구를 추가하는 방법은 docs/EXTENDING.md에 정리한다. 이 파일에는 platform 레인이
+// 쓰는 부분(목록 표시와 켜기/끄기 정책)만 둔다.
+
+export interface ToolCatalogEntry {
+  /** 모델에 노출되는 도구 이름 (예: "bash", "AskUserQuestion", "mcp__github__create_issue") */
+  name: string;
+  description: string;
+  /** 도구를 제공하는 provider id (예: "sandbox", "ask-user", "mcp-broker", "mcp-sandbox") */
+  provider: string;
+  /** 실제로 실행되는 곳 */
+  runsIn: "sandbox" | "gateway" | "broker";
+  /** 정책에 설정이 없을 때 켜져 있는지 */
+  enabledByDefault: boolean;
+  /** 끌 수 없는 도구 (예: skill을 읽는 데 필요한 read) */
+  required?: boolean;
+  /** MCP 도구처럼 사용자·서버에 따라 바뀌는 도구는 대표 항목(예: "mcp__github__*")으로 보여준다 */
+  dynamic?: boolean;
+}
+
+export interface ToolCatalog {
+  list(): Promise<ToolCatalogEntry[]>;
+}
+
+/** 관리자가 정한 도구 켜기/끄기 (구현: src/tool-policy). core는 세션을 만들 때 이것으로 도구를 거른다. */
+export interface ToolPolicy {
+  isEnabled(entry: Pick<ToolCatalogEntry, "name" | "provider" | "enabledByDefault" | "required">, principal: string): boolean;
+  /** 정책이 바뀔 때마다 증가한다 */
+  revision(): number;
+}

@@ -1,0 +1,27 @@
+{
+  "name": "pi-gateway",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -b && npm run build -w @pi-gateway/admin-ui",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:docker": "PI_GW_DOCKER_TESTS=1 vitest run",
+    "dev:gateway": "tsx --conditions=pi-gateway-source apps/gateway/src/main.ts",
+    "dev:sandboxd": "tsx --conditions=pi-gateway-source apps/sandboxd/src/main.ts",
+    "dev:broker": "tsx --conditions=pi-gateway-source apps/mcp-broker/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  }
+}

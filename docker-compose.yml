@@ -1,0 +1,316 @@
+# pi-gateway — docker compose 배포
+#
+#   sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh   # 디렉토리·비밀값·DOCKER_GID
+#   cp .env.example .env 에서 필요한 값을 채운 뒤 (setup-host.sh가 일부를 .env에 추가한다)
+#   docker compose up -d --build
+#
+# 구조와 보안 경계: docs/DESIGN.md §2–3, 운영: docs/OPERATIONS.md
+# - gateway만 포트를 공개한다. sandboxd·mcp-broker는 internal 네트워크(control)에만 있다.
+# - 사용자 sandbox 컨테이너(sandboxd가 만든다)는 네트워크가 없다(network_mode none). 바깥으로는
+#   egress-proxy의 unix socket(proxy-sock 볼륨)으로만 나가고, 프록시가 loopback·link-local(metadata)·사설 대역을 거부한다.
+#   그래서 sandbox에서 내부 서비스·호스트·다른 sandbox에 닿을 수 없고, 호스트 방화벽 설정이 필요 없다 (docs/OPERATIONS.md §6).
+
+name: pi-gateway
+
+x-hardening: &hardening
+  read_only: true
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  # sandbox 이미지를 빌드만 하고 바로 끝나는 서비스. sandboxd가 이 이미지로 사용자 컨테이너를 만든다.
+  # 파생 이미지를 쓰려면 SANDBOX_IMAGE만 바꾼다 (docs/OPERATIONS.md "sandbox에 도구 추가하기").
+  sandbox-image:
+    image: ${SANDBOX_BASE_IMAGE:-pi-gateway/sandbox:latest}
+    build:
+      context: ./images/sandbox
+      args:
+        EXTRA_APT_PACKAGES: ${SANDBOX_EXTRA_APT_PACKAGES:-}
+        EXTRA_PIP_PACKAGES: ${SANDBOX_EXTRA_PIP_PACKAGES:-}
+        EXTRA_NPM_PACKAGES: ${SANDBOX_EXTRA_NPM_PACKAGES:-}
+    command: ["true"]
+    network_mode: none
+    read_only: true
+    restart: "no"
+
+  # sandbox의 유일한 바깥 출구 (Smokescreen 기반 HTTP/HTTPS 프록시). TCP 포트를 열지 않고 proxy-sock 볼륨의
+  # unix socket에서만 듣는다. sandbox는 이 볼륨을 읽기 전용으로 mount하고, 안의 sbx-proxy-bridge(127.0.0.1:3128)로 연결한다.
+  egress-proxy:
+    <<: *hardening
+    image: pi-gateway/egress-proxy:${PI_GATEWAY_VERSION:-latest}
+    build:
+      context: .
+      target: egress-proxy
+    user: "65532:65532"
+    environment:
+      # 사설 대역 중 열어 줄 목적지, 공인 대역 중 더 막을 목적지 (.env.example, docs/OPERATIONS.md §6)
+      SANDBOX_EGRESS_ALLOW: ${SANDBOX_EGRESS_ALLOW:-}
+      SANDBOX_PROXY_DENY: ${SANDBOX_PROXY_DENY:-}
+    volumes:
+      - proxy-sock:/run/pi-proxy
+    networks:
+      - proxy-egress
+
+  sandboxd:
+    <<: *hardening
+    image: pi-gateway/sandboxd:${PI_GATEWAY_VERSION:-latest}
+    build:
+      context: .
+      target: sandboxd
+    # uid 1000 = sandbox 사용자와 같은 uid (workspace 소유자). docker.sock 접근은 docker 그룹으로 준다.
+    user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID:?DOCKER_GID is required: stat -c %g /var/run/docker.sock}"
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+      egress-proxy:
+        condition: service_healthy
+    environment:
+      PORT: "7070"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-pi-gateway/sandbox:latest}
+      # 아래 volumes의 proxy-sock과 같은 이름이어야 한다
+      SANDBOX_PROXY_VOLUME: ${SANDBOX_PROXY_VOLUME:-pi-gateway-proxy-sock}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-}
+      WORKSPACES_DIR: /srv/workspaces
+      WORKSPACES_HOST_DIR: ${PI_GATEWAY_HOME:?PI_GATEWAY_HOME is required}/workspaces
+      PLUGINS_HOST_DIR: ${PI_GATEWAY_HOME}/plugins
+      SANDBOX_MEMORY: ${SANDBOX_MEMORY:-1g}
+      SANDBOX_CPUS: ${SANDBOX_CPUS:-1}
+      SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
+      SANDBOX_TMP_SIZE: ${SANDBOX_TMP_SIZE:-256m}
+      SANDBOX_SHM_SIZE: ${SANDBOX_SHM_SIZE:-64m}
+      SANDBOX_IDLE_SECONDS: ${SANDBOX_IDLE_SECONDS:-900}
+      SANDBOX_ANON_RETENTION_SECONDS: ${SANDBOX_ANON_RETENTION_SECONDS:-86400}
+      SANDBOX_FS_TIMEOUT_SECONDS: ${SANDBOX_FS_TIMEOUT_SECONDS:-60}
+      SANDBOX_INSTANCE: ${SANDBOX_INSTANCE:-default}
+      SANDBOX_CONTAINER_PREFIX: ${SANDBOX_CONTAINER_PREFIX:-pi-sbx-}
+    secrets:
+      - source: sbx_sandboxd_jwt_secret
+        target: sandboxd_jwt_secret
+    volumes:
+      - ${DOCKER_SOCKET_HOST:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${PI_GATEWAY_HOME}/workspaces
+        target: /srv/workspaces
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - control
+
+  mcp-broker:
+    <<: *hardening
+    image: pi-gateway/mcp-broker:${PI_GATEWAY_VERSION:-latest}
+    build:
+      context: .
+      target: mcp-broker
+      args:
+        BROKER_EXTRA_APT_PACKAGES: ${BROKER_EXTRA_APT_PACKAGES:-}
+        BROKER_EXTRA_NPM_PACKAGES: ${BROKER_EXTRA_NPM_PACKAGES:-}
+        BROKER_EXTRA_PIP_PACKAGES: ${BROKER_EXTRA_PIP_PACKAGES:-}
+    # stdio MCP 서버를 서버마다 다른 uid로 띄우기 위해 root + 최소 capability로 실행한다.
+    # (BROKER_STDIO_UID_RANGE를 비우면 cap_add 없이 비 root로 돌려도 된다: user "10002:10002")
+    user: "0:0"
+    # SETUID/SETGID: 하위 프로세스 uid 전환, CHOWN: 프로세스별 작업 디렉토리 소유권,
+    # KILL: 다른 uid의 process group 정리, DAC_OVERRIDE: 하위 프로세스가 만든 작업 디렉토리 삭제
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+      - KILL
+      - DAC_OVERRIDE
+    environment:
+      BROKER_PORT: "7080"
+      BROKER_ADMIN_PORT: "7081"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATA_DIR: /data
+      PLUGINS_DIR: /opt/plugins
+      BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
+      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker_admin_token
+      BROKER_KEK_FILE: /run/secrets/broker_kek
+      BROKER_STDIO_UID_RANGE: ${BROKER_STDIO_UID_RANGE:-20000-20999}
+      BROKER_STDIO_COMMAND_ALLOWLIST: ${BROKER_STDIO_COMMAND_ALLOWLIST:-}
+      BROKER_MAX_PROCESSES: ${BROKER_MAX_PROCESSES:-64}
+      BROKER_MAX_PROCESSES_PER_SERVER: ${BROKER_MAX_PROCESSES_PER_SERVER:-16}
+      BROKER_MAX_CONNECTIONS: ${BROKER_MAX_CONNECTIONS:-512}
+      BROKER_IDLE_TTL_SECONDS: ${BROKER_IDLE_TTL_SECONDS:-300}
+      BROKER_CALL_TIMEOUT_CAP_SECONDS: ${BROKER_CALL_TIMEOUT_CAP_SECONDS:-600}
+      BROKER_CONNECT_TIMEOUT_SECONDS: ${BROKER_CONNECT_TIMEOUT_SECONDS:-30}
+      BROKER_MAX_RESULT_BYTES: ${BROKER_MAX_RESULT_BYTES:-4194304}
+      BROKER_MAX_REQUEST_BODY_BYTES: ${BROKER_MAX_REQUEST_BODY_BYTES:-4194304}
+      BROKER_TOOLS_CACHE_SECONDS: ${BROKER_TOOLS_CACHE_SECONDS:-60}
+    # 비밀 파일은 root 소유 0400이라 stdio 하위 프로세스(uid 20000+)가 읽을 수 없다
+    secrets:
+      - source: broker_jwt_secret
+        target: broker_jwt_secret
+      - source: broker_admin_token
+        target: broker_admin_token
+      - source: broker_kek
+        target: broker_kek
+    volumes:
+      - broker-data:/data
+      - type: bind
+        source: ${PI_GATEWAY_HOME}/plugins
+        target: /opt/plugins
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    networks:
+      - control
+      - broker-egress
+
+  gateway:
+    <<: *hardening
+    image: pi-gateway/gateway:${PI_GATEWAY_VERSION:-latest}
+    build:
+      context: .
+      target: gateway
+    user: "10001:10001"
+    depends_on:
+      sandboxd:
+        condition: service_healthy
+      mcp-broker:
+        condition: service_healthy
+    ports:
+      # 기본은 127.0.0.1 (같은 호스트의 reverse proxy 뒤). 직접 공개하려면 GATEWAY_BIND_ADDR를 바꾼다.
+      # 공인 IP로 공개하면 그 IP를 SANDBOX_PROXY_DENY에 넣는다 (프록시는 사설 대역만 기본으로 막는다, docs/OPERATIONS.md §6).
+      - "${GATEWAY_BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATA_DIR: /data
+      PLUGINS_DIR: /opt/plugins
+      PI_OFFLINE: "1"
+      # LLM (vLLM 등 OpenAI 호환 엔드포인트)
+      LLM_API: ${LLM_API:-openai-completions}
+      LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL is required}
+      LLM_MODELS: ${LLM_MODELS:?LLM_MODELS is required}
+      # 값 없이 키만 적은 변수는 .env에 있을 때만 넘어간다 (빈 문자열과 '설정 안 함'을 구분하는 변수)
+      DEFAULT_MODEL:
+      LLM_PROVIDER_ID: ${LLM_PROVIDER_ID:-upstream}
+      LLM_HEADERS:
+      LLM_COMPAT:
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      # 인증
+      API_KEY_FILE: /run/secrets/api_key
+      USER_API_KEYS_FILE: /run/secrets/user_api_keys
+      ADMIN_API_KEY_FILE: /run/secrets/admin_api_key
+      ADMIN_COOKIE_SECRET_FILE: /run/secrets/admin_cookie_secret
+      AUTH_DISABLED: ${AUTH_DISABLED:-0}
+      # 내부 서비스
+      SANDBOXD_URL: http://sandboxd:7070
+      SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
+      BROKER_URL: http://mcp-broker:7080
+      BROKER_ADMIN_URL: http://mcp-broker:7081
+      BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
+      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker_admin_token
+      # 세션
+      SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-300}
+      ANON_SESSION_TTL_SECONDS: ${ANON_SESSION_TTL_SECONDS:-3600}
+      NON_STREAM_TIMEOUT_SECONDS: ${NON_STREAM_TIMEOUT_SECONDS:-600}
+      MAX_CONCURRENT_TURNS: ${MAX_CONCURRENT_TURNS:-16}
+      MAX_CONCURRENT_TURNS_PER_USER: ${MAX_CONCURRENT_TURNS_PER_USER:-3}
+      TURN_QUEUE_TIMEOUT_SECONDS: ${TURN_QUEUE_TIMEOUT_SECONDS:-120}
+      TURN_QUEUE_MAX_WAITERS: ${TURN_QUEUE_MAX_WAITERS:-256}
+      SSE_KEEPALIVE_SECONDS: ${SSE_KEEPALIVE_SECONDS:-15}
+      # MCP·프롬프트·plugin
+      MCP_FORWARD_HEADERS:
+      MCP_METADATA_KEYS: ${MCP_METADATA_KEYS:-THREAD_ID,ORCHESTRATOR_URL}
+      PROMPT_LANGUAGE: ${PROMPT_LANGUAGE:-Korean}
+      PLUGIN_ALLOW_LOCAL_SOURCES: ${PLUGIN_ALLOW_LOCAL_SOURCES:-0}
+      # 프록시·관리 화면 접근 (docs/OPERATIONS.md §3.4)
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:-}
+    secrets:
+      - source: gw_llm_api_key
+        target: llm_api_key
+      - source: gw_api_key
+        target: api_key
+      - source: gw_user_api_keys
+        target: user_api_keys
+      - source: gw_admin_api_key
+        target: admin_api_key
+      - source: gw_admin_cookie_secret
+        target: admin_cookie_secret
+      - source: gw_sandboxd_jwt_secret
+        target: sandboxd_jwt_secret
+      - source: gw_broker_jwt_secret
+        target: broker_jwt_secret
+      - source: gw_broker_admin_token
+        target: broker_admin_token
+    volumes:
+      - gateway-data:/data
+      - type: bind
+        source: ${PI_GATEWAY_HOME}/plugins
+        target: /opt/plugins
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=1g
+    networks:
+      - edge
+      - control
+
+networks:
+  # gateway의 공개 포트와 LLM 엔드포인트 접근
+  edge: {}
+  # gateway ↔ sandboxd ↔ mcp-broker. 외부로 나가는 경로가 없다.
+  control:
+    internal: true
+  # mcp-broker → 원격 MCP 서버
+  broker-egress: {}
+  # egress-proxy → 인터넷. egress-proxy만 붙는다.
+  proxy-egress: {}
+
+volumes:
+  gateway-data: {}
+  broker-data: {}
+  # egress-proxy의 unix socket. sandboxd가 만드는 sandbox 컨테이너가 이 이름으로 mount하므로 이름을 고정한다.
+  proxy-sock:
+    name: ${SANDBOX_PROXY_VOLUME:-pi-gateway-proxy-sock}
+
+# 비밀 파일은 쓰는 서비스마다 사본이 있고, 그 서비스 uid 소유의 0400이다 (scripts/setup-host.sh).
+# compose의 파일 secret은 호스트 파일의 소유자·권한 그대로 /run/secrets/<target>에 mount된다.
+secrets:
+  # gateway (uid 10001)
+  gw_llm_api_key:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/llm_api_key
+  gw_api_key:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/api_key
+  gw_user_api_keys:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/user_api_keys
+  gw_admin_api_key:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_api_key
+  gw_admin_cookie_secret:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_cookie_secret
+  gw_sandboxd_jwt_secret:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/sandboxd_jwt_secret
+  gw_broker_jwt_secret:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/broker_jwt_secret
+  gw_broker_admin_token:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/broker_admin_token
+  # sandboxd (uid 1000)
+  sbx_sandboxd_jwt_secret:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/sandboxd/sandboxd_jwt_secret
+  # mcp-broker (root)
+  broker_jwt_secret:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_jwt_secret
+  broker_admin_token:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_admin_token
+  broker_kek:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_kek

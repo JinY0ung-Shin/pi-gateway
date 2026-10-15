@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+apps/gateway/public
+apps/admin-ui/dist
+.git
+.env
+.env.*
+!.env.example
+secrets
+var
+data
+coverage
+**/.DS_Store

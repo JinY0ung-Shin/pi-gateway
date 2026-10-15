@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.env
+.env.*
+!.env.example
+/data/
+/secrets/
+/var/
+apps/admin-ui/dist/
+apps/gateway/public/
