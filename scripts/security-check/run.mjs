@@ -15,11 +15,11 @@
 //   --secret-file PATH     sandboxd JWT 비밀키 파일 (기본 $SANDBOXD_JWT_SECRET_FILE, 또는 $SANDBOXD_JWT_SECRET)
 //   --internal NAME:PORT   sandbox에서 닿으면 안 되는 내부 서비스 (여러 번 가능, 기본 gateway:8080 sandboxd:7070
 //                          mcp-broker:7080 mcp-broker:7081). 이름은 이 스크립트가 도는 곳에서 IP로 바꿔 시험한다.
-//   --egress HOST:PORT     인터넷 접속 대조군: egress 프록시로 연결한다 (기본 1.1.1.1:443). 인터넷이 막힌 환경이면 --egress none
+//   --egress HOST:PORT     대조군: SANDBOX_EGRESS_ALLOW에 있는 대상 하나. egress 프록시로 연결되는지 본다 (기본 없음)
 //   --host-ip IP           sandbox에서 닿으면 안 되는 호스트 주소 (여러 번 가능). 호스트의 LAN·공인 주소(ip -4 addr)를 넣는다.
 //                          sandbox에는 경로가 없으므로 egress 프록시가 이 주소를 거부하는지 본다.
 //   --host-ports LIST      호스트 주소에서 확인할 포트 (기본 22,80,443,2375,2376,8080)
-//   --lan IP:PORT          사내망 대상 (여러 번 가능). 결과는 INFO로만 낸다 (SANDBOX_EGRESS_ALLOW로 열었는지 확인용)
+//   --lan HOST:PORT        사내망 대상 (여러 번 가능, IP 또는 도메인). 결과는 INFO로만 낸다 (SANDBOX_EGRESS_ALLOW 확인용)
 //   --scan-secret-dir DIR  이 디렉토리의 파일 내용(비밀값)이 sandbox 어디에도 없는지 확인 (기본 /run/secrets)
 //   --out PATH             리포트 파일 (기본 stdout)
 //   --keep                 점검용 workspace(secchk-a, secchk-b)를 비우지 않는다. 컨테이너는 어느 쪽이든 유휴 시간이 지나면 정리된다
@@ -34,7 +34,7 @@ import { join } from "node:path";
 
 // ── 인자 ────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const opt = { url: "http://127.0.0.1:7070", internal: [], egress: "1.1.1.1:443", scanDir: "/run/secrets", keep: false, strict: false, hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
+const opt = { url: "http://127.0.0.1:7070", internal: [], egress: null, scanDir: "/run/secrets", keep: false, strict: false, hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   const next = () => {
@@ -417,16 +417,16 @@ async function main() {
   // sandbox는 network_mode none이고, 바깥으로는 egress 프록시(127.0.0.1:3128 → unix socket)로만 나간다.
   // 대상마다 직접 연결과 프록시 경유(CONNECT)를 둘 다 시도한다.
   let ctlNet = null;
-  if (opt.egress !== "none") {
+  if (opt.egress) {
     const [h, p] = opt.egress.split(":");
     ctlNet = (await proxyCodes(B, [[h, p]])).get(`${h}:${p}`) === "200";
   }
   const netCtlText =
     ctlNet === null
-      ? "인터넷 대조군 생략 (--egress none)"
+      ? "대조군 생략 (--egress로 허용 목록의 대상을 주면 확인한다)"
       : ctlNet
         ? `프록시로 ${opt.egress}에 접속됨`
-        : `프록시로도 ${opt.egress}에 접속되지 않음 (인터넷이 막혔거나 egress-proxy가 멈춤)`;
+        : `프록시로도 ${opt.egress}에 접속되지 않음 (허용 목록에 없거나, 대상이 꺼졌거나, egress-proxy가 멈춤)`;
   const codeList = (codes) => [...codes.entries()].map(([t, c]) => `${t}→${c}`).join(", ");
 
   for (const target of opt.internal) {
@@ -452,6 +452,23 @@ async function main() {
       netCtlText,
     );
   }
+
+  // 허용 목록에 없는 목적지: 프록시가 연결하기 전에 거부해야 한다 (407). 인터넷이 막힌 곳에서도 판정할 수 있다
+  const unlisted = [["1.1.1.1", 443], ["example.com", 443]];
+  const unlistedCodes = await proxyCodes(B, unlisted);
+  const notDenied = [...unlistedCodes.entries()].filter(([, c]) => c !== "407" && c !== "000");
+  const noAnswer = unlisted.every(([h, p]) => (unlistedCodes.get(`${h}:${p}`) ?? "000") === "000");
+  record(
+    "network",
+    `허용 목록에 없는 목적지는 프록시가 거부한다 (${unlisted.map(([h, p]) => `${h}:${p}`).join(", ")})`,
+    notDenied.length ? "FAIL" : noAnswer ? "INVALID" : "PASS",
+    notDenied.length
+      ? `거부하지 않음: ${codeList(new Map(notDenied))} — SANDBOX_EGRESS_ALLOW 확인 (docs/OPERATIONS.md §6)`
+      : noAnswer
+        ? "프록시가 응답하지 않음 (egress-proxy가 멈춤)"
+        : `프록시: ${codeList(unlistedCodes)}`,
+    netCtlText,
+  );
 
   const metaDirect = (await probe(B, [["169.254.169.254", 80]])).get("169.254.169.254:80") ?? "FILTERED";
   const metaProxy = (
@@ -484,7 +501,7 @@ async function main() {
     ctl7 ? "A 자신은 127.0.0.1:8765(A의 서버)에 접속됨" : "A의 대조 서버에 접속하지 못함",
   );
 
-  // 호스트 주소: 사설 주소는 프록시가 기본으로 거부하고, 공인 주소는 SANDBOX_PROXY_DENY에 있어야 거부한다
+  // 호스트 주소: 허용 목록에 넣지 않았다면 프록시가 모든 포트를 거부한다
   for (const ip of opt.hostIps) {
     const targets = opt.hostPorts.map((p) => [ip, p]);
     const direct = await probe(B, targets, 2);
@@ -500,9 +517,9 @@ async function main() {
       directOpen.length
         ? `직접 접속됨: ${directOpen.join(", ")}`
         : open.length
-          ? `프록시로 열린 포트 ${open.join(", ")} — SANDBOX_EGRESS_ALLOW에 있다면 빼고, 공인 주소라면 SANDBOX_PROXY_DENY에 넣으세요 (docs/OPERATIONS.md §6)`
+          ? `프록시로 열린 포트 ${open.join(", ")} — SANDBOX_EGRESS_ALLOW에서 이 주소를 빼거나 필요한 포트만 적으세요 (docs/OPERATIONS.md §6)`
           : tried.length
-            ? `열린 포트는 없지만 프록시가 이 주소를 막지 않는다 (${tried.map((p) => `${p}→${code(p)}`).join(", ")}) — SANDBOX_EGRESS_ALLOW에 있다면 빼고, 공인 주소라면 SANDBOX_PROXY_DENY에 넣으세요`
+            ? `열린 포트는 없지만 프록시가 이 주소를 막지 않는다 (${tried.map((p) => `${p}→${code(p)}`).join(", ")}) — SANDBOX_EGRESS_ALLOW에서 이 주소를 빼거나 필요한 포트만 적으세요`
             : "직접 경로 없음, 프록시가 모든 포트를 거부함 (407)",
       netCtlText,
     );
@@ -516,7 +533,7 @@ async function main() {
     );
   }
 
-  // 사내망(LAN): 필요한 주소만 SANDBOX_EGRESS_ALLOW로 여므로 INFO로만 낸다
+  // 사내망(LAN): 허용 목록이 의도대로인지 보는 용도라 INFO로만 낸다
   if (opt.lan.length) {
     const lanTargets = opt.lan.map((t) => t.split(":")).filter((t) => t.length === 2);
     const codes = await proxyCodes(B, lanTargets);
@@ -526,15 +543,15 @@ async function main() {
         "network",
         `사내망 대상 ${h}:${p} (프록시)`,
         "INFO",
-        c === "200" ? "접속됨 (허용됨)" : c === "407" ? "프록시가 거부함 (사설 대역 기본 차단)" : `프록시가 허용했지만 연결하지 못함 (${c})`,
+        c === "200" ? "접속됨 (허용됨)" : c === "407" ? "프록시가 거부함 (허용 목록에 없음)" : `프록시가 허용했지만 연결하지 못함 (${c})`,
       );
     }
   } else {
     record(
       "network",
-      "사내망(사설 대역) 접근",
+      "사내망 접근",
       "INFO",
-      "egress 프록시가 사설 대역을 기본으로 거부한다. 필요한 주소만 SANDBOX_EGRESS_ALLOW로 연다 (docs/OPERATIONS.md §6). --lan IP:PORT로 대상을 지정해 확인한다",
+      "egress 프록시는 SANDBOX_EGRESS_ALLOW의 도메인·IP만 연다 (docs/OPERATIONS.md §6). --lan HOST:PORT로 대상을 지정해 확인한다",
     );
   }
 
@@ -587,7 +604,7 @@ function render(meta) {
   lines.push("## 해석", "");
   lines.push("- sandbox 안에서 보이는 `/etc`는 sandbox 이미지의 최소한의 파일이다. 운영 서버나 gateway의 `/etc`가 아니다.");
   lines.push("- LLM 키와 MCP 키는 sandbox에 처음부터 존재하지 않는다 (gateway·mcp-broker 컨테이너에만 있다).");
-  lines.push("- sandbox에는 네트워크가 없고(network_mode none) egress 프록시로만 나간다. WARN 항목은 프록시 설정(SANDBOX_PROXY_DENY)으로 막는다 (docs/OPERATIONS.md \"네트워크 차단 규칙\").");
+  lines.push("- sandbox에는 네트워크가 없고(network_mode none) egress 프록시로만 나간다. WARN 항목은 허용 목록(SANDBOX_EGRESS_ALLOW)에서 그 주소를 빼거나 포트를 좁혀 막는다 (docs/OPERATIONS.md \"네트워크 차단 규칙\").");
   return { text: lines.join("\n") + "\n", failed };
 }
 

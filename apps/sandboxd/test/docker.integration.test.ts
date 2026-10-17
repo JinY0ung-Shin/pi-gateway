@@ -57,14 +57,14 @@ async function ensureImage(): Promise<void> {
   }
 }
 
-/** compose의 egress-proxy와 같은 설정으로 프록시를 띄운다. 기본 bridge에 붙어 인터넷으로 나간다. */
+/** compose의 egress-proxy와 같은 설정으로 프록시를 띄운다. 기본 bridge에 붙어 허용 목록의 목적지로 나간다. */
 async function startEgressProxy(): Promise<void> {
   hostGw = ((await docker.getNetwork("bridge").inspect()) as { IPAM: { Config: { Gateway: string }[] } }).IPAM.Config[0]!.Gateway;
   const proxy = await docker.createContainer({
     name: `pi-gw-test-proxy-${run}`,
     Image: PROXY_IMAGE,
-    // 허용 목록: 호스트의 포트 9 하나. 거부 목록: 공인 주소 1.1.1.1 (호스트 공인 IP 자리)
-    Env: [`SANDBOX_EGRESS_ALLOW=${hostGw}:9`, "SANDBOX_PROXY_DENY=1.1.1.1"],
+    // 허용 목록: 도메인 example.com의 443, 호스트의 포트 9. 나머지는 모두 거부한다
+    Env: [`SANDBOX_EGRESS_ALLOW=example.com:443,${hostGw}:9`],
     Labels: { [LABEL_INSTANCE]: `it-${run}` },
     HostConfig: {
       Init: true,
@@ -336,7 +336,7 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
     expect(plug.stdout).toContain("Read-only file system");
   });
 
-  it("바깥으로는 egress 프록시로만 나간다: 인터넷은 되고, 직접 연결·호스트·사설·metadata는 안 된다", async () => {
+  it("바깥으로는 egress 프록시로만 나간다: 허용 목록의 도메인·IP만 되고, 직접 연결과 그 밖의 목적지는 안 된다", async () => {
     // 네트워크 인터페이스는 lo뿐이고 경로가 없다
     const net = await sh("alice", "ls /sys/class/net; tail -n +2 /proc/net/route | wc -l");
     expect(net.stdout).toBe("lo\n0\n");
@@ -351,7 +351,8 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
       "curl -s -o /dev/null --max-time 5 --noproxy '*' https://example.com/; echo $?; curl -s -o /dev/null --max-time 5 --noproxy '*' https://1.1.1.1/; echo $?",
     );
     expect(direct.stdout).toBe("6\n7\n");
-    // 프록시가 거부한다 (407): 호스트(CONNECT·일반 HTTP), 사설, metadata, 프록시가 해석한 loopback 이름, 거부 목록
+    // 프록시가 거부한다 (407): 호스트의 다른 포트(CONNECT·일반 HTTP), 사설, metadata, loopback 이름,
+    // 목록에 없는 공인 IP·도메인, 허용한 도메인의 다른 포트
     const denied = await sh(
       "alice",
       [
@@ -361,10 +362,12 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
         "curl -s -o /dev/null -w '%{http_code} ' --max-time 20 http://169.254.169.254/latest/meta-data/",
         "curl -s -o /dev/null -w '%{http_code} ' --max-time 20 --noproxy '' -x http://127.0.0.1:3128 http://localhost:65535/",
         "curl -s -o /dev/null -p -w '%{http_connect} ' --max-time 20 https://1.1.1.1:443/",
+        "curl -s -o /dev/null -p -w '%{http_connect} ' --max-time 20 https://example.org/",
+        "curl -s -o /dev/null -w '%{http_code} ' --max-time 20 http://example.com/",
       ].join("; "),
     );
-    expect(denied.stdout.trim().split(" ")).toEqual(["407", "407", "407", "407", "407", "407"]);
-    // 허용 목록의 사설 주소·포트에는 프록시가 연결을 시도한다 (아무도 듣지 않으면 502)
+    expect(denied.stdout.trim().split(" ")).toEqual(["407", "407", "407", "407", "407", "407", "407", "407"]);
+    // 허용 목록의 IP·포트에는 프록시가 연결을 시도한다 (아무도 듣지 않으면 502)
     const allowed = await sh("alice", `curl -s -o /dev/null -p -w '%{http_connect}' --max-time 20 https://${hostGw}:9/`);
     expect(allowed.stdout).toMatch(/^[1-9]\d\d$/);
     expect(allowed.stdout).not.toBe("407");

@@ -7,7 +7,7 @@
 
 ```
 client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별 컨테이너, 네트워크 없음)
-                   │                    └─▶ egress-proxy ─▶ 인터넷 (HTTP/HTTPS만)
+                   │                    └─▶ egress-proxy ─▶ 허용 목록의 도메인·IP (HTTP/HTTPS만)
                    └─▶ mcp-broker ─▶ 키가 필요한 MCP 서버
 ```
 
@@ -16,7 +16,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 | `gateway` (`apps/gateway`) | API, 인증, 세션, pi agent loop, plugin 설치, 프롬프트, 관리 화면(`/admin`) | LLM 키, 내부 JWT 키 |
 | `sandboxd` (`apps/sandboxd`) | 사용자 컨테이너 생성·명령 실행·파일 조작 | docker.sock |
 | `mcp-broker` (`apps/mcp-broker`) | MCP 비밀키 보관, MCP 프록시 | MCP 키 |
-| `egress-proxy` (`images/egress-proxy`) | sandbox의 유일한 바깥 경로. 호스트·사설·metadata 주소 거부 | 없음 |
+| `egress-proxy` (`images/egress-proxy`) | sandbox의 유일한 바깥 경로. 허용 목록의 도메인·IP만 연다 | 없음 |
 
 ## 보안 경계
 

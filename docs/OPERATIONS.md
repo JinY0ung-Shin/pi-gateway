@@ -12,12 +12,12 @@
 | `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 관리 화면, pi 세션 | LLM 키, 내부 JWT 키, broker 관리 토큰, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
 | `mcp-broker` | `pi-gateway/mcp-broker` (root + SETUID/SETGID/CHOWN/KILL/DAC_OVERRIDE) | control, broker-egress | MCP 서버 등록·프록시 | MCP 비밀키, KEK |
-| `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 사설·loopback·link-local 목적지를 거부한다 | 없음 |
+| `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
 | `pi-sbx-<key>` | `pi-gateway/sandbox` (uid 1000) | 없음 (`network_mode: none`) | 사용자별 sandbox. sandboxd가 필요할 때 만들고 유휴 시 지운다 | 없음 |
 
 - **control** 네트워크는 `internal`이다. 바깥으로 나가는 경로가 없고 포트도 공개하지 않는다.
-- **sandbox 컨테이너**에는 네트워크가 없다 (인터페이스는 `lo`뿐). 바깥으로는 `proxy-sock` 볼륨의 unix socket을 거쳐 egress-proxy로만 나간다 ([§6](#6-네트워크-차단-규칙)). 그래서 sandbox에서 gateway·broker·sandboxd·호스트·다른 sandbox에 닿을 수 없다.
+- **sandbox 컨테이너**에는 네트워크가 없다 (인터페이스는 `lo`뿐). 바깥으로는 `proxy-sock` 볼륨의 unix socket을 거쳐 egress-proxy로만 나간다 ([§6](#6-네트워크-차단-규칙)). 그래서 sandbox에서 gateway·broker·sandboxd·다른 sandbox에 닿을 수 없고, 호스트와 사내망에는 허용 목록에 넣은 곳만 닿는다.
 - **sandbox 컨테이너**는 compose 밖에서 만들어진다. `docker compose down`으로는 지워지지 않는다 ([§3.5](#35-중지재시작업데이트)).
 
 ## 2. 요구사항
@@ -92,7 +92,7 @@ cp .env.example .env    # setup-host.sh가 이미 만들었다면 아래 값만 
 - `$PI_GATEWAY_SECRETS/gateway/user_api_keys`: 사용자별 키를 쓸 때. 형식은 `{"alice":"<32자 이상 키>","bob":"..."}`
 - `$PI_GATEWAY_SECRETS/gateway/llm_api_key`: 엔드포인트에 키가 필요할 때
 - 두 파일 모두 편집한 뒤 소유자 10001, 권한 0400을 유지한다 (`sudo ./scripts/setup-host.sh`를 다시 실행하면 바로잡는다).
-- `GATEWAY_BIND_ADDR`: 기본 `127.0.0.1`. 같은 호스트의 reverse proxy(TLS) 뒤에 두는 것을 권장한다. 직접 공개하려면 LAN IP나 `0.0.0.0`으로 바꾼다. 공인 IP로 공개하면 그 IP를 `SANDBOX_PROXY_DENY`에 넣는다 ([§6](#6-네트워크-차단-규칙)).
+- `GATEWAY_BIND_ADDR`: 기본 `127.0.0.1`. 같은 호스트의 reverse proxy(TLS) 뒤에 두는 것을 권장한다. 직접 공개하려면 LAN IP나 `0.0.0.0`으로 바꾼다.
 
 모든 변수의 설명은 `.env.example`에 있다.
 
@@ -116,7 +116,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 |---|---|---|
 | `GATEWAY_BIND_ADDR` | `127.0.0.1` (기본) | 같은 호스트의 reverse proxy(nginx 등)가 TLS를 맡고 이 포트로 넘긴다. LAN에서 gateway 포트에 바로 닿지 않는다 |
 | `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 제한(IP별 지연)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 쓴다.** hop 수는 받지 않는다. `true`는 아무 클라이언트나 IP를 속일 수 있게 하므로 쓰지 않는다. 직접 공개할 때는 `false` |
-| `SANDBOX_PROXY_DENY` | 호스트의 공인 IP (있을 때) | egress 프록시는 사설·loopback·link-local을 기본으로 막지만 공인 주소는 인터넷으로 본다. 호스트 자신의 공인 IP(SSH, 공개한 포트)는 넣어서 막는다 ([§6](#6-네트워크-차단-규칙)) |
+| `SANDBOX_EGRESS_ALLOW` | sandbox가 써야 하는 도메인·IP만 | 목록에 없는 목적지는 모두 막힌다. 호스트 주소나 넓은 CIDR을 넣으면 그 안의 모든 서비스가 열리므로 포트까지 적는다 ([§6](#6-네트워크-차단-규칙)) |
 | `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
 
@@ -216,36 +216,34 @@ sandbox 컨테이너에는 네트워크가 없다 (`network_mode: none`, 인터�
 
 ```
 sandbox의 프로그램 ─HTTP(S)_PROXY→ 127.0.0.1:3128 (sbx-proxy-bridge, sandbox 안)
-  ─unix socket (proxy-sock 볼륨, 읽기 전용 mount)→ egress-proxy (Smokescreen) ─proxy-egress 네트워크→ 인터넷
+  ─unix socket (proxy-sock 볼륨, 읽기 전용 mount)→ egress-proxy (Smokescreen) ─proxy-egress 네트워크→ 허용 목록의 목적지
 ```
 
-- 정책은 "인터넷 전체 허용, 그 밖은 차단"이다. 호스트 방화벽(iptables) 설정은 필요 없다.
+- 정책은 "허용 목록(`SANDBOX_EGRESS_ALLOW`)에 있는 목적지만 연다"이다. 비우면 모두 막힌다. 호스트 방화벽(iptables) 설정은 필요 없다.
 - sandbox에는 경로와 DNS가 없다. 프록시를 거치지 않는 연결(직접 TCP·UDP·DNS)은 모두 실패한다.
-- 프록시는 HTTP CONNECT(HTTPS 등)와 일반 HTTP를 받는다. 목적지 이름은 프록시가 해석하고, 해석된 IP를 검사한 뒤 그 IP로 연결한다 (DNS rebinding으로 우회할 수 없다). UDP와 프록시를 쓰지 않는 연결(예: 프록시 설정 없는 SSH)은 나가지 못한다. Git은 HTTPS URL을 쓴다.
+- 프록시는 HTTP CONNECT(HTTPS 등)와 일반 HTTP를 받는다. 목적지 이름은 프록시가 해석하고, 해석된 IP로 연결한다 (DNS rebinding으로 우회할 수 없다). UDP와 프록시를 쓰지 않는 연결(예: 프록시 설정 없는 SSH)은 나가지 못한다. Git은 HTTPS URL을 쓴다.
 - sandbox의 env: `HTTP_PROXY`·`HTTPS_PROXY`(소문자도) = `http://127.0.0.1:3128`, `NO_PROXY=localhost,127.0.0.1,::1`, `NODE_USE_ENV_PROXY=1`(Node의 전역 `fetch`가 프록시를 따르게 한다). curl·pip·npm·git·Python requests는 이 env를 따른다.
 - egress-proxy는 TCP 포트를 열지 않고 unix socket에서만 듣는다. proxy-egress 네트워크에는 egress-proxy만 붙는다.
-
-**막는 것** (프록시가 `407 Request rejected by proxy`로 거부한다)
-
-| 대상 | 이유 |
-|---|---|
-| loopback `127.0.0.0/8`·`::1`, 프록시 자신 | 프록시 컨테이너 안의 서비스 |
-| link-local `169.254.0.0/16`(클라우드 metadata `169.254.169.254` 포함)·`fe80::/10` | 클라우드 VM의 인스턴스 자격증명 |
-| 사설 `10/8`·`172.16/12`·`192.168/16`, CGNAT `100.64/10`, 그 밖의 공인이 아닌 대역 | 호스트(Docker bridge gateway, 사설 LAN IP), 같은 호스트의 컨테이너, 사내망 |
-| `SANDBOX_PROXY_DENY`의 주소 | 호스트 자신의 공인 IP 등 |
-
-- 호스트에 **공인 IP**가 있으면(SSH, 공개한 gateway 등) 그 IP를 `SANDBOX_PROXY_DENY`에 넣는다. 프록시는 공인 주소를 인터넷으로 보기 때문이다.
 - 요청마다 JSON 한 줄이 남는다: `docker compose logs egress-proxy` (`CANONICAL-PROXY-DECISION`의 `requested_host`, `allow`, `decision_reason`). 모든 sandbox가 같은 socket을 쓰므로 로그에서 sandbox(사용자)를 구분할 수는 없다.
 
-**설정** (`.env`, egress-proxy 서비스의 환경변수. 바꾼 뒤 `docker compose up -d egress-proxy`. 실행 중인 sandbox는 다시 만들 필요 없다)
+**허용 목록** (`.env`의 `SANDBOX_EGRESS_ALLOW`. 바꾼 뒤 `docker compose up -d egress-proxy`. 실행 중인 sandbox는 다시 만들 필요 없다)
 
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `SANDBOX_EGRESS_ALLOW` | 없음 | 위 차단의 예외. `CIDR` 또는 IP, `:PORT`를 붙이면 그 TCP 포트만 (쉼표·공백 구분, 예: `192.168.10.5:19090,10.1.2.0/24:443`). `SANDBOX_PROXY_DENY`보다 먼저 적용된다. loopback·link-local과 겹치는 값(`0.0.0.0/0` 포함)이 있으면 프록시가 시작하지 않는다 |
-| `SANDBOX_PROXY_DENY` | 없음 | 더 막을 공인 주소 (같은 형식, 예: `203.0.113.10`) |
-| `SANDBOX_PROXY_VOLUME` | `pi-gateway-proxy-sock` | 프록시 socket 볼륨 이름. 같은 호스트에 여러 pi-gateway를 띄울 때만 바꾼다 |
+```bash
+SANDBOX_EGRESS_ALLOW=github.corp.com:443,nexus.corp.com,10.1.2.3:8080,10.20.0.0/16
+```
 
-**허용 목록의 주소는 egress-proxy 컨테이너에서 본 주소다.** sandbox에는 네트워크가 없으므로, 연결을 실제로 만드는 쪽은 프록시다. 목적지를 이름으로 쓰면 프록시가 해석한 IP가 허용 목록에 있어야 한다.
+| 항목 | 뜻 |
+|---|---|
+| `github.corp.com` | 그 도메인의 모든 포트. 이름이 정확히 같아야 한다 (하위 도메인·와일드카드는 열리지 않는다) |
+| `github.corp.com:443` | 그 도메인의 443만 |
+| `10.1.2.3`, `10.1.2.3:8080` | 그 IP (의 그 포트). 요청에 IP를 직접 쓴 경우에만 맞는다 |
+| `10.20.0.0/16`, `10.20.0.0/16:443` | 그 대역 (의 그 포트) |
+
+- 도메인 항목은 요청에 쓴 이름으로 판단한다. `https://10.1.2.3/`처럼 IP로 부르면 IP 항목이 있어야 한다.
+- 도메인이 loopback(`127.0.0.0/8`)이나 link-local(`169.254.0.0/16`, 클라우드 metadata 포함)로 해석되면 허용 목록에 있어도 거부한다. 이 대역과 겹치는 IP 항목(`0.0.0.0/0` 포함)이 있으면 프록시가 시작하지 않는다.
+- IP는 egress-proxy 컨테이너에서 본 주소다. sandbox에는 네트워크가 없으므로, 연결을 실제로 만드는 쪽은 프록시다.
+- 호스트 주소나 넓은 CIDR을 넣으면 그 안의 SSH·공개 포트도 열린다. 필요한 포트까지 적는다.
+- 거부된 요청은 `407 Request rejected by proxy`를 받는다.
 
 **같은 호스트의 MonSemi orchestrator 예시**
 
@@ -257,7 +255,7 @@ monsemi-frontend MCP 서버는 사용자 sandbox 안에서 돌면서 orchestrato
    - 다른 호스트의 orchestrator는 그 주소 그대로 쓴다: `http://10.1.2.3:9000`.
    - 호스트의 방화벽이 Docker bridge에서 오는 연결을 막는다면 그 포트를 열어야 한다.
 2. 그 주소를 MCP 템플릿 값(요청 metadata `ORCHESTRATOR_URL`) 또는 서버 설정의 `SERVICE_URL`로 쓴다.
-3. 같은 주소·포트만 허용 목록에 넣고 프록시를 다시 띄운다.
+3. 그 주소·포트를 허용 목록에 넣고 프록시를 다시 띄운다.
 
 ```bash
 # .env
@@ -266,7 +264,7 @@ SANDBOX_EGRESS_ALLOW=192.168.10.5:19090
 docker compose up -d egress-proxy
 ```
 
-- 허용하지 않은 나머지(같은 호스트의 다른 포트, 다른 사설 주소, metadata)는 계속 막힌다.
+- 허용하지 않은 나머지(같은 호스트의 다른 포트, 다른 주소, metadata)는 계속 막힌다.
 - 적용한 뒤에는 [§8 보안 점검](#8-보안-점검)으로 확인한다.
 
 ## 7. (선택) gVisor로 커널 정보까지 숨기기
@@ -323,26 +321,27 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 | `/etc` | `/etc/passwd` 계정, hostname, shadow 파일 |
 | 권한 | uid, capability, no_new_privs, setuid 파일, su·sudo·user namespace·mount, seccomp |
 | 파일시스템 | `/workspace`·`/tmp` 밖 쓰기, docker.sock |
-| 네트워크 | 내부 서비스(gateway·sandboxd·broker), metadata 주소, 다른 sandbox, 호스트 주소. 각각 직접 연결과 egress 프록시 경유를 둘 다 시도한다 |
-| 참고 | 사내망 도달 여부(`--lan`, 프록시 경유), 자원 제한, 커널 정보 |
+| 네트워크 | 내부 서비스(gateway·sandboxd·broker), metadata 주소, 허용 목록에 없는 목적지, 다른 sandbox, 호스트 주소. 각각 직접 연결과 egress 프록시 경유를 둘 다 시도한다 |
+| 참고 | 사내망 대상 도달 여부(`--lan`, 프록시 경유), 자원 제한, 커널 정보 |
 
 **네트워크 판정**
 
 | 대상 | FAIL | WARN | PASS |
 |---|---|---|---|
-| 호스트 주소 (`--host-ip`) | 직접 또는 프록시로 열린 포트가 있다 | 열린 포트는 없지만 프록시가 그 주소를 거부하지 않는다 (공인 IP가 `SANDBOX_PROXY_DENY`에 없다) | 직접 경로가 없고 프록시가 모든 포트를 거부한다 (407) |
+| 호스트 주소 (`--host-ip`) | 직접 또는 프록시로 열린 포트가 있다 | 열린 포트는 없지만 프록시가 그 주소를 거부하지 않는다 (허용 목록에 들어 있다) | 직접 경로가 없고 프록시가 모든 포트를 거부한다 (407) |
+| 허용 목록에 없는 목적지 | 프록시가 거부하지 않는다 | – | 프록시가 거부한다 (407) |
 | metadata 주소 | 직접 연결되거나 프록시가 거부하지 않는다 | – | 직접 경로가 없고 프록시가 거부한다 |
 | 다른 sandbox | loopback 밖의 인터페이스가 있다 | – | 인터페이스가 `lo`뿐이다 |
 
-- 인터넷 대조군(`--egress`, 기본 `1.1.1.1:443`)도 프록시로 연결한다. 실패하면 egress-proxy가 멈췄거나 인터넷이 막힌 환경이다.
+- 대조군(`--egress HOST:PORT`)에는 허용 목록에 있는 대상 하나를 준다. 프록시로 연결되지 않으면 egress-proxy가 멈췄거나 그 대상이 꺼져 있다. 주지 않으면 대조군 없이 점검한다.
 - `--host-ip`에는 호스트의 LAN 주소와 공인 주소를 준다. `SANDBOX_EGRESS_ALLOW`로 연 포트는 열린 포트로 보이므로 `--host-ports`에서 뺀다.
-- 사내망은 필요한 곳만 `SANDBOX_EGRESS_ALLOW`로 열므로 `--lan IP:PORT`의 결과는 INFO로만 낸다.
+- `--lan IP:PORT`(또는 도메인:포트)는 허용 목록이 의도대로인지 보는 용도라 결과를 INFO로만 낸다.
 
 **결과 해석**
 - 차단 항목마다 **대조군**이 있다. 같은 방법으로 일부러 만든 "보여야 하는 것"이 실제로 보이는지 확인한다.
   - 대조군이 실패하면 그 항목은 `INVALID`이고 실패로 센다. 검사 방법이 틀려서 통과하는 일을 막기 위해서다.
-- `WARN`은 운영 설정(`SANDBOX_PROXY_DENY`)이 빠진 항목이다. `--strict`를 주면 실패로 센다. 운영에서는 `--strict`를 권장한다.
-- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--egress none`(인터넷이 막힌 환경), `--keep`(점검용 workspace 보존).
+- `WARN`은 허용 목록이 호스트 주소를 열어 둔 항목이다. `--strict`를 주면 실패로 센다. 운영에서는 `--strict`를 권장한다.
+- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--keep`(점검용 workspace 보존).
 
 ## 9. 용량 참고값
 
@@ -397,7 +396,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 | 도구 호출이 `sandbox_unavailable` | `docker compose logs sandboxd`로 Docker API 오류를 본다 |
 | 컨테이너 수를 제한하고 싶다 | 유휴 시간을 줄이거나 호스트 메모리에 맞춰 `SANDBOX_MEMORY`를 조정한다 |
 | plugin 설치 실패 | gateway 컨테이너에서 Git 저장소에 닿는지 확인한다 (edge 네트워크) |
-| sandbox에서 바깥 요청이 `407`로 실패한다 | 프록시가 거부한 목적지다 (사설·loopback·link-local·`SANDBOX_PROXY_DENY`). 이유는 `docker compose logs egress-proxy`의 `decision_reason`. 열어야 하면 `SANDBOX_EGRESS_ALLOW` ([§6](#6-네트워크-차단-규칙)) |
+| sandbox에서 바깥 요청이 `407`로 실패한다 | 허용 목록에 없는 목적지다 (도메인은 정확히 같은 이름, 포트를 적었다면 그 포트만). 이유는 `docker compose logs egress-proxy`의 `decision_reason`. 열어야 하면 `SANDBOX_EGRESS_ALLOW`에 넣는다 ([§6](#6-네트워크-차단-규칙)) |
 | sandbox에서 모든 바깥 요청이 바로 끊긴다 (curl `(56) Recv failure: Connection reset by peer`) | egress-proxy가 멈췄다. `docker compose ps egress-proxy`, `docker compose logs egress-proxy` (설정 값이 잘못되면 시작하지 않는다) |
 | 특정 도구만 바깥에 나가지 못한다 (`Could not resolve host`) | 그 도구가 `HTTP(S)_PROXY` env를 따르지 않는다. sandbox에는 DNS가 없다. 도구의 프록시 설정에 `http://127.0.0.1:3128`을 넣는다 |
 

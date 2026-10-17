@@ -7,12 +7,13 @@
 //
 //   - HTTP CONNECT(HTTPS 등)와 절대 URI의 일반 HTTP 요청을 받는다.
 //
-//   - 목적지 이름은 프록시가 직접 해석하고, 해석된 IP를 검사한 뒤 그 IP로 연결한다 (DNS rebinding 방지).
+//   - 허용 목록(SANDBOX_EGRESS_ALLOW)에 있는 목적지만 연다. 나머지는 모두 거부한다.
+//     항목은 도메인(정확히 일치) 또는 IP/CIDR이고, ":PORT"를 붙이면 그 포트만 연다 (쉼표·공백 구분).
+//     예: github.corp.com:443, 10.1.2.3, 10.20.0.0/16:8080
 //
-//   - 거부: loopback, link-local(169.254/16, metadata 포함), 사설 대역, CGNAT, 자기 자신, IPv6에 IPv4를 넣은 주소,
-//     SANDBOX_PROXY_DENY(쉼표 구분 CIDR, 예: 호스트의 공인 주소).
-//
-//   - 허용 예외: SANDBOX_EGRESS_ALLOW(공백 또는 쉼표 구분 CIDR[:PORT]). loopback·link-local과 겹치면 시작하지 않는다.
+//   - 목적지 이름은 프록시가 직접 해석하고, 해석된 IP로 연결한다 (DNS rebinding 방지).
+//     loopback·link-local(169.254/16, metadata 포함)은 허용한 도메인이 그 주소로 해석돼도 거부한다.
+//     이 대역과 겹치는 IP 항목이 있으면 시작하지 않는다.
 //
 //   - 클라이언트가 X-Upstream-Https-Proxy로 다음 단계 프록시를 지정하는 기능은 막는다 (IP 검사 우회 경로).
 //
@@ -26,7 +27,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -59,57 +62,95 @@ func splitList(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' })
 }
 
-// parseRange: "CIDR", "IP", "CIDR:PORT", "IP:PORT"
-func parseRange(entry string) (smokescreen.RuleRange, error) {
+// allowEntry: SANDBOX_EGRESS_ALLOW의 한 항목. domain과 net 중 하나만 있다. port 0 = 모든 포트
+type allowEntry struct {
+	domain string
+	net    *net.IPNet
+	port   int
+}
+
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// parseEntry: "도메인", "IP", "CIDR", 각각 ":PORT"를 붙일 수 있다
+func parseEntry(entry string) (allowEntry, error) {
 	host, port := entry, 0
 	if i := strings.LastIndex(entry, ":"); i > 0 && !strings.Contains(entry[:i], ":") {
 		p, err := strconv.Atoi(entry[i+1:])
 		if err != nil || p < 1 || p > 65535 {
-			return smokescreen.RuleRange{}, fmt.Errorf("invalid port in %q", entry)
+			return allowEntry{}, fmt.Errorf("invalid port in %q", entry)
 		}
 		host, port = entry[:i], p
 	}
-	if !strings.Contains(host, "/") {
-		if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
-			host += "/32"
-		} else {
-			host += "/128"
-		}
-	}
-	_, n, err := net.ParseCIDR(host)
-	if err != nil {
-		return smokescreen.RuleRange{}, fmt.Errorf("invalid CIDR in %q", entry)
-	}
-	return smokescreen.RuleRange{Net: *n, Port: port}, nil
-}
-
-func parseRanges(name string, allow bool) ([]smokescreen.RuleRange, error) {
-	var out []smokescreen.RuleRange
-	for _, entry := range splitList(os.Getenv(name)) {
-		r, err := parseRange(entry)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
-		}
-		if allow {
-			for _, bad := range neverAllow {
-				if overlaps(&r.Net, bad) {
-					return nil, fmt.Errorf("%s: %q overlaps %s, which can never be allowed", name, entry, bad)
-				}
+	if ip := net.ParseIP(host); ip != nil || strings.Contains(host, "/") {
+		if ip != nil {
+			if ip.To4() != nil {
+				host += "/32"
+			} else {
+				host += "/128"
 			}
 		}
-		out = append(out, r)
+		_, n, err := net.ParseCIDR(host)
+		if err != nil {
+			return allowEntry{}, fmt.Errorf("invalid CIDR in %q", entry)
+		}
+		for _, bad := range neverAllow {
+			if overlaps(n, bad) {
+				return allowEntry{}, fmt.Errorf("%q overlaps %s, which can never be allowed", entry, bad)
+			}
+		}
+		return allowEntry{net: n, port: port}, nil
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if !domainRe.MatchString(host) {
+		return allowEntry{}, fmt.Errorf("invalid domain in %q (wildcards are not supported)", entry)
+	}
+	return allowEntry{domain: host, port: port}, nil
+}
+
+func parseAllow() ([]allowEntry, error) {
+	var out []allowEntry
+	for _, entry := range splitList(os.Getenv("SANDBOX_EGRESS_ALLOW")) {
+		e, err := parseEntry(entry)
+		if err != nil {
+			return nil, fmt.Errorf("SANDBOX_EGRESS_ALLOW: %w", err)
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
 
-// openDecider: 목적지 이름은 모두 허용하고(IP 규칙이 그 뒤에 적용된다), 클라이언트가 고른 upstream 프록시는 거부한다.
-type openDecider struct{}
+// destPort: CONNECT는 Host에 포트가 있다. 일반 HTTP는 없으면 scheme의 기본 포트다
+func destPort(req *http.Request) int {
+	if _, p, err := net.SplitHostPort(req.Host); err == nil {
+		if n, err := strconv.Atoi(p); err == nil {
+			return n
+		}
+	}
+	if req.URL != nil && req.URL.Scheme == "https" {
+		return 443
+	}
+	return 80
+}
 
-func (openDecider) Decide(args acl.DecideArgs) (acl.Decision, error) {
+// allowDecider: 허용 목록의 도메인·IP(와 포트)만 허용하고, 클라이언트가 고른 upstream 프록시는 거부한다.
+type allowDecider struct{ entries []allowEntry }
+
+func (d allowDecider) Decide(args acl.DecideArgs) (acl.Decision, error) {
 	if args.ConnectProxyHost != "" {
 		return acl.Decision{Result: acl.Deny, Reason: "client-selected upstream proxy is not allowed"}, nil
 	}
-	return acl.Decision{Result: acl.Allow, Reason: "open egress; IP rules apply"}, nil
+	host := strings.TrimSuffix(strings.ToLower(args.Host), ".")
+	ip := net.ParseIP(host)
+	port := destPort(args.Req)
+	for _, e := range d.entries {
+		if e.port != 0 && e.port != port {
+			continue
+		}
+		if (ip != nil && e.net != nil && e.net.Contains(ip)) || (ip == nil && e.domain == host) {
+			return acl.Decision{Result: acl.Allow, Reason: "in SANDBOX_EGRESS_ALLOW"}, nil
+		}
+	}
+	return acl.Decision{Result: acl.Deny, Reason: "not in SANDBOX_EGRESS_ALLOW"}, nil
 }
 
 func socketPath() string {
@@ -121,11 +162,7 @@ func socketPath() string {
 
 func run() error {
 	path := socketPath()
-	allow, err := parseRanges("SANDBOX_EGRESS_ALLOW", true)
-	if err != nil {
-		return err
-	}
-	deny, err := parseRanges("SANDBOX_PROXY_DENY", false)
+	allow, err := parseAllow()
 	if err != nil {
 		return err
 	}
@@ -146,19 +183,29 @@ func run() error {
 	conf.Log.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339Nano})
 	conf.Log.SetOutput(os.Stdout)
 	conf.Listener = ln
-	conf.AllowRanges = allow
-	conf.DenyRanges = deny
-	conf.EgressACL = openDecider{}
+	// 목적지는 allowDecider가 정한다. 사내망 주소로 연결해야 하므로 사설 대역 차단은 끈다
+	// (loopback·link-local은 그래도 거부된다). IP 항목은 CGNAT 등 기본 거부 대역이어도 연결되게 AllowRanges에도 넣는다.
+	conf.UnsafeAllowPrivateRanges = true
+	for _, e := range allow {
+		if e.net != nil {
+			conf.AllowRanges = append(conf.AllowRanges, smokescreen.RuleRange{Net: *e.net, Port: e.port})
+		}
+	}
+	conf.EgressACL = allowDecider{allow}
 	conf.AllowMissingRole = true
 	conf.ConnectTimeout = 10 * time.Second
 	conf.IdleTimeout = 10 * time.Minute
 	conf.Network = "ip4"
 
-	for _, r := range allow {
-		conf.Log.WithFields(log.Fields{"cidr": r.Net.String(), "port": r.Port}).Info("egress allow range")
+	for _, e := range allow {
+		dest := e.domain
+		if e.net != nil {
+			dest = e.net.String()
+		}
+		conf.Log.WithFields(log.Fields{"destination": dest, "port": e.port}).Info("egress allow")
 	}
-	for _, r := range deny {
-		conf.Log.WithFields(log.Fields{"cidr": r.Net.String(), "port": r.Port}).Info("egress deny range")
+	if len(allow) == 0 {
+		conf.Log.Warn("SANDBOX_EGRESS_ALLOW is empty; all egress is denied")
 	}
 	conf.Log.WithField("socket", path).Info("egress proxy listening")
 	smokescreen.StartWithConfig(conf, nil)

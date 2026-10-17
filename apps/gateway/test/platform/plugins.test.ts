@@ -143,7 +143,7 @@ function buildFixture(root: string) {
         "legacy-sse": { type: "sse", url: "https://old.example.com/sse" },
         // 비밀키가 필요한데 실행 시 다운로드하는 명령 → broker가 거절하므로 사전 설치 필요로 기록
         "npx-tool": { command: "npx", args: ["-y", "@example/mcp"], env: { X_TOKEN: "${X_TOKEN}" } },
-        // 비밀키가 없으면 sandbox에서 실행 (인터넷이 허용되므로 npx도 동작한다)
+        // 비밀키가 없으면 sandbox에서 실행 (npx는 egress 허용 목록의 registry로 받는다)
         "npx-public": { command: "npx", args: ["-y", "@example/public-mcp"] },
         // 리터럴 자격증명: sandbox로 가면 agent env에 들어가므로 등록하지 않는다
         "literal-tool": { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/gh.js"], env: { API_TOKEN: "hardcoded-token-123" } },

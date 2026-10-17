@@ -7,7 +7,7 @@
 # 구조와 보안 경계: README.md, 운영: docs/OPERATIONS.md
 # - gateway만 포트를 공개한다. sandboxd·mcp-broker는 internal 네트워크(control)에만 있다.
 # - 사용자 sandbox 컨테이너(sandboxd가 만든다)는 네트워크가 없다(network_mode none). 바깥으로는
-#   egress-proxy의 unix socket(proxy-sock 볼륨)으로만 나가고, 프록시가 loopback·link-local(metadata)·사설 대역을 거부한다.
+#   egress-proxy의 unix socket(proxy-sock 볼륨)으로만 나가고, 프록시는 허용 목록(SANDBOX_EGRESS_ALLOW)의 목적지만 연다.
 #   그래서 sandbox에서 내부 서비스·호스트·다른 sandbox에 닿을 수 없고, 호스트 방화벽 설정이 필요 없다 (docs/OPERATIONS.md §6).
 
 name: pi-gateway
@@ -48,9 +48,8 @@ services:
       target: egress-proxy
     user: "65532:65532"
     environment:
-      # 사설 대역 중 열어 줄 목적지, 공인 대역 중 더 막을 목적지 (.env.example, docs/OPERATIONS.md §6)
+      # 열어 줄 도메인·IP. 나머지는 모두 막는다 (.env.example, docs/OPERATIONS.md §6)
       SANDBOX_EGRESS_ALLOW: ${SANDBOX_EGRESS_ALLOW:-}
-      SANDBOX_PROXY_DENY: ${SANDBOX_PROXY_DENY:-}
     volumes:
       - proxy-sock:/run/pi-proxy
     networks:
@@ -183,7 +182,6 @@ services:
         condition: service_healthy
     ports:
       # 기본은 127.0.0.1 (같은 호스트의 reverse proxy 뒤). 직접 공개하려면 GATEWAY_BIND_ADDR를 바꾼다.
-      # 공인 IP로 공개하면 그 IP를 SANDBOX_PROXY_DENY에 넣는다 (프록시는 사설 대역만 기본으로 막는다, docs/OPERATIONS.md §6).
       - "${GATEWAY_BIND_ADDR:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
     environment:
       PORT: "8080"
@@ -267,7 +265,7 @@ networks:
     internal: true
   # mcp-broker → 원격 MCP 서버
   broker-egress: {}
-  # egress-proxy → 인터넷. egress-proxy만 붙는다.
+  # egress-proxy → 허용 목록의 목적지. egress-proxy만 붙는다.
   proxy-egress: {}
 
 volumes:
