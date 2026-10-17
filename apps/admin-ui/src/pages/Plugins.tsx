@@ -11,7 +11,6 @@ const MCP_STATUS_LABEL: Record<string, string> = {
 };
 
 const UNSUPPORTED_LABEL: Record<string, string> = {
-  agents: "subagent",
   hooks: "hooks",
   lsp: "LSP",
   "output-styles": "output styles",
@@ -270,6 +269,7 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
             <div class="component-row">
               <span>skill {p.components.skills.length}</span>
               <span>command {p.components.commands.length}</span>
+              <span>agent {p.components.agents.length}</span>
               <span>MCP {p.mcp.length}</span>
             </div>
             {p.components.skills.length > 0 && (
@@ -292,6 +292,23 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
                     <li key={c.name}>
                       <span class="mono">/{c.name}</span> {c.argumentHint && <span class="muted mono">{c.argumentHint}</span>} <span class="muted">{c.description}</span>
                       {c.notes.map((n) => (
+                        <div key={n} class="small-text warn-text">
+                          {n}
+                        </div>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {p.components.agents.length > 0 && (
+              <details>
+                <summary>agent</summary>
+                <ul class="plain-list">
+                  {p.components.agents.map((a) => (
+                    <li key={a.name}>
+                      <span class="mono">{a.name}</span> {a.tools && <span class="muted mono">{a.tools.join(", ")}</span>} <span class="muted">{a.description}</span>
+                      {a.notes.map((n) => (
                         <div key={n} class="small-text warn-text">
                           {n}
                         </div>

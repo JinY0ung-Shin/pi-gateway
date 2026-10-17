@@ -30,8 +30,18 @@ export interface CommandRecord {
   notes: string[];
 }
 
+export interface AgentRecord {
+  name: string;
+  description: string;
+  /** frontmatter `tools` (Claude Code 도구 이름). 없으면 전부 */
+  tools?: string[];
+  /** 본문 (plugin 변수 치환 후) */
+  prompt: string;
+  filePath: string;
+  notes: string[];
+}
+
 export type UnsupportedKind =
-  | "agents"
   | "hooks"
   | "lsp"
   | "output-styles"
@@ -54,6 +64,7 @@ export interface UnsupportedComponent {
 export interface DiscoveredComponents {
   skills: SkillRecord[];
   commands: CommandRecord[];
+  agents: AgentRecord[];
   /** 서버 이름 → Claude 형식 설정 (변환 전) */
   mcpServers: Record<string, unknown>;
   unsupported: UnsupportedComponent[];
@@ -77,7 +88,7 @@ const MAX_SKILL_DESCRIPTION = 1024;
 const rel = (p: string) => p.replace(/^\.\/?/, "");
 
 export async function discoverComponents(input: DiscoverInput): Promise<DiscoveredComponents> {
-  const out: DiscoveredComponents = { skills: [], commands: [], mcpServers: {}, unsupported: [], warnings: [], textFiles: [] };
+  const out: DiscoveredComponents = { skills: [], commands: [], agents: [], mcpServers: {}, unsupported: [], warnings: [], textFiles: [] };
   const effective: JsonObject = input.manifest ?? input.entry.raw;
   const appendEntry = input.manifest !== undefined && input.entry.strict;
   const toFinal = (stagingPath: string) => join(input.finalDir, relative(input.stagingDir, stagingPath));
@@ -237,11 +248,38 @@ export async function discoverComponents(input: DiscoverInput): Promise<Discover
     }
   }
 
+  // ── agents ──
+  const agentRoots = ["agents", ...pathList(effective.agents), ...(appendEntry ? pathList(input.entry.raw.agents) : [])];
+  const seenAgents = new Set<string>();
+  for (const root of agentRoots) {
+    const target = join(input.stagingDir, rel(root));
+    if (!inside(target)) continue;
+    const files = (await isDir(target)) ? await markdownFiles(target) : existsSync(target) && target.toLowerCase().endsWith(".md") ? [target] : [];
+    if (files.length === 0 && root !== "agents") out.warnings.push(`agents path '${root}' not found`);
+    for (const file of files) {
+      const text = await readContent(file);
+      if (text === undefined) continue;
+      const parsed = parseMarkdownFrontmatter(text);
+      const name = `${input.pluginName}:${frontmatterString(parsed.frontmatter, "name") ?? basename(file).replace(/\.md$/i, "")}`;
+      if (seenAgents.has(name)) continue;
+      seenAgents.add(name);
+      const description = frontmatterString(parsed.frontmatter, "description") ?? firstLine(parsed.body);
+      const tools = toolList(parsed.frontmatter.tools);
+      out.agents.push({
+        name,
+        description: (description || name).replace(/\s+/g, " ").slice(0, MAX_SKILL_DESCRIPTION),
+        ...(tools ? { tools } : {}),
+        prompt: substitutePluginVars(parsed.body.trim(), input.finalDir, input.dataDir),
+        filePath: toFinal(file),
+        notes: Object.keys(parsed.frontmatter)
+          .filter((key) => !AGENT_KEYS.has(key))
+          .map((key) => `${key} 설정은 무시됩니다`),
+      });
+    }
+  }
+
   // ── 지원하지 않는 구성요소 ──
   const note = (kind: UnsupportedKind, detail: string) => out.unsupported.push({ kind, detail });
-  const agentFiles = await markdownFiles(join(input.stagingDir, "agents"));
-  const agentSpec = pathList(effective.agents);
-  if (agentFiles.length > 0 || agentSpec.length > 0) note("agents", `subagent ${Math.max(agentFiles.length, agentSpec.length)}개`);
   if (existsSync(join(input.stagingDir, "hooks", "hooks.json")) || effective.hooks !== undefined) note("hooks", "hooks (도구 호출 전후 명령 실행)");
   if (existsSync(join(input.stagingDir, ".lsp.json")) || effective.lspServers !== undefined) note("lsp", "LSP 서버");
   if ((await isDir(join(input.stagingDir, "output-styles"))) || effective.outputStyles !== undefined) note("output-styles", "output styles");
@@ -289,6 +327,16 @@ function commandRecord(
     filePath,
     notes,
   };
+}
+
+/** agent frontmatter 중 쓰는 키 (color는 화면 표시용이라 무시해도 알리지 않는다) */
+const AGENT_KEYS = new Set(["name", "description", "tools", "color"]);
+
+/** `tools: Read, Grep` 또는 YAML 배열 */
+function toolList(value: unknown): string[] | undefined {
+  const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const out = items.filter((t): t is string => typeof t === "string").map((t) => t.trim()).filter(Boolean);
+  return out.length > 0 ? out : undefined;
 }
 
 export function substitutePluginVars(text: string, root: string, dataDir: string, skillDir?: string): string {

@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
-import { type AgentFactoryDeps, type BuiltAgent, buildAgentSession } from "../agent/session-factory.js";
+import { type AgentFactoryDeps, type BuiltAgent, buildAgentSession, subagentDirFor } from "../agent/session-factory.js";
 import type { GatewayConfig } from "../config.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { KeyedMutex } from "./limiter.js";
@@ -112,13 +112,14 @@ export class SessionHub {
     });
   }
 
-  /** 세션을 완전히 지운다 (호출하는 쪽이 lock을 잡고 있어야 한다): 메모리, JSONL, 메타. workspace는 사용자의 다른 세션과 공유하므로 남긴다. */
+  /** 세션을 완전히 지운다 (호출하는 쪽이 lock을 잡고 있어야 한다): 메모리, JSONL(하위 agent 포함), 메타. workspace는 사용자의 다른 세션과 공유하므로 남긴다. */
   async discardLocked(id: string): Promise<void> {
     const live = this.live.get(id);
     const record = this.deps.store.get(id) ?? live?.record;
     if (live) await this.teardown(live);
     const file = live?.agent.session.sessionManager.getSessionFile() ?? record?.sessionFile;
     if (file) rmSync(file, { force: true });
+    if (record) rmSync(subagentDirFor(this.deps.config, record), { recursive: true, force: true });
     this.deps.store.delete(id);
   }
 

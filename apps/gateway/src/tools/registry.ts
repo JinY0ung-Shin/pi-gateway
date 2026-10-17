@@ -11,7 +11,7 @@ import { createSandboxToolProvider } from "./providers/sandbox.js";
 
 /**
  * 도구 provider들을 합친다.
- * 결과는 pi createAgentSession의 `tools`(allowlist)와 `customTools`가 된다.
+ * 결과는 pi createAgentSession의 `customTools`가 되고, 이름 목록이 `tools`(allowlist)가 된다.
  * 새 provider는 아래 createDefaultToolProviders 한 곳에만 추가한다.
  */
 
@@ -41,8 +41,6 @@ export function createDefaultToolProviders(deps: DefaultProviderDeps): ToolProvi
 
 export interface SessionToolset {
   customTools: ToolDefinition[];
-  /** pi `tools` allowlist — customTools의 이름 전부 */
-  toolNames: string[];
 }
 
 export class ToolRegistry {
@@ -72,7 +70,7 @@ export class ToolRegistry {
         customTools.push(def);
       }
     }
-    return { customTools, toolNames: [...names] };
+    return { customTools };
   }
 
   async disposeSession(sessionId: string): Promise<void> {

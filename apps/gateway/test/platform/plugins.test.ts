@@ -129,7 +129,7 @@ function buildFixture(root: string) {
   write(mkt, `${daf}/commands/git/legacy.md`, "Legacy $1 only\n");
   write(mkt, `${daf}/commands/plain.md`, "---\ndescription: Plain\nallowed-tools: Bash(git:*)\n---\nJust do it. !`git status`\n");
   write(mkt, `${daf}/hooks/hooks.json`, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: `touch ${marker}` }] }] } }));
-  write(mkt, `${daf}/agents/helper.md`, "---\nname: helper\n---\nhelp");
+  write(mkt, `${daf}/agents/helper.md`, "---\nname: helper\ndescription: Helps\ntools: Read, Bash(git:*)\nmodel: haiku\n---\nHelp using ${CLAUDE_PLUGIN_ROOT}/scripts\n");
 
   write(
     mkt,
@@ -267,7 +267,11 @@ describe("plugin installer (fixture marketplace)", () => {
       expect.objectContaining({ name: "monsemi-frontend", id: "monsemi-frontend", runIn: "sandbox", status: "registered", requiredSecrets: [] }),
     ]);
     const kinds = plugin.components.unsupported.map((u: { kind: string }) => u.kind);
-    expect(kinds).toEqual(expect.arrayContaining(["hooks", "agents"]));
+    expect(kinds).toContain("hooks");
+    expect(h.plugins.agents()).toEqual([
+      { name: "defect-agent-frontend:helper", description: "Helps", tools: ["Read", "Bash(git:*)"], prompt: `Help using ${root}/scripts` },
+    ]);
+    expect(plugin.components.agents[0].notes).toEqual(["model 설정은 무시됩니다"]);
     const plain = plugin.components.commands.find((c: { name: string }) => c.name === "defect-agent-frontend:plain");
     expect(plain.notes.join(" ")).toMatch(/셸 명령 주입/);
 

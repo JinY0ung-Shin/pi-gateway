@@ -6,7 +6,7 @@ import { jwtSecretBytes, type McpServerConfig, type VisibleServer } from "@pi-ga
 import pino from "pino";
 import { createGateway, type Gateway, type GatewayOverrides } from "../src/app.js";
 import { type GatewayConfig, loadConfig } from "../src/config.js";
-import type { McpRegistry, PluginResources, PromptService } from "../src/contracts.js";
+import type { McpRegistry, PluginResources, PromptService, SubagentDefinition } from "../src/contracts.js";
 import { openDatabase } from "../src/db.js";
 import { type FakeBroker, type FakeBrokerTool, startFakeBroker } from "./fixtures/fake-broker.js";
 import { type FakeLlm, startFakeLlm } from "./fixtures/fake-llm.js";
@@ -34,6 +34,7 @@ export interface HarnessOptions {
   sandboxServers?: McpServerConfig[];
   skills?: Skill[];
   promptTemplates?: PromptTemplate[];
+  agents?: SubagentDefinition[];
   overrides?: Partial<GatewayOverrides>;
 }
 
@@ -101,6 +102,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const plugins: PluginResources = {
     skills: () => options.skills ?? [],
     promptTemplates: () => options.promptTemplates ?? [],
+    agents: () => options.agents ?? [],
     revision: () => 0,
   };
   const mcpRegistry: McpRegistry = {

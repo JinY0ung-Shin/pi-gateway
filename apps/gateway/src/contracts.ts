@@ -39,11 +39,23 @@ export interface PromptService {
 
 // ── plugin 리소스 (구현: src/plugins) ──────────────────────────────
 
+export interface SubagentDefinition {
+  /** `<plugin>:<agent>` */
+  name: string;
+  description: string;
+  /** frontmatter `tools` (Claude Code 도구 이름). 없으면 부모 세션의 도구를 모두 쓴다. */
+  tools?: string[];
+  /** 하위 세션의 시스템 프롬프트 (agent 본문) */
+  prompt: string;
+}
+
 export interface PluginResources {
   /** 활성 plugin의 skill. filePath는 PLUGINS_DIR 아래 절대 경로이고, sandbox에서도 같은 경로로 보인다. */
   skills(): Skill[];
   /** 활성 plugin의 command를 변환한 pi prompt template. 이름은 `<plugin>:<command>`. */
   promptTemplates(): PromptTemplate[];
+  /** 활성 plugin의 agent(`agents/*.md`). Agent 도구가 하위 세션으로 실행한다. */
+  agents(): SubagentDefinition[];
   /** 설치·제거·활성화가 바뀔 때마다 증가한다. */
   revision(): number;
 }

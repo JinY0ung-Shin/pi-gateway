@@ -8,7 +8,7 @@ import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
 import type { PlatformLogger } from "../admin/logger.js";
 import type { GatewayConfig } from "../config.js";
-import type { PluginResources } from "../contracts.js";
+import type { PluginResources, SubagentDefinition } from "../contracts.js";
 import type { Db } from "../db.js";
 import { policyProblems, type McpRegistryService } from "../mcp-registry/service.js";
 import { normalizeActor } from "../prompts/service.js";
@@ -132,6 +132,7 @@ interface ResourceCache {
   revision: number;
   skills: Skill[];
   templates: PromptTemplate[];
+  agents: SubagentDefinition[];
 }
 
 const SETTINGS_KEY = "plugins.mcp_defaults";
@@ -201,11 +202,16 @@ export class PluginService implements PluginResources {
     return [...this.#resources().templates];
   }
 
+  agents(): SubagentDefinition[] {
+    return [...this.#resources().agents];
+  }
+
   #resources(): ResourceCache {
     const revision = this.store.revision();
     if (this.#cache?.revision === revision) return this.#cache;
     const skills: Skill[] = [];
     const templates: PromptTemplate[] = [];
+    const agents: SubagentDefinition[] = [];
     for (const plugin of this.store.listPlugins()) {
       if (!plugin.enabled) continue;
       const source = `plugin:${plugin.id}`;
@@ -229,8 +235,11 @@ export class PluginService implements PluginResources {
           sourceInfo: createSyntheticSourceInfo(c.filePath, { source, scope: "user", origin: "package", baseDir: plugin.installPath }),
         });
       }
+      for (const a of plugin.components.agents) {
+        agents.push({ name: a.name, description: a.description, ...(a.tools ? { tools: a.tools } : {}), prompt: a.prompt });
+      }
     }
-    this.#cache = { revision, skills, templates };
+    this.#cache = { revision, skills, templates, agents };
     return this.#cache;
   }
 
@@ -467,6 +476,7 @@ export class PluginService implements PluginResources {
         components: {
           skills: found.skills,
           commands: found.commands,
+          agents: found.agents,
           unsupported: found.unsupported,
           warnings: found.warnings,
           copySkipped: copy.skipped,

@@ -155,6 +155,7 @@ export interface PluginView {
   components: {
     skills: { name: string; description: string; disableModelInvocation: boolean }[];
     commands: { name: string; description: string; argumentHint?: string; notes: string[] }[];
+    agents: { name: string; description: string; tools?: string[]; notes: string[] }[];
     unsupported: { kind: string; detail: string }[];
     warnings: string[];
     copySkipped: { path: string; reason: string }[];

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
   createAgentSession,
@@ -10,6 +11,7 @@ import {
   SessionManager,
   SettingsManager,
   type Skill,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { type RequestContext, SANDBOX_WORKSPACE, userKey } from "@pi-gateway/shared";
 import type { Logger } from "pino";
@@ -20,13 +22,15 @@ import type { SessionRecord } from "../sessions/store.js";
 import { installAskUserTurnGuard } from "../tools/ask-user.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { GatewayModels } from "./runtime.js";
+import { createSubagentTools } from "./subagents.js";
 
 /**
  * 세션 하나의 pi AgentSession을 만든다 (새로 만들거나 JSONL에서 되살리기).
  * pi 기본 동작 중 서버에 맞지 않는 것을 모두 끈다:
  * - 디스크 탐색 없음: 직접 만든 ResourceLoader (~/.pi, 프로젝트 .pi, AGENTS.md/CLAUDE.md를 읽지 않는다)
  * - project trust 끔, cache warming 끔, 설치 텔레메트리 끔
- * - 도구는 ToolRegistry가 만든 것만 쓴다 (내장 로컬 도구는 같은 이름의 원격 도구로 대체된다)
+ * - 도구는 ToolRegistry가 만든 것과 Agent·SendMessage(plugin agent가 있을 때)만 쓴다
+ *   (내장 로컬 도구는 같은 이름의 원격 도구로 대체된다)
  */
 
 /** 세션 메타는 있는데 JSONL이 없어진 경우 (지워졌거나 볼륨이 바뀜). 만료된 세션으로 다룬다. */
@@ -51,7 +55,6 @@ export interface AgentFactoryDeps {
 export interface BuiltAgent {
   session: AgentSession;
   sandbox: SandboxHandle;
-  toolNames: string[];
 }
 
 function resourceLoader(input: { systemPrompt: string; appendPrompt: string; skills: Skill[]; prompts: PromptTemplate[] }): ResourceLoader {
@@ -75,6 +78,11 @@ export function sessionDirFor(config: GatewayConfig, principal: string): string 
   return join(config.dataDir, "sessions", userKey(principal));
 }
 
+/** 세션의 하위 agent JSONL 디렉토리 */
+export function subagentDirFor(config: GatewayConfig, record: Pick<SessionRecord, "id" | "principal">): string {
+  return join(sessionDirFor(config, record.principal), `${record.id}.agents`);
+}
+
 export async function buildAgentSession(
   deps: AgentFactoryDeps,
   record: SessionRecord,
@@ -86,7 +94,7 @@ export async function buildAgentSession(
   if (record.sessionFile && record.turn > 0 && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
   const sandbox = deps.sandboxClient.for(record.principal, record.id);
 
-  const { customTools, toolNames } = await deps.tools.createSessionTools({
+  const { customTools } = await deps.tools.createSessionTools({
     principal: record.principal,
     user: record.user,
     sessionId: record.id,
@@ -121,6 +129,35 @@ export async function buildAgentSession(
     sessionManager = SessionManager.create(SANDBOX_WORKSPACE, sessionDir, { id: record.id });
   }
 
+  const subagentTools = createSubagentTools({
+    agents: deps.plugins.agents(),
+    tools: customTools,
+    dir: subagentDirFor(deps.config, record),
+    open: ({ systemPrompt, tools, sessionManager }) =>
+      createPiSession(deps, {
+        model,
+        thinkingLevel: record.thinkingLevel,
+        loader: resourceLoader({ systemPrompt, appendPrompt: "", skills: [], prompts: [] }),
+        tools,
+        sessionManager,
+      }),
+  });
+
+  const session = await createPiSession(deps, {
+    model,
+    thinkingLevel: record.thinkingLevel,
+    loader,
+    tools: [...customTools, ...subagentTools],
+    sessionManager,
+  });
+  installAskUserTurnGuard(session);
+  return { session, sandbox };
+}
+
+async function createPiSession(
+  deps: AgentFactoryDeps,
+  input: { model: Model<Api>; thinkingLevel: string; loader: ResourceLoader; tools: ToolDefinition[]; sessionManager: SessionManager },
+): Promise<AgentSession> {
   // pi가 agentDir 아래에 파일을 만들 일은 없지만, 홈 디렉토리 대신 gateway 데이터 아래의 빈 디렉토리를 준다.
   const agentDir = join(deps.config.dataDir, "pi-agent");
   mkdirSync(agentDir, { recursive: true, mode: 0o700 });
@@ -128,13 +165,13 @@ export async function buildAgentSession(
   const { session } = await createAgentSession({
     cwd: SANDBOX_WORKSPACE,
     agentDir,
-    model,
-    thinkingLevel: record.thinkingLevel as ThinkingLevel,
+    model: input.model,
+    thinkingLevel: input.thinkingLevel as ThinkingLevel,
     modelRuntime: deps.models.runtime,
-    resourceLoader: loader,
-    tools: toolNames,
-    customTools,
-    sessionManager,
+    resourceLoader: input.loader,
+    tools: input.tools.map((t) => t.name),
+    customTools: input.tools,
+    sessionManager: input.sessionManager,
     settingsManager: SettingsManager.inMemory(
       {
         cacheWarming: "off",
@@ -145,6 +182,5 @@ export async function buildAgentSession(
       { projectTrusted: false },
     ),
   });
-  installAskUserTurnGuard(session);
-  return { session, sandbox, toolNames };
+  return session;
 }

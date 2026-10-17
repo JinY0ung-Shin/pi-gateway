@@ -1,6 +1,6 @@
 import type { McpRunIn, McpServerConfig } from "@pi-gateway/shared";
 import { type Db, migrate } from "../db.js";
-import type { CommandRecord, SkillRecord, UnsupportedComponent } from "./components.js";
+import type { AgentRecord, CommandRecord, SkillRecord, UnsupportedComponent } from "./components.js";
 import type { JsonObject } from "./manifest.js";
 import type { MarketplaceManifest } from "./marketplace.js";
 
@@ -70,6 +70,7 @@ export interface McpRecord {
 export interface StoredComponents {
   skills: SkillRecord[];
   commands: CommandRecord[];
+  agents: AgentRecord[];
   unsupported: UnsupportedComponent[];
   warnings: string[];
   copySkipped: { path: string; reason: string }[];
@@ -283,7 +284,8 @@ function toPlugin(row: PluginRow): PluginRecord {
     enabled: row.enabled === 1,
     source: JSON.parse(row.source_json) as ResolvedSource,
     manifest: row.manifest_json === null ? null : (JSON.parse(row.manifest_json) as JsonObject),
-    components: JSON.parse(row.components_json) as StoredComponents,
+    // agents가 없던 버전에서 설치한 기록도 읽는다.
+    components: { agents: [], ...(JSON.parse(row.components_json) as Partial<StoredComponents>) } as StoredComponents,
     mcp: JSON.parse(row.mcp_json) as McpRecord[],
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
