@@ -90,8 +90,11 @@ export interface AdminDeps {
   stats: () => SessionStats;
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
-  /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (body.user를 믿는다) */
-  chat: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+  /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`·`…/{id}/cancel`과 같은 처리를 한다 (body.user·?user=를 믿는다) */
+  chat: {
+    respond: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+    cancel: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+  };
 }
 
 /** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */

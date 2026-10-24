@@ -82,26 +82,28 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     };
   });
 
-  /**
-   * 진행 중인 응답을 멈춘다. 그때까지의 내용은 남기고 `incomplete`(user_cancelled)로 끝나며,
-   * 그 응답 id로 다음 턴을 이어갈 수 있다. 원래 요청의 연결이 끊긴 경우는 지금처럼 버린다.
-   */
-  app.post<{ Params: { id: string }; Querystring: { user?: string } }>("/v1/responses/:id/cancel", async (req) => {
-    const user = userOf(deps.auth.authenticate(req.headers.authorization), req.query.user);
-    const id = req.params.id;
-    const parsed = parseResponseId(id);
-    const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
-    if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
-    const active = deps.hub.get(record.id)?.activeTurn;
-    if (!active || parsed.turn !== record.turn + 1) {
-      if (parsed.turn <= record.turn) {
-        throw apiError(409, `Response '${id}' is no longer in progress.`, { type: "invalid_request_error", code: "response_not_cancellable" });
-      }
-      throw notFound(`Response '${id}' not found`);
+  app.post("/v1/responses/:id/cancel", async (req) => cancelResponse(deps, req, deps.auth.authenticate(req.headers.authorization)));
+}
+
+/**
+ * 진행 중인 응답을 멈춘다 (`POST …/{id}/cancel?user=`). 그때까지의 내용은 남기고 `incomplete`(user_cancelled)로 끝나며,
+ * 그 응답 id로 다음 턴을 이어갈 수 있다. 원래 요청의 연결이 끊긴 경우는 지금처럼 버린다.
+ */
+export function cancelResponse(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): unknown {
+  const { id } = req.params as { id: string };
+  const user = userOf(auth, (req.query as { user?: string }).user);
+  const parsed = parseResponseId(id);
+  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
+  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  const active = deps.hub.get(record.id)?.activeTurn;
+  if (!active || parsed.turn !== record.turn + 1) {
+    if (parsed.turn <= record.turn) {
+      throw apiError(409, `Response '${id}' is no longer in progress.`, { type: "invalid_request_error", code: "response_not_cancellable" });
     }
-    active.abort(USER_CANCELLED);
-    return { id, object: "response", status: "cancelling" };
-  });
+    throw notFound(`Response '${id}' not found`);
+  }
+  active.abort(USER_CANCELLED);
+  return { id, object: "response", status: "cancelling" };
 }
 
 /**

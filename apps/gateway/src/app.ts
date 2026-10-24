@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Logger } from "pino";
 import { registerAdminRoutes as defaultRegisterAdminRoutes } from "./admin/index.js";
 import { createModelRuntime, type GatewayModels } from "./agent/runtime.js";
@@ -8,7 +8,7 @@ import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
 import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
-import { createResponse, type ResponsesDeps } from "./api/responses.js";
+import { cancelResponse, createResponse, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
 import { createMcpRegistry } from "./mcp-registry/index.js";
 import { McpToolCache } from "./mcp-client/connections.js";
@@ -121,14 +121,9 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         return { liveSessions: h.liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
       sandboxes: () => sandboxClient.list(),
-      chat: async (req, reply) => {
-        try {
-          return await createResponse(responses, req, reply, { kind: "service" });
-        } catch (err) {
-          // 관리 API의 오류 처리기는 ApiError를 모른다. /v1/responses와 같은 오류 본문으로 보낸다.
-          if (err instanceof ApiError) return reply.code(err.status).headers(err.headers).send(err.body);
-          throw err;
-        }
+      chat: {
+        respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
+        cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),
       },
     },
     registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,
@@ -160,4 +155,14 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       if (!overrides.db) db.close();
     },
   };
+}
+
+/** 관리 API의 오류 처리기는 ApiError를 모른다. 관리 화면 채팅은 /v1/responses와 같은 오류 본문으로 보낸다. */
+async function sendApiErrors(reply: FastifyReply, fn: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ApiError) return reply.code(err.status).headers(err.headers).send(err.body);
+    throw err;
+  }
 }

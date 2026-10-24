@@ -588,6 +588,66 @@ button:focus-visible {
   padding: 0.8rem 1rem;
 }
 
+.thumb {
+  max-width: 160px;
+  max-height: 120px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.thumb-button {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.button-like {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md table {
+  margin: 0.4rem 0;
+}
+
+.md pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  overflow: auto;
+}
+
+.md code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.md table {
+  border-collapse: collapse;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
