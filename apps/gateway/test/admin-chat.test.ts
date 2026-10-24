@@ -37,13 +37,13 @@ describe("POST /admin/api/chat", () => {
     expect((await chat({ user: "tester", input: "hi" }, "Bearer alice-key-0123456789abcdef")).status).toBe(401);
     const noUser = await chat({ input: "hi" });
     expect(noUser.status).toBe(400);
-    expect((await noUser.json()).error.message).toBe("user is required");
+    expect(((await noUser.json()) as any).error.message).toBe("user is required");
   });
 
   it("lists the chat options", async () => {
     const res = await fetch(`${h.url}/admin/api/chat/options`, { headers: { authorization: `Bearer ${ADMIN_KEY}` } });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as any;
     expect(body.defaultModel).toBe("test-model");
     expect(body.models).toContainEqual({ id: "vision-model", name: "vision-model", reasoning: false, image: true });
     expect(body.forwardHeaders).toEqual(["x-user-token"]);
@@ -51,7 +51,7 @@ describe("POST /admin/api/chat", () => {
   });
 
   it("cancels the active turn and keeps it in the history", async () => {
-    const first = await (await chat({ user: "tester", input: "hi" })).json();
+    const first = (await (await chat({ user: "tester", input: "hi" })).json()) as any;
     const id2 = first.id.replace(/_1$/, "_2");
     h.llm.enqueue({ textChunks: Array.from({ length: 50 }, (_, i) => `c${i} `), chunkDelayMs: 50 });
     const streaming = chat({ user: "tester", input: "long", stream: true, previous_response_id: first.id }).then((r) => r.text());

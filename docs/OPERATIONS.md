@@ -70,7 +70,7 @@ put "$(openssl rand -base64 32 | tr -d '\n')" $S/broker/broker_kek 0      # 정�
 put "$(r 48)" $S/gateway/admin_cookie_secret 10001
 put "$(r 32)" $S/gateway/admin_api_key 10001
 put "$(r 32)" $S/gateway/api_key 10001
-put "" $S/gateway/user_api_keys 10001; put "" $S/gateway/llm_api_key 10001
+put "" $S/gateway/user_api_keys 10001
 stat -c %g /var/run/docker.sock   # → .env의 DOCKER_GID
 ```
 
@@ -84,14 +84,10 @@ stat -c %g /var/run/docker.sock   # → .env의 DOCKER_GID
 cp .env.example .env    # setup-host.sh가 이미 만들었다면 아래 값만 추가한다
 ```
 
-반드시 채울 값은 다음과 같다.
+확인할 값은 다음과 같다.
 
-- `LLM_BASE_URL`: 예: `http://vllm.internal:8000/v1`
-- `LLM_MODELS`: JSON 배열. `contextWindow`는 vLLM의 `--max-model-len`과 맞춘다.
-  - 예: `[{"id":"Qwen/Qwen3-32B","contextWindow":32768,"maxTokens":8192,"reasoning":true}]`
 - `$PI_GATEWAY_SECRETS/gateway/user_api_keys`: 사용자별 키를 쓸 때. 형식은 `{"alice":"<32자 이상 키>","bob":"..."}`
-- `$PI_GATEWAY_SECRETS/gateway/llm_api_key`: 엔드포인트에 키가 필요할 때
-- 두 파일 모두 편집한 뒤 소유자 10001, 권한 0400을 유지한다 (`sudo ./scripts/setup-host.sh`를 다시 실행하면 바로잡는다).
+  - 편집한 뒤 소유자 10001, 권한 0400을 유지한다 (`sudo ./scripts/setup-host.sh`를 다시 실행하면 바로잡는다).
 - `GATEWAY_BIND_ADDR`: 기본 `127.0.0.1`. 같은 호스트의 reverse proxy(TLS) 뒤에 두는 것을 권장한다. 직접 공개하려면 LAN IP나 `0.0.0.0`으로 바꾼다.
 
 모든 변수의 설명은 `.env.example`에 있다.
@@ -103,6 +99,11 @@ docker compose up -d --build
 docker compose ps                 # gateway, sandboxd, mcp-broker, egress-proxy가 healthy, sandbox-image는 exited (0)
 curl -fsS http://127.0.0.1:8080/healthz
 ```
+
+그다음 관리 화면(`/admin`, 키는 `$PI_GATEWAY_SECRETS/gateway/admin_api_key`)의 **LLM** 페이지에서 LLM을 설정한다. 설정하기 전에는 `/v1/responses`가 503(`llm_not_configured`)이다.
+- API 형식, base URL(예: `http://vllm.internal:8000/v1`), API 키(없으면 비운다), 모델 목록, 기본 모델
+- 모델의 `contextWindow`는 vLLM의 `--max-model-len`과 맞춘다.
+- 설정은 gateway DB(`/data/gateway.db`)에 저장되고 저장하는 즉시 적용된다. 메모리의 세션은 다음 턴에 새 설정으로 다시 열린다. 키는 관리 화면에 다시 보이지 않는다.
 
 기동 순서는 다음과 같다.
 1. `sandbox-image` 빌드가 끝나고, `egress-proxy`가 healthy가 된다.
@@ -161,7 +162,6 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 
 | 파일 (`$PI_GATEWAY_SECRETS/…`) | 소유자 | 컨테이너 안 경로 | 내용 |
 |---|---|---|---|
-| `gateway/llm_api_key` | 10001 | gateway `/run/secrets/llm_api_key` | LLM 엔드포인트 키 (없으면 빈 파일) |
 | `gateway/api_key` | 10001 | gateway | 서비스 키 (`body.user`를 믿는다, BFF용). 빈 파일이면 끈다 |
 | `gateway/user_api_keys` | 10001 | gateway | `{"사용자":"키"}`. 키가 사용자를 정한다 |
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |

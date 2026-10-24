@@ -94,8 +94,6 @@ secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
 secret api_key             gen32 "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)
 secret user_api_keys       empty "$G/user_api_keys:$GW_UID"
-# LLM 엔드포인트 키 (vLLM 등). 키가 없는 엔드포인트면 빈 파일로 둔다.
-secret llm_api_key         empty "$G/llm_api_key:$GW_UID"
 
 if [ -S "$DOCKER_SOCK" ]; then
   gid="$(stat -c %g "$DOCKER_SOCK")"
@@ -120,7 +118,8 @@ add_env PI_GATEWAY_SECRETS "$SECRETS"
 
 echo
 echo "next:"
-echo "  1. edit $ENV_FILE (LLM_BASE_URL, LLM_MODELS, ...) — see .env.example"
-echo "  2. fill $SECRETS/gateway/user_api_keys and $SECRETS/gateway/llm_api_key if needed (keep 0400, owner 10001)"
+echo "  1. edit $ENV_FILE if needed — see .env.example"
+echo "  2. fill $SECRETS/gateway/user_api_keys if needed (keep 0400, owner 10001)"
 echo "  3. docker compose up -d --build"
-echo "  4. ./scripts/security-check/check-secret-files.sh  (permissions inside the running containers)"
+echo "  4. log in to /admin (key: $SECRETS/gateway/admin_api_key) and set the LLM on the LLM page"
+echo "  5. ./scripts/security-check/check-secret-files.sh  (permissions inside the running containers)"

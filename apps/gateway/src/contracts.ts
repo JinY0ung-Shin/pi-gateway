@@ -1,6 +1,7 @@
 import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
 import type { McpServerConfig, SandboxInfo, VisibleServer } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { GatewayModels } from "./agent/runtime.js";
 import type { GatewayConfig } from "./config.js";
 import type { Db } from "./db.js";
 
@@ -90,6 +91,8 @@ export interface AdminDeps {
   stats: () => SessionStats;
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
+  /** LLM 연결 설정 (관리 화면에서 바꾸면 바로 적용된다) */
+  llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update">;
   /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`·`…/{id}/cancel`과 같은 처리를 한다 (body.user·?user=를 믿는다) */
   chat: {
     respond: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;

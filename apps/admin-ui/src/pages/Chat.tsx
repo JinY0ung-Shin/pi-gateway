@@ -12,7 +12,8 @@ import { Badge, Notice, Section } from "../components";
 
 interface ChatOptions {
   models: { id: string; name: string; reasoning: boolean; image: boolean }[];
-  defaultModel: string;
+  /** LLM이 설정되지 않았으면 null */
+  defaultModel: string | null;
   forwardHeaders: string[];
   metadataKeys: string[];
 }
@@ -162,7 +163,7 @@ export function ChatPage() {
     api<ChatOptions>("GET", "/chat/options")
       .then((o) => {
         setOptions(o);
-        setSettings((s) => (o.models.some((m) => m.id === s.model) ? s : { ...s, model: o.defaultModel }));
+        setSettings((s) => (o.models.some((m) => m.id === s.model) ? s : { ...s, model: o.defaultModel ?? "" }));
       })
       .catch((error) => setOptionsError(errorText(error)));
   }, []);
@@ -359,6 +360,11 @@ export function ChatPage() {
       }
     >
       {optionsError && <Notice tone="error">설정을 불러오지 못했습니다: {optionsError}</Notice>}
+      {options && !options.defaultModel && (
+        <Notice tone="warn">
+          LLM이 설정되지 않았습니다. <a href="#/llm">LLM</a> 페이지에서 먼저 설정하세요.
+        </Notice>
+      )}
       <div class="grid-2">
         <label class="field">
           <span>user (이 사용자의 workspace·MCP로 실행됩니다)</span>

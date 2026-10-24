@@ -203,16 +203,6 @@ services:
       DATA_DIR: /data
       PLUGINS_DIR: /opt/plugins
       PI_OFFLINE: "1"
-      # LLM (vLLM 등 OpenAI 호환 엔드포인트)
-      LLM_API: ${LLM_API:-openai-completions}
-      LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL is required}
-      LLM_MODELS: ${LLM_MODELS:?LLM_MODELS is required}
-      # 값 없이 키만 적은 변수는 .env에 있을 때만 넘어간다 (빈 문자열과 '설정 안 함'을 구분하는 변수)
-      DEFAULT_MODEL:
-      LLM_PROVIDER_ID: ${LLM_PROVIDER_ID:-upstream}
-      LLM_HEADERS:
-      LLM_COMPAT:
-      LLM_API_KEY_FILE: /run/secrets/llm_api_key
       # 인증
       API_KEY_FILE: /run/secrets/api_key
       USER_API_KEYS_FILE: /run/secrets/user_api_keys
@@ -235,6 +225,7 @@ services:
       TURN_QUEUE_MAX_WAITERS: ${TURN_QUEUE_MAX_WAITERS:-256}
       SSE_KEEPALIVE_SECONDS: ${SSE_KEEPALIVE_SECONDS:-15}
       # MCP·프롬프트·plugin
+      # 값 없이 키만 적은 변수는 .env에 있을 때만 넘어간다 (빈 문자열과 '설정 안 함'을 구분하는 변수)
       MCP_FORWARD_HEADERS:
       MCP_METADATA_KEYS: ${MCP_METADATA_KEYS:-THREAD_ID,ORCHESTRATOR_URL}
       PROMPT_LANGUAGE: ${PROMPT_LANGUAGE:-Korean}
@@ -242,8 +233,6 @@ services:
       # 앞단 프록시 (docs/OPERATIONS.md §3.4)
       TRUST_PROXY: ${TRUST_PROXY:-false}
     secrets:
-      - source: gw_llm_api_key
-        target: llm_api_key
       - source: gw_api_key
         target: api_key
       - source: gw_user_api_keys
@@ -293,8 +282,6 @@ volumes:
 # compose의 파일 secret은 호스트 파일의 소유자·권한 그대로 /run/secrets/<target>에 mount된다.
 secrets:
   # gateway (uid 10001)
-  gw_llm_api_key:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/llm_api_key
   gw_api_key:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/api_key
   gw_user_api_keys:

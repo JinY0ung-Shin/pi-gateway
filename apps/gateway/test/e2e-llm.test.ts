@@ -18,11 +18,11 @@ const finalResponse = (events: SseEvent[]) => last(events).data.response as { id
 describe.skipIf(!enabled)("gateway + real LLM (OpenRouter)", () => {
   beforeAll(async () => {
     h = await startHarness({
-      env: {
-        LLM_BASE_URL: "https://openrouter.ai/api/v1",
-        LLM_API_KEY: process.env.OPENROUTER_API_KEY ?? "",
-        LLM_MODELS: JSON.stringify([{ id: MODEL, contextWindow: 128000, maxTokens: 8192, reasoning: true }]),
-        DEFAULT_MODEL: MODEL,
+      llm: {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: process.env.OPENROUTER_API_KEY ?? "",
+        models: [{ id: MODEL, contextWindow: 128000, maxTokens: 8192, reasoning: true, input: ["text"] }],
+        defaultModel: MODEL,
       },
       agents: [
         {

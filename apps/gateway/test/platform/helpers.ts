@@ -47,8 +47,6 @@ export function cleanupTempDirs(): void {
 
 export function makeConfig(options: { dataDir: string; pluginsDir: string; env?: Record<string, string | undefined> }): GatewayConfig {
   const env: Record<string, string | undefined> = {
-    LLM_MODELS: JSON.stringify([{ id: "test-model", contextWindow: 8192, maxTokens: 1024 }]),
-    LLM_BASE_URL: "http://127.0.0.1:9/v1",
     AUTH_DISABLED: "1",
     SANDBOXD_JWT_SECRET: "s".repeat(40),
     ADMIN_API_KEY: ADMIN_KEY,
@@ -118,6 +116,7 @@ export async function buildHarness(options: {
     stats: () => ({ liveSessions: 2, activeTurns: 1, queuedTurns: 0 }),
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
     chat: { respond: async () => ({}), cancel: async () => ({}) },
+    llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },
   };
   await registerAdminRoutes(app, deps);
   await app.ready();

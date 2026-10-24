@@ -5,6 +5,7 @@ import { type AdminVia, CSRF_HEADER, isMutating } from "./auth.js";
 import { type AdminContext, createAdminContext } from "./context.js";
 import { isPlatformError, PlatformError } from "./errors.js";
 import { registerChatRoutes } from "./routes-chat.js";
+import { registerLlmRoutes } from "./routes-llm.js";
 import { registerMcpRoutes } from "./routes-mcp.js";
 import { registerPluginRoutes } from "./routes-plugins.js";
 import { registerPromptRoutes } from "./routes-prompts.js";
@@ -96,4 +97,5 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   registerPluginRoutes(api, ctx);
   registerStatusRoutes(api, ctx);
   registerChatRoutes(api, ctx);
+  registerLlmRoutes(api, ctx);
 }

@@ -7,16 +7,6 @@ import { z } from "zod";
  * 이 파일은 여러 작업 레인이 함께 쓰므로, 필드를 추가할 때는 기존 필드의 의미를 바꾸지 않는다.
  */
 
-export const LlmModelConfig = z.object({
-  id: z.string().min(1),
-  name: z.string().optional(),
-  contextWindow: z.number().int().positive(),
-  maxTokens: z.number().int().positive(),
-  reasoning: z.boolean().default(false),
-  input: z.array(z.enum(["text", "image"])).default(["text"]),
-});
-export type LlmModelConfig = z.infer<typeof LlmModelConfig>;
-
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -25,18 +15,6 @@ export interface GatewayConfig {
   dataDir: string;
   /** 설치된 plugin 루트. gateway·sandbox·broker에서 같은 경로다. */
   pluginsDir: string;
-  llm: {
-    api: "openai-completions" | "anthropic-messages";
-    /** pi provider id */
-    providerId: string;
-    baseUrl: string;
-    apiKey: string;
-    headers: Record<string, string>;
-    models: LlmModelConfig[];
-    defaultModel: string;
-    /** pi 모델 compat 덮어쓰기 (LLM_COMPAT JSON). openai-completions면 vLLM용 기본값 위에 합친다. */
-    compat: Record<string, unknown>;
-  };
   auth: {
     /** 서비스 키. 이 키로 들어온 요청은 body.user를 그대로 믿는다. */
     apiKey: string | undefined;
@@ -152,19 +130,6 @@ function parseJson<T>(name: string, raw: string | undefined, schema: z.ZodType<T
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
-  const models = parseJson("LLM_MODELS", env.LLM_MODELS, z.array(LlmModelConfig).min(1), [] as LlmModelConfig[]);
-  if (models.length === 0) throw new Error("LLM_MODELS is required (JSON array of models)");
-  // 빈 문자열도 "지정 안 함"으로 본다 (compose가 빈 값을 넘기는 경우).
-  const defaultModel = env.DEFAULT_MODEL || models[0]!.id;
-  if (!models.some((m) => m.id === defaultModel)) throw new Error(`DEFAULT_MODEL '${defaultModel}' is not in LLM_MODELS`);
-
-  const api = env.LLM_API || "openai-completions";
-  if (api !== "openai-completions" && api !== "anthropic-messages") {
-    throw new Error("LLM_API must be openai-completions or anthropic-messages");
-  }
-  const baseUrl = env.LLM_BASE_URL;
-  if (!baseUrl) throw new Error("LLM_BASE_URL is required");
-
   const userApiKeys = parseJson(
     "USER_API_KEYS",
     readSecret(env, "USER_API_KEYS"),
@@ -203,16 +168,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     logLevel: env.LOG_LEVEL || "info",
     dataDir: env.DATA_DIR || "/data",
     pluginsDir: env.PLUGINS_DIR || "/opt/plugins",
-    llm: {
-      api,
-      providerId: env.LLM_PROVIDER_ID || "upstream",
-      baseUrl: baseUrl.replace(/\/+$/, ""),
-      apiKey: readSecret(env, "LLM_API_KEY") ?? "not-needed",
-      headers: parseJson("LLM_HEADERS", env.LLM_HEADERS, z.record(z.string(), z.string()), {}),
-      models,
-      defaultModel,
-      compat: parseJson("LLM_COMPAT", env.LLM_COMPAT, z.record(z.string(), z.unknown()), {}),
-    },
     auth: { apiKey, userApiKeys, adminApiKey, disabled },
     sandboxd: {
       url: (env.SANDBOXD_URL || "http://sandboxd:7070").replace(/\/+$/, ""),

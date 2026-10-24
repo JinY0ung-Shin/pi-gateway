@@ -215,7 +215,7 @@ describe("GET /v1/models", () => {
   it("lists the configured models and requires a key", async () => {
     const res = await fetch(`${h.url}/v1/models`, { headers: { authorization: `Bearer ${ALICE_KEY}` } });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as any;
     expect(body.object).toBe("list");
     expect(body.data.map((m: { id: string }) => m.id)).toEqual(["test-model", "think-model", "vision-model"]);
     expect(body.data[0]).toMatchObject({ object: "model" });
@@ -250,7 +250,7 @@ describe("POST /v1/responses/{id}/cancel", () => {
 
     const again = await cancel(id2);
     expect(again.status).toBe(409);
-    expect((await again.json()).error.code).toBe("response_not_cancellable");
+    expect(((await again.json()) as any).error.code).toBe("response_not_cancellable");
 
     const next = await h.post({ input: "continue", previous_response_id: id2 });
     expect(next.status).toBe(200);

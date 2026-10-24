@@ -3,6 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Notice } from "./components";
 import { ChatPage } from "./pages/Chat";
+import { LlmPage } from "./pages/Llm";
 import { Login } from "./pages/Login";
 import { McpPage } from "./pages/Mcp";
 import { PluginsPage } from "./pages/Plugins";
@@ -11,6 +12,7 @@ import { StatusPage } from "./pages/Status";
 import "./styles.css";
 
 const PAGES = [
+  { id: "llm", label: "LLM" },
   { id: "prompts", label: "프롬프트" },
   { id: "mcp", label: "MCP" },
   { id: "plugins", label: "plugin" },
@@ -22,7 +24,7 @@ type PageId = (typeof PAGES)[number]["id"];
 function parseHash(): { page: PageId; arg?: string } {
   const [page, arg] = location.hash.replace(/^#\/?/, "").split("/");
   const found = PAGES.find((p) => p.id === page);
-  return { page: found ? found.id : "prompts", ...(arg ? { arg: decodeURIComponent(arg) } : {}) };
+  return { page: found ? found.id : "llm", ...(arg ? { arg: decodeURIComponent(arg) } : {}) };
 }
 
 function App() {
@@ -71,6 +73,7 @@ function App() {
         </button>
       </header>
       <main class="content">
+        {route.page === "llm" && <LlmPage />}
         {route.page === "prompts" && <PromptsPage />}
         {route.page === "mcp" && <McpPage focus={route.arg} />}
         {route.page === "plugins" && <PluginsPage />}

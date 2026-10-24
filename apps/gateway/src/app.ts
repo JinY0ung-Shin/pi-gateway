@@ -60,7 +60,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   const plugins = overrides.plugins ?? createPluginResources(db, config);
   const mcpRegistry = overrides.mcpRegistry ?? createMcpRegistry(db, config);
 
-  const models = await createModelRuntime(config);
+  const models = await createModelRuntime(db);
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
   const defaults = createDefaultToolProviders({
     mcpRegistry,
@@ -121,6 +121,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         return { liveSessions: h.liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
       sandboxes: () => sandboxClient.list(),
+      llm: models,
       chat: {
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),

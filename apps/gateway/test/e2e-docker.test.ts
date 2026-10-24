@@ -88,7 +88,7 @@ describe.skipIf(!enabled)("gateway + sandboxd + Docker", () => {
     const sandboxdUrl = `http://127.0.0.1:${(sandboxd.server.address() as AddressInfo).port}`;
     h = await startHarness({
       sandboxd: { url: sandboxdUrl, secret: SECRET_TEXT },
-      env: { LLM_API_KEY: "llm-secret-should-never-reach-the-sandbox" },
+      llm: { apiKey: "llm-secret-should-never-reach-the-sandbox" },
       sandboxServers: [
         McpServerConfig.parse({
           id: "local",

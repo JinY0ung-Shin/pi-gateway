@@ -78,7 +78,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     deps.auth.authenticate(req.headers.authorization);
     return {
       object: "list",
-      data: deps.config.llm.models.map((m) => ({ id: m.id, object: "model", owned_by: deps.config.llm.providerId })),
+      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: deps.models.providerId })),
     };
   });
 
@@ -149,9 +149,11 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     if (prevTurn > record.turn) throw notFound(`previous_response_id '${prev}' references a future turn`);
   }
 
-  const model = body.model ?? deps.config.llm.defaultModel;
+  const defaultModel = deps.models.defaultModel();
+  if (!defaultModel) throw apiError(503, "LLM is not configured. Set it on the LLM page of the admin UI.", { type: "server_error", code: "llm_not_configured" });
+  const model = body.model ?? defaultModel;
   const modelConfig = deps.models.config(model);
-  if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.config.llm.models.map((m) => m.id).join(", ")}`);
+  if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
   const thinkingLevel = thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning);
 
   const plan: TurnPlan = { sessionId, isNew: !prev, principal, user, prev, prevTurn, body, input, model, thinkingLevel };
@@ -249,6 +251,9 @@ async function runLocked(
     const found = deps.store.get(plan.sessionId);
     if (!found || found.principal !== plan.principal) throw notFoundSession(plan.prev!);
     record = found;
+    if (!deps.models.config(record.model)) {
+      throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
+    }
     requireImageInput(deps, record.model, plan.input);
     if (plan.prevTurn < record.turn) {
       throw conflict(

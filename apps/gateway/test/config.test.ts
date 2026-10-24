@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 const base = {
-  LLM_BASE_URL: "http://llm:8000/v1",
-  LLM_MODELS: JSON.stringify([{ id: "m", contextWindow: 1000, maxTokens: 100 }]),
   API_KEY: "service-key-0123456789",
   SANDBOXD_JWT_SECRET: "x".repeat(40),
 };
@@ -19,9 +17,7 @@ describe("gateway config", () => {
   });
 
   it("treats empty env strings as unset", () => {
-    const c = loadConfig({ ...base, DEFAULT_MODEL: "", LLM_API: "", HOST: "", DATA_DIR: "" });
-    expect(c.llm.defaultModel).toBe("m");
-    expect(c.llm.api).toBe("openai-completions");
+    const c = loadConfig({ ...base, HOST: "", DATA_DIR: "" });
     expect(c.host).toBe("0.0.0.0");
     expect(c.dataDir).toBe("/data");
   });

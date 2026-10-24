@@ -16,7 +16,7 @@ const log = pino({
 
 const gateway = await createGateway(config, log);
 await gateway.app.listen({ host: config.host, port: config.port });
-log.info({ port: config.port, models: config.llm.models.map((m) => m.id) }, "gateway listening");
+log.info({ port: config.port, models: gateway.models.list().map((m) => m.id) }, "gateway listening");
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {
