@@ -117,6 +117,7 @@ export async function buildHarness(options: {
     mcp,
     stats: () => ({ liveSessions: 2, activeTurns: 1, queuedTurns: 0 }),
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
+    chat: async () => ({}),
   };
   await registerAdminRoutes(app, deps);
   await app.ready();

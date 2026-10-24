@@ -551,6 +551,43 @@ button:focus-visible {
 
 
 
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.msg {
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  max-width: 85%;
+}
+
+.msg-user {
+  align-self: flex-end;
+  background: var(--info-bg);
+}
+
+.msg-assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+}
+
+.msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg .tool {
+  margin-bottom: 0.35rem;
+}
+
+.question {
+  padding: 0.8rem 1rem;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));

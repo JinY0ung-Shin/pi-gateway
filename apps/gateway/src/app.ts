@@ -8,7 +8,8 @@ import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
 import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
-import { shuttingDownError } from "./errors.js";
+import { createResponse, type ResponsesDeps } from "./api/responses.js";
+import { ApiError, shuttingDownError } from "./errors.js";
 import { createMcpRegistry } from "./mcp-registry/index.js";
 import { McpToolCache } from "./mcp-client/connections.js";
 import { createPluginResources } from "./plugins/index.js";
@@ -93,20 +94,21 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     config.sessions.queueTimeoutSeconds * 1000,
   );
 
+  const responses: ResponsesDeps = {
+    config,
+    store,
+    hub,
+    limiter,
+    auth: new Authenticator(config.auth),
+    models,
+    prompts,
+    plugins,
+    log: logger.child({ component: "responses" }),
+  };
   const app = await buildServer({
     logger,
     trustProxy: config.trustProxy,
-    responses: {
-      config,
-      store,
-      hub,
-      limiter,
-      auth: new Authenticator(config.auth),
-      models,
-      prompts,
-      plugins,
-      log: logger.child({ component: "responses" }),
-    },
+    responses,
     admin: {
       config,
       db,
@@ -119,6 +121,15 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         return { liveSessions: h.liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
       sandboxes: () => sandboxClient.list(),
+      chat: async (req, reply) => {
+        try {
+          return await createResponse(responses, req, reply, { kind: "service" });
+        } catch (err) {
+          // 관리 API의 오류 처리기는 ApiError를 모른다. /v1/responses와 같은 오류 본문으로 보낸다.
+          if (err instanceof ApiError) return reply.code(err.status).headers(err.headers).send(err.body);
+          throw err;
+        }
+      },
     },
     registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,
   });

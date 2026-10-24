@@ -71,78 +71,7 @@ interface TurnPlan {
 
 export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDeps): void {
   app.post("/v1/responses", async (req, reply) => {
-    if (deps.hub.isShuttingDown) throw shuttingDownError();
-    const auth = deps.auth.authenticate(req.headers.authorization);
-    const body = parseRequest(req.body);
-    if (body.background) throw badRequest("background=true is not supported by this gateway");
-    const format = body.text?.format?.type;
-    if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
-    const input = parseInput(body);
-
-    const user = userOf(auth, body.user);
-
-    const prev = body.previous_response_id ?? null;
-    let sessionId: string;
-    let prevTurn = 0;
-    if (prev) {
-      if (body.instructions) {
-        throw badRequest("instructions cannot be used with previous_response_id. The system prompt is fixed to the original session.");
-      }
-      if (input.kind === "prompt" && input.hasSystemItems) {
-        throw badRequest(
-          "system/developer input items cannot be used with previous_response_id. The system prompt is fixed to the original session.",
-        );
-      }
-      const parsed = parseResponseId(prev);
-      if (!parsed) throw notFound(`previous_response_id '${prev}' is invalid`);
-      sessionId = parsed.sessionId;
-      prevTurn = parsed.turn;
-    } else {
-      if (input.kind === "answer") throw badRequest("function_call_output requires previous_response_id");
-      sessionId = randomUUID();
-    }
-    const principal = user;
-
-    // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
-    if (prev) {
-      const record = deps.store.get(sessionId);
-      if (!record || record.principal !== principal) throw notFoundSession(prev);
-      if (prevTurn > record.turn) throw notFound(`previous_response_id '${prev}' references a future turn`);
-    }
-
-    const model = body.model ?? deps.config.llm.defaultModel;
-    const modelConfig = deps.models.config(model);
-    if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.config.llm.models.map((m) => m.id).join(", ")}`);
-    const thinkingLevel = thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning);
-
-    const plan: TurnPlan = { sessionId, isNew: !prev, principal, user, prev, prevTurn, body, input, model, thinkingLevel };
-
-    // 클라이언트가 연결을 끊으면 실행을 멈춘다.
-    const abort = new AbortController();
-    let finished = false;
-    reply.raw.on("close", () => {
-      if (!finished) abort.abort();
-    });
-
-    let release: () => void;
-    try {
-      release = await deps.limiter.acquire(principal, abort.signal);
-    } catch (err) {
-      // 기다리는 중에 클라이언트가 떠났다. 응답을 받을 곳이 없다.
-      if (abort.signal.aborted) return reply.code(499).send();
-      throw err;
-    }
-    try {
-      // 기다리는 동안 종료가 시작됐을 수 있다.
-      if (deps.hub.isShuttingDown) throw shuttingDownError();
-      return await deps.hub.locks.run(sessionId, () => {
-        if (deps.hub.isShuttingDown) throw shuttingDownError();
-        return runLocked(deps, req, reply, plan, abort);
-      });
-    } finally {
-      finished = true;
-      release();
-    }
+    return createResponse(deps, req, reply, deps.auth.authenticate(req.headers.authorization));
   });
 
   app.get("/v1/models", async (req) => {
@@ -173,6 +102,84 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     active.abort(USER_CANCELLED);
     return { id, object: "response", status: "cancelling" };
   });
+}
+
+/**
+ * POST /v1/responses 처리. 인증은 호출하는 쪽이 한다 (API 키, 또는 관리 화면 채팅은 관리자 로그인).
+ * 서비스 키·관리자는 body.user를 믿는다.
+ */
+export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, reply: FastifyReply, auth: AuthResult): Promise<unknown> {
+  if (deps.hub.isShuttingDown) throw shuttingDownError();
+  const body = parseRequest(req.body);
+  if (body.background) throw badRequest("background=true is not supported by this gateway");
+  const format = body.text?.format?.type;
+  if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
+  const input = parseInput(body);
+
+  const user = userOf(auth, body.user);
+
+  const prev = body.previous_response_id ?? null;
+  let sessionId: string;
+  let prevTurn = 0;
+  if (prev) {
+    if (body.instructions) {
+      throw badRequest("instructions cannot be used with previous_response_id. The system prompt is fixed to the original session.");
+    }
+    if (input.kind === "prompt" && input.hasSystemItems) {
+      throw badRequest(
+        "system/developer input items cannot be used with previous_response_id. The system prompt is fixed to the original session.",
+      );
+    }
+    const parsed = parseResponseId(prev);
+    if (!parsed) throw notFound(`previous_response_id '${prev}' is invalid`);
+    sessionId = parsed.sessionId;
+    prevTurn = parsed.turn;
+  } else {
+    if (input.kind === "answer") throw badRequest("function_call_output requires previous_response_id");
+    sessionId = randomUUID();
+  }
+  const principal = user;
+
+  // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
+  if (prev) {
+    const record = deps.store.get(sessionId);
+    if (!record || record.principal !== principal) throw notFoundSession(prev);
+    if (prevTurn > record.turn) throw notFound(`previous_response_id '${prev}' references a future turn`);
+  }
+
+  const model = body.model ?? deps.config.llm.defaultModel;
+  const modelConfig = deps.models.config(model);
+  if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.config.llm.models.map((m) => m.id).join(", ")}`);
+  const thinkingLevel = thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning);
+
+  const plan: TurnPlan = { sessionId, isNew: !prev, principal, user, prev, prevTurn, body, input, model, thinkingLevel };
+
+  // 클라이언트가 연결을 끊으면 실행을 멈춘다.
+  const abort = new AbortController();
+  let finished = false;
+  reply.raw.on("close", () => {
+    if (!finished) abort.abort();
+  });
+
+  let release: () => void;
+  try {
+    release = await deps.limiter.acquire(principal, abort.signal);
+  } catch (err) {
+    // 기다리는 중에 클라이언트가 떠났다. 응답을 받을 곳이 없다.
+    if (abort.signal.aborted) return reply.code(499).send();
+    throw err;
+  }
+  try {
+    // 기다리는 동안 종료가 시작됐을 수 있다.
+    if (deps.hub.isShuttingDown) throw shuttingDownError();
+    return await deps.hub.locks.run(sessionId, () => {
+      if (deps.hub.isShuttingDown) throw shuttingDownError();
+      return runLocked(deps, req, reply, plan, abort);
+    });
+  } finally {
+    finished = true;
+    release();
+  }
 }
 
 /** user 키면 키의 사용자, 서비스 키면 클라이언트가 보낸 user */

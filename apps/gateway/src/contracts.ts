@@ -1,6 +1,6 @@
 import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
 import type { McpServerConfig, SandboxInfo, VisibleServer } from "@pi-gateway/shared";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayConfig } from "./config.js";
 import type { Db } from "./db.js";
 
@@ -90,6 +90,8 @@ export interface AdminDeps {
   stats: () => SessionStats;
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
+  /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (body.user를 믿는다) */
+  chat: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 }
 
 /** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */

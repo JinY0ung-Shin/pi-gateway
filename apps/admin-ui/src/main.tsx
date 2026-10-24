@@ -2,6 +2,7 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Notice } from "./components";
+import { ChatPage } from "./pages/Chat";
 import { Login } from "./pages/Login";
 import { McpPage } from "./pages/Mcp";
 import { PluginsPage } from "./pages/Plugins";
@@ -14,6 +15,7 @@ const PAGES = [
   { id: "mcp", label: "MCP" },
   { id: "plugins", label: "plugin" },
   { id: "status", label: "상태" },
+  { id: "chat", label: "채팅 테스트" },
 ] as const;
 type PageId = (typeof PAGES)[number]["id"];
 
@@ -73,6 +75,7 @@ function App() {
         {route.page === "mcp" && <McpPage focus={route.arg} />}
         {route.page === "plugins" && <PluginsPage />}
         {route.page === "status" && <StatusPage />}
+        {route.page === "chat" && <ChatPage />}
       </main>
     </div>
   );
