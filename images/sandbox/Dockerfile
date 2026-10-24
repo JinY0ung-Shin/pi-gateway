@@ -12,7 +12,16 @@ ARG NODE_IMAGE=node:22-bookworm-slim
 
 FROM ${NODE_IMAGE} AS node
 
-FROM ${PYTHON_IMAGE} AS helpers
+# 사내 apt 미러 (.env의 APT_MIRROR_URL·APT_SECURITY_MIRROR_URL). 비우면 공식 저장소를 쓴다.
+FROM ${PYTHON_IMAGE} AS debian
+ARG APT_MIRROR_URL=""
+ARG APT_SECURITY_MIRROR_URL=""
+RUN sources=/etc/apt/sources.list.d/debian.sources \
+ && security="${APT_SECURITY_MIRROR_URL:-$APT_MIRROR_URL}" \
+ && if [ -n "$APT_MIRROR_URL" ]; then sed -i "s|^URIs: http://deb.debian.org/debian\$|URIs: $APT_MIRROR_URL|" "$sources"; fi \
+ && if [ -n "$security" ]; then sed -i "s|^URIs: http://deb.debian.org/debian-security\$|URIs: $security|" "$sources"; fi
+
+FROM debian AS helpers
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
@@ -21,7 +30,7 @@ RUN mkdir -p /out \
  && gcc -O2 -static -Wall -Wextra -Werror -o /out/sbx-run /src/sbx-run.c \
  && gcc -O2 -static -Wall -Wextra -Werror -o /out/sbx-proxy-bridge /src/sbx-proxy-bridge.c
 
-FROM ${PYTHON_IMAGE}
+FROM debian
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \

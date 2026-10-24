@@ -12,6 +12,15 @@
 
 name: pi-gateway
 
+# 사내 미러 (.env). 이미지 빌드 때만 쓴다.
+x-mirror-args: &mirror-args
+  APT_MIRROR_URL: ${APT_MIRROR_URL:-}
+  APT_SECURITY_MIRROR_URL: ${APT_SECURITY_MIRROR_URL:-}
+  NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+  PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+  PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+  GOPROXY: ${GOPROXY:-}
+
 x-hardening: &hardening
   read_only: true
   init: true
@@ -33,6 +42,7 @@ services:
     image: ${SANDBOX_BASE_IMAGE:-pi-gateway/sandbox:latest}
     build:
       context: ./images/sandbox
+      args: *mirror-args
     command: ["true"]
     network_mode: none
     read_only: true
@@ -46,6 +56,7 @@ services:
     build:
       context: .
       target: egress-proxy
+      args: *mirror-args
     user: "65532:65532"
     environment:
       # 열어 줄 도메인·IP. 나머지는 모두 막는다 (.env.example, docs/OPERATIONS.md §6)
@@ -61,6 +72,7 @@ services:
     build:
       context: .
       target: sandboxd
+      args: *mirror-args
     # uid 1000 = sandbox 사용자와 같은 uid (workspace 소유자). docker.sock 접근은 docker 그룹으로 준다.
     user: "1000:1000"
     group_add:
@@ -112,6 +124,7 @@ services:
       context: .
       target: mcp-broker
       args:
+        <<: *mirror-args
         BROKER_EXTRA_APT_PACKAGES: ${BROKER_EXTRA_APT_PACKAGES:-}
         BROKER_EXTRA_NPM_PACKAGES: ${BROKER_EXTRA_NPM_PACKAGES:-}
         BROKER_EXTRA_PIP_PACKAGES: ${BROKER_EXTRA_PIP_PACKAGES:-}
@@ -174,6 +187,7 @@ services:
     build:
       context: .
       target: gateway
+      args: *mirror-args
     user: "10001:10001"
     depends_on:
       sandboxd:

@@ -12,6 +12,16 @@ ARG GO_IMAGE=golang:1.25-alpine
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
+# 사내 미러 (.env의 APT_MIRROR_URL·APT_SECURITY_MIRROR_URL·NPM_CONFIG_REGISTRY). 비우면 공식 저장소를 쓴다.
+# 모든 Node 단계가 이 단계에서 시작하므로 여기서 한 번 바꾸면 된다.
+ARG APT_MIRROR_URL=""
+ARG APT_SECURITY_MIRROR_URL=""
+ARG NPM_CONFIG_REGISTRY=""
+RUN sources=/etc/apt/sources.list.d/debian.sources \
+ && security="${APT_SECURITY_MIRROR_URL:-$APT_MIRROR_URL}" \
+ && if [ -n "$APT_MIRROR_URL" ]; then sed -i "s|^URIs: http://deb.debian.org/debian\$|URIs: $APT_MIRROR_URL|" "$sources"; fi \
+ && if [ -n "$security" ]; then sed -i "s|^URIs: http://deb.debian.org/debian-security\$|URIs: $security|" "$sources"; fi \
+ && if [ -n "$NPM_CONFIG_REGISTRY" ]; then npm config set --global registry "$NPM_CONFIG_REGISTRY"; fi
 
 # 의존성 계산에 필요한 파일만 먼저 복사한다 (소스가 바뀌어도 npm ci 캐시를 쓴다)
 FROM base AS manifests
@@ -103,6 +113,9 @@ CMD ["node", "apps/sandboxd/dist/main.js"]
 #   BROKER_EXTRA_PIP_PACKAGES="mcp-server-fetch"                       → /opt/mcp-venv
 #   BROKER_EXTRA_APT_PACKAGES="..."
 FROM runtime AS mcp-broker
+# 사내 PyPI 미러 (.env). HTTP 미러면 PIP_TRUSTED_HOST에 호스트명을 넣는다.
+ARG PIP_INDEX_URL=""
+ARG PIP_TRUSTED_HOST=""
 ARG BROKER_EXTRA_APT_PACKAGES=""
 ARG BROKER_EXTRA_NPM_PACKAGES=""
 ARG BROKER_EXTRA_PIP_PACKAGES=""
@@ -134,6 +147,8 @@ CMD ["node", "apps/mcp-broker/dist/main.js"]
 # unix socket(/run/pi-proxy/proxy.sock)에서만 듣고, 비밀값이 없다.
 FROM ${GO_IMAGE} AS egress-proxy-build
 WORKDIR /src
+# 사내 Go module 미러 (.env). 비우면 proxy.golang.org
+ARG GOPROXY=""
 COPY images/egress-proxy/go.mod images/egress-proxy/go.sum ./
 RUN go mod download && go mod verify
 COPY images/egress-proxy/main.go ./
