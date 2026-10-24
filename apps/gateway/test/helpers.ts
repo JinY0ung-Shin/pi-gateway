@@ -78,6 +78,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     LLM_MODELS: JSON.stringify([
       { id: "test-model", contextWindow: 32000, maxTokens: 4096 },
       { id: "think-model", contextWindow: 32000, maxTokens: 4096, reasoning: true },
+      { id: "vision-model", contextWindow: 32000, maxTokens: 4096, input: ["text", "image"] },
     ]),
     DEFAULT_MODEL: "test-model",
     USER_API_KEYS: JSON.stringify({ alice: ALICE_KEY, bob: BOB_KEY }),

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { BOB_KEY, type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
+import { bombPng, tinyPng } from "./fixtures/images.js";
+import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
 
 const RESP_ID = /^resp_[0-9a-f-]{36}_(\d+)$/;
 
@@ -207,6 +208,91 @@ describe("system prompt", () => {
     expect(lastMsg).toContain("User: q1");
     expect(lastMsg).toContain("Assistant: a1");
     expect(lastMsg).toContain("User: q2");
+  });
+});
+
+describe("GET /v1/models", () => {
+  it("lists the configured models and requires a key", async () => {
+    const res = await fetch(`${h.url}/v1/models`, { headers: { authorization: `Bearer ${ALICE_KEY}` } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.object).toBe("list");
+    expect(body.data.map((m: { id: string }) => m.id)).toEqual(["test-model", "think-model", "vision-model"]);
+    expect(body.data[0]).toMatchObject({ object: "model" });
+    expect((await fetch(`${h.url}/v1/models`)).status).toBe(401);
+  });
+});
+
+describe("POST /v1/responses/{id}/cancel", () => {
+  const cancel = (id: string, key = ALICE_KEY, query = "") =>
+    fetch(`${h.url}/v1/responses/${id}/cancel${query}`, { method: "POST", headers: { authorization: `Bearer ${key}` } });
+
+  it("stops the active turn, keeps its partial output and lets the next turn continue from it", async () => {
+    const first = await h.post({ input: "hi" });
+    const id2 = first.json.id.replace(/_1$/, "_2");
+    h.llm.enqueue({ textChunks: Array.from({ length: 50 }, (_, i) => `c${i} `), chunkDelayMs: 50 });
+    const streaming = h.stream({ input: "long task", previous_response_id: first.json.id });
+
+    // 아직 시작 전이면 404다. 턴이 시작될 때까지 다시 시도한다.
+    let res = await cancel(id2);
+    for (let i = 0; i < 40 && res.status === 404; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      res = await cancel(id2);
+    }
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: id2, object: "response", status: "cancelling" });
+
+    const { events } = await streaming;
+    const end = last(events);
+    expect(end.type).toBe("response.incomplete");
+    expect((end.data.response as any).id).toBe(id2);
+    expect((end.data.response as any).incomplete_details).toEqual({ reason: "user_cancelled" });
+
+    const again = await cancel(id2);
+    expect(again.status).toBe(409);
+    expect((await again.json()).error.code).toBe("response_not_cancellable");
+
+    const next = await h.post({ input: "continue", previous_response_id: id2 });
+    expect(next.status).toBe(200);
+    expect(next.json.id.endsWith("_3")).toBe(true);
+    // 멈춘 턴의 사용자 메시지는 남는다 (pi는 중단된 assistant 메시지를 다음 요청에 넣지 않는다).
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("long task");
+  });
+
+  it("404 for another user's or an unknown response; the service key needs ?user=", async () => {
+    const first = await h.post({ input: "hi" });
+    expect((await cancel(first.json.id, BOB_KEY)).status).toBe(404);
+    expect((await cancel("resp_nope_1")).status).toBe(404);
+    expect((await cancel(first.json.id, SERVICE_KEY)).status).toBe(400);
+    expect((await cancel(first.json.id, SERVICE_KEY, "?user=alice")).status).toBe(409);
+  });
+});
+
+describe("input_image", () => {
+  const dataUrl = (buf: Buffer) => `data:image/png;base64,${buf.toString("base64")}`;
+  const withImage = (model: string, image_url: string) => ({
+    model,
+    input: [{ role: "user", content: [{ type: "input_text", text: "what is this?" }, { type: "input_image", image_url }] }],
+  });
+
+  it("sends a data URL image to the model", async () => {
+    const res = await h.post(withImage("vision-model", dataUrl(tinyPng())));
+    expect(res.status).toBe(200);
+    const lastMsg = JSON.stringify(h.llm.requests.at(-1)!.messages.at(-1));
+    expect(lastMsg).toContain("what is this?");
+    expect(lastMsg).toContain(dataUrl(tinyPng()));
+  });
+
+  it("rejects images for text-only models, non-data URLs and image bombs", async () => {
+    const textOnly = await h.post(withImage("test-model", dataUrl(tinyPng())));
+    expect(textOnly.status).toBe(400);
+    expect(textOnly.json.error.code).toBe("unsupported_image_input");
+    const remote = await h.post(withImage("vision-model", "https://example.com/a.png"));
+    expect(remote.status).toBe(400);
+    expect(remote.json.error.code).toBe("unsupported_image_input");
+    const bomb = await h.post(withImage("vision-model", dataUrl(bombPng())));
+    expect(bomb.status).toBe(400);
+    expect(bomb.json.error.code).toBe("invalid_image");
   });
 });
 

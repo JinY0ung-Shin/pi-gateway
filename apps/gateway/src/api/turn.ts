@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
 import type { LiveSession } from "../sessions/hub.js";
 import type { PendingToolCall } from "../sessions/store.js";
@@ -28,6 +29,7 @@ function classifyError(message: string): string {
 export async function executeTurn(input: {
   live: LiveSession;
   text: string;
+  images: ImageContent[];
   expandTemplates: boolean;
   mapper: ResponseEventMapper;
   signal: AbortSignal;
@@ -51,7 +53,7 @@ export async function executeTurn(input: {
   let thrown: unknown;
   try {
     if (signal.aborted) throw new Error("aborted");
-    await session.prompt(input.text, { expandPromptTemplates: input.expandTemplates });
+    await session.prompt(input.text, { expandPromptTemplates: input.expandTemplates, images: input.images });
   } catch (err) {
     thrown = err;
   } finally {

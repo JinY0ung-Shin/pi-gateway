@@ -1,5 +1,7 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { badRequest, validationError } from "../errors.js";
+import { checkImage } from "../tools/image-guard.js";
 
 /** POST /v1/responses 요청 — oh-my-gateway가 받던 필드 중 v1이 지원하는 것 */
 
@@ -60,19 +62,36 @@ export function parseRequest(body: unknown): ResponseCreateRequest {
 }
 
 export type ParsedInput =
-  | { kind: "prompt"; text: string; systemText: string | null; hasSystemItems: boolean }
+  | { kind: "prompt"; text: string; images: ImageContent[]; systemText: string | null; hasSystemItems: boolean }
   | { kind: "answer"; callId: string; output: string };
 
 const ROLE_LABELS: Record<string, string> = { user: "User", assistant: "Assistant", system: "System", developer: "Developer" };
 
 type Message = z.infer<typeof MessageItem>;
 
-function contentText(content: Message["content"]): string {
+const DATA_URL = /^data:[^,]*;base64,(.*)$/s;
+
+/** input_image는 base64 data URL만 받는다. gateway가 URL을 대신 가져오지 않는다. */
+function inputImage(part: z.infer<typeof ContentPart>): ImageContent {
+  const m = typeof part.image_url === "string" ? DATA_URL.exec(part.image_url) : null;
+  if (!m) throw badRequest("input_image.image_url must be a base64 data: URL", "unsupported_image_input");
+  const buf = Buffer.from(m[1]!, "base64");
+  const verdict = checkImage(buf);
+  if (!verdict.ok) throw badRequest(`input_image rejected: ${verdict.reason}`, "invalid_image");
+  return { type: "image", data: buf.toString("base64"), mimeType: verdict.info.mimeType };
+}
+
+/** images를 넘기면 input_image를 거기에 모은다. 넘기지 않으면 (system 메시지) input_image는 400이다. */
+function contentText(content: Message["content"], images?: ImageContent[]): string {
   if (typeof content === "string") return content;
   const texts: string[] = [];
   for (const part of content) {
+    if (part.type === "input_image" && images) {
+      images.push(inputImage(part));
+      continue;
+    }
     if (part.type === "input_image" || part.type === "image" || part.type === "input_file") {
-      throw badRequest(`input part type '${part.type}' is not supported yet`, "unsupported_image_input");
+      throw badRequest(`input part type '${part.type}' is not supported here`, "unsupported_image_input");
     }
     if (typeof part.text === "string" && part.text) texts.push(part.text);
   }
@@ -80,11 +99,11 @@ function contentText(content: Message["content"]): string {
 }
 
 /** 메시지 배열을 프롬프트 하나로 합친다. 메시지가 둘 이상이면 `User: ` 같은 라벨을 붙인다. */
-function flatten(messages: Message[]): string {
+function flatten(messages: Message[], images: ImageContent[]): string {
   const label = messages.length > 1;
   const parts: string[] = [];
   for (const m of messages) {
-    const text = contentText(m.content);
+    const text = contentText(m.content, images);
     if (!text) continue;
     parts.push(label ? `${ROLE_LABELS[m.role]}: ${text}` : text);
   }
@@ -95,7 +114,7 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
   const input = body.input;
   if (typeof input === "string") {
     if (!input.trim()) throw badRequest("input must not be empty");
-    return { kind: "prompt", text: input, systemText: null, hasSystemItems: false };
+    return { kind: "prompt", text: input, images: [], systemText: null, hasSystemItems: false };
   }
   const fco = input.find((item): item is z.infer<typeof FunctionCallOutputItem> => item.type === "function_call_output");
   if (fco) return { kind: "answer", callId: fco.call_id, output: fco.output };
@@ -110,9 +129,10 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
     for (const m of messages) if (m.role === "system" || m.role === "developer") systemText = contentText(m.content);
     if (users.length > 0) promptMessages = users;
   }
-  const text = flatten(promptMessages);
-  if (!text.trim()) throw badRequest("input must not be empty");
-  return { kind: "prompt", text, systemText, hasSystemItems };
+  const images: ImageContent[] = [];
+  const text = flatten(promptMessages, images);
+  if (!text.trim() && images.length === 0) throw badRequest("input must not be empty");
+  return { kind: "prompt", text, images, systemText, hasSystemItems };
 }
 
 /** reasoning.effort → pi thinking level */

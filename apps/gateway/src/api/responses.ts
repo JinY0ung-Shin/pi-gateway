@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
-import type { Authenticator } from "../auth/auth.js";
+import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources, PromptService } from "../contracts.js";
 import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError } from "../errors.js";
@@ -33,6 +33,9 @@ export interface ResponsesDeps {
   plugins: PluginResources;
   log: Logger;
 }
+
+/** cancel 요청으로 멈춘 턴의 abort reason. 연결 끊김·종료·시간 초과와 구분한다. */
+const USER_CANCELLED = "user_cancelled";
 
 const notFoundSession = (prev: string) => notFound(`Session for previous_response_id '${prev}' not found or expired`);
 
@@ -76,14 +79,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
     const input = parseInput(body);
 
-    let user: string;
-    if (auth.kind === "user") {
-      user = auth.user;
-    } else {
-      if (!body.user) throw badRequest("user is required");
-      if (!isValidUserId(body.user)) throw badRequest(`Invalid user '${body.user}'`);
-      user = body.user;
-    }
+    const user = userOf(auth, body.user);
 
     const prev = body.previous_response_id ?? null;
     let sessionId: string;
@@ -148,6 +144,43 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
       release();
     }
   });
+
+  app.get("/v1/models", async (req) => {
+    deps.auth.authenticate(req.headers.authorization);
+    return {
+      object: "list",
+      data: deps.config.llm.models.map((m) => ({ id: m.id, object: "model", owned_by: deps.config.llm.providerId })),
+    };
+  });
+
+  /**
+   * 진행 중인 응답을 멈춘다. 그때까지의 내용은 남기고 `incomplete`(user_cancelled)로 끝나며,
+   * 그 응답 id로 다음 턴을 이어갈 수 있다. 원래 요청의 연결이 끊긴 경우는 지금처럼 버린다.
+   */
+  app.post<{ Params: { id: string }; Querystring: { user?: string } }>("/v1/responses/:id/cancel", async (req) => {
+    const user = userOf(deps.auth.authenticate(req.headers.authorization), req.query.user);
+    const id = req.params.id;
+    const parsed = parseResponseId(id);
+    const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
+    if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+    const active = deps.hub.get(record.id)?.activeTurn;
+    if (!active || parsed.turn !== record.turn + 1) {
+      if (parsed.turn <= record.turn) {
+        throw apiError(409, `Response '${id}' is no longer in progress.`, { type: "invalid_request_error", code: "response_not_cancellable" });
+      }
+      throw notFound(`Response '${id}' not found`);
+    }
+    active.abort(USER_CANCELLED);
+    return { id, object: "response", status: "cancelling" };
+  });
+}
+
+/** user 키면 키의 사용자, 서비스 키면 클라이언트가 보낸 user */
+function userOf(auth: AuthResult, claimed: string | null | undefined): string {
+  if (auth.kind === "user") return auth.user;
+  if (!claimed) throw badRequest("user is required");
+  if (!isValidUserId(claimed)) throw badRequest(`Invalid user '${claimed}'`);
+  return claimed;
 }
 
 function newRecord(deps: ResponsesDeps, plan: TurnPlan): SessionRecord {
@@ -185,6 +218,12 @@ function newRecord(deps: ResponsesDeps, plan: TurnPlan): SessionRecord {
   };
 }
 
+function requireImageInput(deps: ResponsesDeps, model: string, input: ParsedInput): void {
+  if (input.kind === "prompt" && input.images.length > 0 && !deps.models.config(model)?.input.includes("image")) {
+    throw badRequest(`Model '${model}' does not accept image input`, "unsupported_image_input");
+  }
+}
+
 async function runLocked(
   deps: ResponsesDeps,
   req: FastifyRequest,
@@ -194,12 +233,14 @@ async function runLocked(
 ): Promise<unknown> {
   let record: SessionRecord;
   if (plan.isNew) {
+    requireImageInput(deps, plan.model, plan.input);
     record = newRecord(deps, plan);
     deps.store.insert(record);
   } else {
     const found = deps.store.get(plan.sessionId);
     if (!found || found.principal !== plan.principal) throw notFoundSession(plan.prev!);
     record = found;
+    requireImageInput(deps, record.model, plan.input);
     if (plan.prevTurn < record.turn) {
       throw conflict(
         `Stale previous_response_id: only the latest response (${responseId(record.id, record.turn)}) can be continued`,
@@ -247,6 +288,7 @@ async function runLocked(
   const turn = record.turn + 1;
   const respId = responseId(record.id, turn);
   const text = plan.input.kind === "answer" ? `User responded: ${plan.input.output}` : plan.input.text;
+  const images = plan.input.kind === "prompt" ? plan.input.images : [];
   const expandTemplates = plan.input.kind === "prompt";
   const metadata = plan.body.metadata ?? {};
   const createdAt = Math.floor(Date.now() / 1000);
@@ -257,7 +299,11 @@ async function runLocked(
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
     try {
-      return await executeTurn({ live, text, expandTemplates, mapper, signal: abort.signal, log });
+      const outcome = await executeTurn({ live, text, images, expandTemplates, mapper, signal: abort.signal, log });
+      if (outcome.status === "aborted" && abort.signal.reason === USER_CANCELLED) {
+        return { ...outcome, status: "incomplete", incompleteReason: "user_cancelled" };
+      }
+      return outcome;
     } catch (err) {
       log.error({ err }, "turn crashed");
       return { status: "failed", error: { code: "server_error", message: "Internal server error" }, leafBefore };

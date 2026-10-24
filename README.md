@@ -35,6 +35,11 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **인증:**
   - `USER_API_KEYS`(키가 사용자를 정함) 또는 `API_KEY`(`user` 필드를 믿음)를 쓴다.
   - 사용자 없는 요청은 400이다.
+- **취소:** `POST /v1/responses/{id}/cancel`(서비스 키면 `?user=`)은 진행 중인 턴을 멈춘다.
+  - 스트림은 `response.incomplete`(`user_cancelled`)로 끝나고, 그 id로 다음 턴을 이어갈 수 있다.
+  - 이미 끝난 응답이면 409 `response_not_cancellable`, 다른 사용자의 응답이거나 없는 응답이면 404다.
+- **모델 목록:** `GET /v1/models`는 `LLM_MODELS`의 모델을 돌려준다.
+- **이미지 입력:** `input_image`는 base64 `data:` URL만 받는다 (25MP·20MB 제한). `LLM_MODELS`에서 `input`에 `"image"`가 없는 모델이면 400이다.
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
