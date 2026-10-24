@@ -10,6 +10,7 @@ import { registerMcpRoutes } from "./routes-mcp.js";
 import { registerPluginRoutes } from "./routes-plugins.js";
 import { registerPromptRoutes } from "./routes-prompts.js";
 import { registerStatusRoutes } from "./routes-status.js";
+import { registerToolRoutes } from "./routes-tools.js";
 import { registerAdminUi } from "./ui.js";
 
 export { PlatformError } from "./errors.js";
@@ -96,6 +97,7 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   registerMcpRoutes(api, ctx);
   registerPluginRoutes(api, ctx);
   registerStatusRoutes(api, ctx);
+  registerToolRoutes(api, ctx);
   registerChatRoutes(api, ctx);
   registerLlmRoutes(api, ctx);
 }

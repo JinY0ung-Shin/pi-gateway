@@ -272,6 +272,24 @@ describe("plugin installer (fixture marketplace)", () => {
       { name: "defect-agent-frontend:helper", description: "Helps", tools: ["Read", "Bash(git:*)"], prompt: `Help using ${root}/scripts` },
     ]);
     expect(plugin.components.agents[0].notes).toEqual(["model 설정은 무시됩니다"]);
+
+    // 관리 화면 조회: SKILL.md 본문, 기본 도구 정의 (Agent에 설치된 agent가 보인다)
+    const pluginUrl = `/admin/api/plugins/${encodeURIComponent(plugin.id)}`;
+    res = await api("GET", `${pluginUrl}/skills/${encodeURIComponent("defect-agent-frontend:composite-ui")}`);
+    expect(res.json()).toEqual({ content: readFileSync(skills[0]!.filePath, "utf8") });
+    expect((await api("GET", `${pluginUrl}/skills/nope`)).statusCode).toBe(404);
+    res = await api("GET", "/admin/api/tools");
+    const tools: { name: string; runsIn: string; description: string; parameters: unknown }[] = res.json().tools;
+    expect(tools.map((t) => `${t.name}@${t.runsIn}`)).toEqual([
+      ...["read", "write", "edit", "ls", "find", "bash", "grep"].map((n) => `${n}@sandbox`),
+      "AskUserQuestion@gateway",
+      "Agent@gateway",
+      "SendMessage@gateway",
+    ]);
+    expect(tools.find((t) => t.name === "Agent")!.description).toContain("defect-agent-frontend:helper");
+    expect(tools.find((t) => t.name === "bash")!.parameters).toMatchObject({ type: "object", required: ["command"] });
+    // agent가 실제로 받는 도구: tools: Read, Bash(git:*) → read, bash
+    expect(res.json().agents).toEqual([{ name: "defect-agent-frontend:helper", tools: ["read", "bash"], mcp: [] }]);
     const plain = plugin.components.commands.find((c: { name: string }) => c.name === "defect-agent-frontend:plain");
     expect(plain.notes.join(" ")).toMatch(/셸 명령 주입/);
 

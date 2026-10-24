@@ -138,6 +138,7 @@ export interface McpRecord {
   status: "registered" | "unsupported" | "error" | "broker_unavailable" | "needs_preinstall";
   reason?: string;
   requiredSecrets: string[];
+  missingSecrets?: string[];
   warnings: string[];
 }
 
@@ -153,9 +154,9 @@ export interface PluginView {
   installedAt: string;
   updatedAt: string;
   components: {
-    skills: { name: string; description: string; disableModelInvocation: boolean }[];
+    skills: { name: string; description: string; filePath: string; disableModelInvocation: boolean }[];
     commands: { name: string; description: string; argumentHint?: string; notes: string[] }[];
-    agents: { name: string; description: string; tools?: string[]; notes: string[] }[];
+    agents: { name: string; description: string; tools?: string[]; prompt: string; filePath: string; notes: string[] }[];
     unsupported: { kind: string; detail: string }[];
     warnings: string[];
     copySkipped: { path: string; reason: string }[];
@@ -170,4 +171,19 @@ export interface StatusView {
   broker: { configured: boolean };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };
+}
+
+export interface ToolInfo {
+  name: string;
+  runsIn: "sandbox" | "gateway";
+  description: string;
+  promptGuidelines?: string[];
+  parameters: unknown;
+}
+
+/** plugin agent가 실제로 받는 도구 (mcp: "all"이면 세션의 MCP 도구 전부) */
+export interface AgentToolset {
+  name: string;
+  tools: string[];
+  mcp: "all" | string[];
 }

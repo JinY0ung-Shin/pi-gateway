@@ -2,6 +2,7 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Notice } from "./components";
+import { AgentsPage, SkillsPage, ToolsPage } from "./pages/Catalog";
 import { ChatPage } from "./pages/Chat";
 import { LlmPage } from "./pages/Llm";
 import { Login } from "./pages/Login";
@@ -14,7 +15,10 @@ import "./styles.css";
 const PAGES = [
   { id: "llm", label: "LLM" },
   { id: "prompts", label: "프롬프트" },
+  { id: "tools", label: "도구" },
   { id: "mcp", label: "MCP" },
+  { id: "skills", label: "skill" },
+  { id: "agents", label: "agent" },
   { id: "plugins", label: "plugin" },
   { id: "status", label: "상태" },
   { id: "chat", label: "채팅 테스트" },
@@ -76,6 +80,9 @@ function App() {
         {route.page === "llm" && <LlmPage />}
         {route.page === "prompts" && <PromptsPage />}
         {route.page === "mcp" && <McpPage focus={route.arg} />}
+        {route.page === "tools" && <ToolsPage focus={route.arg} />}
+        {route.page === "skills" && <SkillsPage focus={route.arg} />}
+        {route.page === "agents" && <AgentsPage focus={route.arg} />}
         {route.page === "plugins" && <PluginsPage />}
         {route.page === "status" && <StatusPage />}
         {route.page === "chat" && <ChatPage />}

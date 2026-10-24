@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
 import { findTemplateRefs, MCP_SERVER_ID_PATTERN, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
 import { z } from "zod";
@@ -366,6 +366,14 @@ export class PluginService implements PluginResources {
     const record = this.store.getPlugin(id);
     if (!record) throw notFound(`plugin '${id}' not found`);
     return toPluginView(record);
+  }
+
+  /** 설치된 skill의 SKILL.md 본문 (관리 화면 조회용) */
+  async skillContent(id: string, name: string): Promise<{ content: string }> {
+    const record = this.store.getPlugin(id);
+    const skill = record?.components.skills.find((s) => s.name === name);
+    if (!record || !skill) throw notFound(`skill '${name}' not found in plugin '${id}'`);
+    return { content: (await readContainedFile(record.installPath, relative(record.installPath, skill.filePath))) ?? "" };
   }
 
   install(input: unknown, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {

@@ -1,6 +1,7 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Notice, recordToLines, RunsInBadge, Section, Toggle, useAction } from "../components";
+import { Badge, linesToRecord, Notice, recordToLines, Section, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpScope, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
@@ -266,79 +267,26 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
             <div class="small-text muted">
               {p.source.display} · {formatTime(p.updatedAt)}
             </div>
-            <div class="component-row">
-              <span>skill {p.components.skills.length}</span>
-              <span>command {p.components.commands.length}</span>
-              <span>agent {p.components.agents.length}</span>
-              <span>MCP {p.mcp.length}</span>
-            </div>
-            {p.components.skills.length > 0 && (
-              <details>
-                <summary>skill</summary>
-                <ul class="plain-list">
-                  {p.components.skills.map((s) => (
-                    <li key={s.name}>
-                      <span class="mono">{s.name}</span> <span class="muted">{s.description}</span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {p.components.commands.length > 0 && (
-              <details>
-                <summary>command</summary>
-                <ul class="plain-list">
-                  {p.components.commands.map((c) => (
-                    <li key={c.name}>
-                      <span class="mono">/{c.name}</span> {c.argumentHint && <span class="muted mono">{c.argumentHint}</span>} <span class="muted">{c.description}</span>
-                      {c.notes.map((n) => (
-                        <div key={n} class="small-text warn-text">
-                          {n}
-                        </div>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {p.components.agents.length > 0 && (
-              <details>
-                <summary>agent</summary>
-                <ul class="plain-list">
-                  {p.components.agents.map((a) => (
-                    <li key={a.name}>
-                      <span class="mono">{a.name}</span> {a.tools && <span class="muted mono">{a.tools.join(", ")}</span>} <span class="muted">{a.description}</span>
-                      {a.notes.map((n) => (
-                        <div key={n} class="small-text warn-text">
-                          {n}
-                        </div>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {p.mcp.length > 0 && (
-              <ul class="plain-list">
-                {p.mcp.map((m) => (
-                  <li key={m.name}>
-                    MCP <span class="mono">{m.id ?? m.name}</span> {m.runIn && <RunsInBadge value={m.runIn} />}{" "}
-                    {m.status === "registered" ? (
-                      <Badge tone="green">등록됨</Badge>
-                    ) : (
-                      <Badge tone={m.status === "needs_preinstall" ? "amber" : "red"}>{MCP_STATUS_LABEL[m.status] ?? m.status}</Badge>
-                    )}
-                    {m.status === "registered" && m.requiredSecrets.length > 0 && m.id && (
-                      <a href={`#/mcp/${enc(m.id)}`} class="small-text">
-                        {" "}
-                        비밀키 {m.requiredSecrets.join(", ")} 입력 →
-                      </a>
-                    )}
-                    {m.reason && <div class="small-text muted">{m.reason}</div>}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul class="plain-list small-text">
+              <Names label="skill" items={p.components.skills.map((s) => ({ name: s.name, href: `#/skills/${enc(s.name)}` }))} />
+              <Names label="agent" items={p.components.agents.map((a) => ({ name: a.name, href: `#/agents/${enc(a.name)}` }))} />
+              <Names label="command" items={p.components.commands.map((c) => ({ name: `/${c.name}`, title: c.notes.join(" ") }))} />
+              <Names
+                label="MCP"
+                items={p.mcp.map((m) => ({
+                  name: m.id ?? m.name,
+                  ...(m.status === "registered" && m.id ? { href: `#/mcp/${enc(m.id)}` } : {}),
+                  badge:
+                    m.status !== "registered" ? (
+                      <Badge tone={m.status === "needs_preinstall" ? "amber" : "red"} title={m.reason}>
+                        {MCP_STATUS_LABEL[m.status] ?? m.status}
+                      </Badge>
+                    ) : (m.missingSecrets ?? []).length > 0 ? (
+                      <Badge tone="amber">비밀키 필요</Badge>
+                    ) : null,
+                }))}
+              />
+            </ul>
             {p.components.unsupported.length > 0 && (
               <div class="row wrap">
                 <span class="small-text muted">지원 안 함:</span>
@@ -395,6 +343,29 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
       </div>
       <p class="muted small-text">새 버전을 받으려면 marketplace를 새로고침한 뒤 업데이트하세요. 바뀐 내용은 새 세션부터 적용됩니다.</p>
     </Section>
+  );
+}
+
+/** plugin이 추가한 구성요소 이름. 자세한 내용은 각 탭에서 본다. */
+function Names(props: { label: string; items: { name: string; href?: string; title?: string; badge?: ComponentChildren }[] }) {
+  if (props.items.length === 0) return null;
+  return (
+    <li>
+      <span class="muted">{props.label}</span>{" "}
+      {props.items.map((i, index) => (
+        <span key={i.name} title={i.title}>
+          {index > 0 && ", "}
+          {i.href ? (
+            <a class="mono" href={i.href}>
+              {i.name}
+            </a>
+          ) : (
+            <span class="mono">{i.name}</span>
+          )}
+          {i.badge && <> {i.badge}</>}
+        </span>
+      ))}
+    </li>
   );
 }
 
