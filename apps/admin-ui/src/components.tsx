@@ -1,6 +1,21 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 
+/** 메뉴·로그인 화면 상단의 이름 */
+export function Brand() {
+  return (
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        π
+      </span>
+      <span>
+        <strong class="mono">pi-gateway</strong>
+        <span class="brand-sub">관리</span>
+      </span>
+    </div>
+  );
+}
+
 export function Badge(props: { tone?: "blue" | "green" | "gray" | "amber" | "red" | "violet"; children: ComponentChildren; title?: string }) {
   return (
     <span class={`badge badge-${props.tone ?? "gray"}`} title={props.title}>

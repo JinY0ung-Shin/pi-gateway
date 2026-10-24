@@ -349,7 +349,7 @@ export function ChatPage() {
 
   return (
     <Section
-      title="채팅 테스트"
+      title="대화"
       actions={
         <>
           {prevId && <span class="muted small-text mono">{prevId}</span>}

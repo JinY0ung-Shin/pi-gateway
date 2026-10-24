@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { api, errorText } from "../api";
-import { Notice } from "../components";
+import { Brand, Notice } from "../components";
 
 export function Login(props: { onLogin: () => void }) {
   const [key, setKey] = useState("");
@@ -25,7 +25,7 @@ export function Login(props: { onLogin: () => void }) {
   return (
     <div class="login">
       <form class="card login-card" onSubmit={submit}>
-        <h1>pi-gateway 관리</h1>
+        <Brand />
         <p class="muted">관리자 API 키(ADMIN_API_KEY)로 로그인합니다.</p>
         <label class="field">
           <span>관리자 키</span>
