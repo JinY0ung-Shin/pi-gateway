@@ -30,6 +30,7 @@ describe("prompt rendering", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("AskUserQuestion");
     expect(DEFAULT_SYSTEM_PROMPT).toMatch(/Call it alone/);
     expect(DEFAULT_SYSTEM_PROMPT).toMatch(/cannot see files inside the sandbox/);
+    expect(DEFAULT_SYSTEM_PROMPT).toMatch(/Do not read, list or show files elsewhere/);
     expect(DEFAULT_SYSTEM_PROMPT).not.toMatch(/node_modules|Pi documentation/);
   });
 });
