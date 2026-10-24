@@ -173,6 +173,13 @@ export interface StatusView {
   prompt: { name: string | null; version: number | null; isDefault: boolean };
 }
 
+/** 새 세션을 열면 모델이 받는 것 (pi가 조립한 시스템 프롬프트와 도구 선언) */
+export interface SessionPreview {
+  model: string;
+  systemPrompt: string;
+  tools: { name: string; description: string; parameters: unknown }[];
+}
+
 export interface ToolInfo {
   name: string;
   runsIn: "sandbox" | "gateway";

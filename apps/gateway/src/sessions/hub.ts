@@ -24,6 +24,13 @@ export interface LiveSession {
   llmRevision: number;
 }
 
+/** 세션을 열면 모델이 받는 것: pi가 조립한 시스템 프롬프트와 요청에 실리는 도구 선언 */
+export interface SessionPreview {
+  model: string;
+  systemPrompt: string;
+  tools: { name: string; description: string; parameters: unknown }[];
+}
+
 export interface SessionHubDeps {
   store: SessionStore;
   factory: AgentFactoryDeps;
@@ -78,6 +85,22 @@ export class SessionHub {
     holder.live = live;
     this.live.set(record.id, live);
     return live;
+  }
+
+  /** 기록으로 세션을 열어 프롬프트와 도구만 읽고 바로 정리한다 (메모리·JSONL에 남기지 않는다). */
+  async preview(record: SessionRecord): Promise<SessionPreview> {
+    const abort = new AbortController();
+    const agent = await buildAgentSession(this.deps.factory, record, () => ({}), abort.signal);
+    try {
+      const { session } = agent;
+      return {
+        model: record.model,
+        systemPrompt: session.systemPrompt,
+        tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+      };
+    } finally {
+      await this.teardown({ id: record.id, record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, llmRevision: 0 });
+    }
   }
 
   get(id: string): LiveSession | undefined {

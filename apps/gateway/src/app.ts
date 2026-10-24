@@ -8,7 +8,7 @@ import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
 import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
-import { cancelResponse, createResponse, type ResponsesDeps } from "./api/responses.js";
+import { cancelResponse, createResponse, previewSession, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
 import { createMcpRegistry } from "./mcp-registry/index.js";
 import { McpToolCache } from "./mcp-client/connections.js";
@@ -125,6 +125,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       chat: {
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),
+        preview: (req, reply) => sendApiErrors(reply, () => previewSession(responses, req.body)),
       },
     },
     registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,

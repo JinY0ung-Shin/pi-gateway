@@ -1,9 +1,9 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
 import { Badge, Notice, Section, useAction } from "../components";
-import type { PromptDeployment, PromptDetail, PromptList } from "../types";
+import type { PromptDeployment, PromptDetail, PromptList, SessionPreview } from "../types";
 
-type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" };
+type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" } | { kind: "full" };
 
 export function PromptsPage() {
   const [list, setList] = useState<PromptList | null>(null);
@@ -52,10 +52,18 @@ export function PromptsPage() {
             </li>
           ))}
         </ul>
+        <ul class="nav-list">
+          <li>
+            <button class={selection.kind === "full" ? "active" : ""} onClick={() => setSelection({ kind: "full" })}>
+              모델이 받는 전체 프롬프트
+            </button>
+          </li>
+        </ul>
         <p class="muted small-text">변수: {list.variables.map((v) => `{{${v}}}`).join(" ")}</p>
       </aside>
       <div class="main">
         {selection.kind === "default" && <DefaultPrompt list={list} onChanged={reload} />}
+        {selection.kind === "full" && <FullPrompt />}
         {selection.kind === "new" && (
           <NewPrompt
             onCreated={async (name) => {
@@ -121,6 +129,61 @@ function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void>
         <>
           <h3>렌더링 결과</h3>
           <pre class="code-block">{preview}</pre>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** 배포 중인 프롬프트로 새 세션을 열었을 때 모델이 실제로 받는 시스템 프롬프트와 도구 */
+function FullPrompt() {
+  const action = useAction();
+  const [user, setUser] = useState("admin");
+  const [preview, setPreview] = useState<SessionPreview | null>(null);
+  const load = () => action.run(async () => setPreview(await api<SessionPreview>("POST", "/chat/preview", { user })));
+  useEffect(() => {
+    void load();
+  }, []);
+  return (
+    <Section
+      title="모델이 받는 전체 프롬프트"
+      actions={
+        <form
+          class="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void load();
+          }}
+        >
+          <input class="mono" aria-label="user" value={user} onInput={(e) => setUser(e.currentTarget.value)} />
+          <button type="submit" disabled={action.busy || !user}>
+            {action.busy ? "여는 중…" : "다시 보기"}
+          </button>
+        </form>
+      }
+    >
+      {action.view}
+      <p class="muted">
+        이 user로 새 대화를 열면 기본 모델이 받는 내용입니다. 배포 중인 프롬프트 뒤에 사용자 이름·skill 목록·작업 디렉토리가 붙고, 도구는 MCP 서버에서 받은 것까지 따로 실립니다.
+      </p>
+      {preview && (
+        <>
+          <h3>
+            시스템 프롬프트 · <span class="mono">{preview.model}</span> · {preview.systemPrompt.length.toLocaleString()}자
+          </h3>
+          <pre class="code-block">{preview.systemPrompt}</pre>
+          <h3>도구 {preview.tools.length}개</h3>
+          <div class="tool-list">
+            {preview.tools.map((t) => (
+              <details key={t.name}>
+                <summary>
+                  <span class="mono">{t.name}</span> <span class="muted">{t.description.split("\n")[0]}</span>
+                </summary>
+                <pre class="code-block">{t.description}</pre>
+                <pre class="code-block mono">{JSON.stringify(t.parameters, null, 2)}</pre>
+              </details>
+            ))}
+          </div>
         </>
       )}
     </Section>

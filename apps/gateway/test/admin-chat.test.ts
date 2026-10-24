@@ -50,6 +50,30 @@ describe("POST /admin/api/chat", () => {
     expect(body.metadataKeys).toEqual(["thread_id"]);
   });
 
+  it("previews the system prompt and tools a new session gets, without keeping a session", async () => {
+    const preview = (body: unknown) =>
+      fetch(`${h.url}/admin/api/chat/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${ADMIN_KEY}` },
+        body: JSON.stringify(body),
+      });
+    const requests = h.llm.requests.length;
+    const live = h.gateway.hub.stats().liveSessions;
+    const res = await preview({ user: "tester" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.model).toBe("test-model");
+    expect(body.systemPrompt.startsWith(h.prompt.text)).toBe(true);
+    expect(body.systemPrompt).toContain("Current user: tester");
+    expect(body.systemPrompt).toContain("<cwd>\n/workspace\n</cwd>");
+    expect(body.tools.map((t: any) => t.name)).toEqual(expect.arrayContaining(["read", "bash", "AskUserQuestion"]));
+    expect(body.tools.find((t: any) => t.name === "bash").parameters).toMatchObject({ required: ["command"] });
+    expect(h.llm.requests.length).toBe(requests);
+    expect(h.gateway.hub.stats().liveSessions).toBe(live);
+    expect((await preview({})).status).toBe(400);
+    expect((await preview({ user: "tester", model: "nope" })).status).toBe(400);
+  });
+
   it("cancels the active turn and keeps it in the history", async () => {
     const first = (await (await chat({ user: "tester", input: "hi" })).json()) as any;
     const id2 = first.id.replace(/_1$/, "_2");

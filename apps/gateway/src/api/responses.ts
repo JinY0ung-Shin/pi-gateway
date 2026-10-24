@@ -9,7 +9,7 @@ import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources, PromptService } from "../contracts.js";
 import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError } from "../errors.js";
-import type { SessionHub, LiveSession } from "../sessions/hub.js";
+import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore } from "../sessions/store.js";
 import { emptyUsage, functionCallItem, ResponseEventMapper } from "./mapper.js";
@@ -194,7 +194,17 @@ function userOf(auth: AuthResult, claimed: string | null | undefined): string {
   return claimed;
 }
 
-function newRecord(deps: ResponsesDeps, plan: TurnPlan): SessionRecord {
+/** 새 세션을 열었을 때 모델이 받는 시스템 프롬프트와 도구 (관리 화면 미리보기). 대화는 남지 않는다. */
+export async function previewSession(deps: ResponsesDeps, body: unknown): Promise<SessionPreview> {
+  const { user, model } = (body ?? {}) as { user?: unknown; model?: unknown };
+  if (typeof user !== "string" || !user) throw badRequest("user is required");
+  if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
+  const id = typeof model === "string" && model ? model : deps.models.defaultModel();
+  if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, user, model: id, thinkingLevel: undefined }, null));
+}
+
+function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal" | "user" | "model" | "thinkingLevel">, instructions: string | null): SessionRecord {
   const now = new Date();
   const snapshot = deps.prompts.snapshotForSession({
     principal: plan.principal,
@@ -203,7 +213,6 @@ function newRecord(deps: ResponsesDeps, plan: TurnPlan): SessionRecord {
     sessionId: plan.sessionId,
     now,
   });
-  const instructions = plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null);
   const append: string[] = [];
   if (instructions?.trim()) append.push(instructions.trim());
   append.push(`Current user: ${plan.user}`);
@@ -245,7 +254,7 @@ async function runLocked(
   let record: SessionRecord;
   if (plan.isNew) {
     requireImageInput(deps, plan.model, plan.input);
-    record = newRecord(deps, plan);
+    record = newRecord(deps, plan, plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null));
     deps.store.insert(record);
   } else {
     const found = deps.store.get(plan.sessionId);

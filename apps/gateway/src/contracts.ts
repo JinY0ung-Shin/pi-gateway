@@ -97,6 +97,8 @@ export interface AdminDeps {
   chat: {
     respond: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
     cancel: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+    /** body `{ user, model? }`로 새 세션을 열면 모델이 받는 시스템 프롬프트와 도구 */
+    preview: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
   };
 }
 
