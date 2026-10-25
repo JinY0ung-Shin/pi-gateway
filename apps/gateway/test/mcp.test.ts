@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
+import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
@@ -236,5 +236,17 @@ describe("sandbox MCP command resolution", () => {
     await expect(resolveSandboxCommand(stub([]), "/opt/plugins/x/server")).resolves.toBe("/opt/plugins/x/server");
     // 셸을 거치지 않으므로 위험하지는 않지만, 이름에 이상한 문자가 있으면 거부한다
     await expect(resolveSandboxCommand(stub([]), "node;rm")).rejects.toThrow("invalid MCP server command");
+  });
+});
+
+describe("MCP tool cache", () => {
+  it("drops expired entries when a new one is stored, so per-session keys do not pile up", async () => {
+    const cache = new McpToolCache(50);
+    const size = () => (cache as unknown as { entries: Map<string, unknown> }).entries.size;
+    for (const session of ["s1", "s2", "s3"]) cache.set(`sandbox:local:h:alice:${session}`, []);
+    expect(size()).toBe(3);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    cache.set("sandbox:local:h:alice:s4", []);
+    expect(size()).toBe(1);
   });
 });

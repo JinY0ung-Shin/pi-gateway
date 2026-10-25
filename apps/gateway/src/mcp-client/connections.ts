@@ -80,7 +80,7 @@ export interface McpServerHandle {
   config?: McpServerConfig;
 }
 
-/** 도구 목록 캐시 (프로세스 전역) */
+/** 도구 목록 캐시 (프로세스 전역). 항목은 ttl이 지나면 버린다. */
 export class McpToolCache {
   private readonly entries = new Map<string, { at: number; tools: Tool[] }>();
   constructor(private readonly ttlMs = 5 * 60_000) {}
@@ -96,7 +96,10 @@ export class McpToolCache {
   }
 
   set(key: string, tools: Tool[]): void {
-    this.entries.set(key, { at: Date.now(), tools });
+    const now = Date.now();
+    // 세션별 키처럼 다시 읽히지 않는 항목도 남지 않게, 만료된 항목은 여기서 지운다.
+    for (const [k, e] of this.entries) if (now - e.at > this.ttlMs) this.entries.delete(k);
+    this.entries.set(key, { at: now, tools });
   }
 }
 
