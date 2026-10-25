@@ -167,6 +167,16 @@ describe("continuation", () => {
     expect(sent).toContain("keep me");
     expect(sent).not.toContain("forget me");
   });
+
+  it("checks reasoning.effort against the session's model when model is omitted", async () => {
+    const first = await h.post({ model: "think-model", input: "a", reasoning: { effort: "high" } });
+    expect(first.status).toBe(200);
+    const same = await h.post({ input: "b", reasoning: { effort: "high" }, previous_response_id: first.json.id });
+    expect(same.status).toBe(200);
+    const changed = await h.post({ input: "c", reasoning: { effort: "low" }, previous_response_id: same.json.id });
+    expect(changed.status).toBe(400);
+    expect(changed.json.error.message).toBe("reasoning.effort is fixed when the session is created");
+  });
 });
 
 describe("system prompt", () => {

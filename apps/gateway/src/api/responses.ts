@@ -260,7 +260,8 @@ async function runLocked(
     const found = deps.store.get(plan.sessionId);
     if (!found || found.principal !== plan.principal) throw notFoundSession(plan.prev!);
     record = found;
-    if (!deps.models.config(record.model)) {
+    const sessionModel = deps.models.config(record.model);
+    if (!sessionModel) {
       throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
     }
     requireImageInput(deps, record.model, plan.input);
@@ -270,7 +271,9 @@ async function runLocked(
       );
     }
     if (plan.prevTurn > record.turn) throw notFound(`previous_response_id '${plan.prev}' references a future turn`);
-    if (plan.thinkingLevel && plan.thinkingLevel !== record.thinkingLevel) {
+    // plan.thinkingLevel은 body.model(없으면 기본 모델) 기준이라, 세션 모델로 다시 계산해 비교한다.
+    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel.reasoning);
+    if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
       throw badRequest("reasoning.effort is fixed when the session is created");
     }
   }
