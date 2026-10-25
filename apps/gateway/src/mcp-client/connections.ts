@@ -275,7 +275,6 @@ export class McpConnectionSet {
     const client = new McpClient({ ...CLIENT_INFO, requestTimeoutMs: requestTimeoutMs(server) });
     if (server.kind === "broker") {
       const broker = this.deps.broker;
-      if (!broker) throw new Error("MCP broker is not configured");
       const transport = new StreamableHttpTransport({
         url: `${broker.url}/mcp/${encodeURIComponent(server.id)}`,
         openGetStream: false,

@@ -18,7 +18,7 @@ import type { z } from "zod";
 import { PlatformError } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 
-export type BrokerConfig = NonNullable<GatewayConfig["broker"]>;
+export type BrokerConfig = GatewayConfig["broker"];
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const ADMIN_TIMEOUT_MS = 15_000;

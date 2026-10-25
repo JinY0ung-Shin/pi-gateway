@@ -7,7 +7,7 @@ import type { CatalogEntry, MarketplaceView, McpScope, PluginView } from "../typ
 const MCP_STATUS_LABEL: Record<string, string> = {
   unsupported: "지원 안 함",
   error: "오류",
-  broker_unavailable: "broker 없음",
+  broker_unavailable: "broker 연결 실패",
 };
 
 const UNSUPPORTED_LABEL: Record<string, string> = {

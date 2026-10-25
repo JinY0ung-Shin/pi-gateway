@@ -8,7 +8,6 @@ export function createBrokerMcpToolProvider(deps: McpProviderDeps): ToolProvider
   return {
     id: "mcp-broker",
     async createTools(ctx) {
-      if (!deps.broker) return [];
       const servers = await deps.registry.brokerServersFor(ctx.principal, ctx.sessionId);
       if (servers.length === 0) return [];
       const set = newSet(deps, ctx);

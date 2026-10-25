@@ -69,7 +69,7 @@ export interface McpRegistry {
   sandboxServers(): McpServerConfig[];
   /**
    * broker가 이 principal에게 허용한 서버 (broker `GET /mcp/servers`).
-   * broker가 설정되지 않았거나 호출이 실패하면 빈 배열을 돌려주고 경고 로그를 남긴다.
+   * 호출이 실패하면 빈 배열을 돌려주고 경고 로그를 남긴다.
    */
   brokerServersFor(principal: string, sessionId: string): Promise<VisibleServer[]>;
 }

@@ -63,10 +63,6 @@ export function StatusPage() {
                 {status.plugins.enabled} / {status.plugins.installed} 사용 중
               </td>
             </tr>
-            <tr>
-              <td>MCP broker</td>
-              <td>{status.broker.configured ? <Badge tone="green">설정됨</Badge> : <Badge tone="amber">설정 안 됨</Badge>}</td>
-            </tr>
           </tbody>
         </table>
       </Section>

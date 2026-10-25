@@ -28,13 +28,13 @@ export interface GatewayConfig {
     url: string;
     jwtSecret: Uint8Array;
   };
-  /** broker를 쓰지 않으면 null (broker 실행 MCP 서버를 쓸 수 없다) */
+  /** 비밀키가 필요한 MCP 서버를 프록시하는 mcp-broker */
   broker: {
     url: string;
     adminUrl: string;
     jwtSecret: Uint8Array;
     adminToken: string;
-  } | null;
+  };
   sessions: {
     idleSeconds: number;
     maxConcurrentTurns: number;
@@ -149,17 +149,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const trustProxy = parseTrustProxy(env.TRUST_PROXY);
 
   const brokerUrl = env.BROKER_URL;
-  let broker: GatewayConfig["broker"] = null;
-  if (brokerUrl) {
-    const brokerSecret = readSecret(env, "BROKER_JWT_SECRET");
-    const adminToken = readSecret(env, "BROKER_ADMIN_TOKEN");
-    if (!brokerSecret || !adminToken) throw new Error("BROKER_URL requires BROKER_JWT_SECRET and BROKER_ADMIN_TOKEN");
-    broker = {
-      url: brokerUrl.replace(/\/+$/, ""),
-      adminUrl: (env.BROKER_ADMIN_URL || brokerUrl).replace(/\/+$/, ""),
-      jwtSecret: jwtSecretBytes(brokerSecret),
-      adminToken,
-    };
+  const brokerSecret = readSecret(env, "BROKER_JWT_SECRET");
+  const brokerAdminToken = readSecret(env, "BROKER_ADMIN_TOKEN");
+  if (!brokerUrl || !brokerSecret || !brokerAdminToken) {
+    throw new Error("BROKER_URL, BROKER_JWT_SECRET (or _FILE) and BROKER_ADMIN_TOKEN (or _FILE) are required");
   }
 
   return {
@@ -173,7 +166,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       url: (env.SANDBOXD_URL || "http://sandboxd:7070").replace(/\/+$/, ""),
       jwtSecret: jwtSecretBytes(sandboxdSecret),
     },
-    broker,
+    broker: {
+      url: brokerUrl.replace(/\/+$/, ""),
+      adminUrl: (env.BROKER_ADMIN_URL || brokerUrl).replace(/\/+$/, ""),
+      jwtSecret: jwtSecretBytes(brokerSecret),
+      adminToken: brokerAdminToken,
+    },
     sessions: {
       idleSeconds: int("SESSION_IDLE_SECONDS", 300, env),
       maxConcurrentTurns: int("MAX_CONCURRENT_TURNS", 16, env),

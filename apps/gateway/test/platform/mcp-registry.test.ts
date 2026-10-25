@@ -59,7 +59,7 @@ describe("MCP registry", () => {
     expect(broker.servers.has("github")).toBe(true);
 
     const list = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers", headers: adminHeaders })).json();
-    expect(list.broker).toEqual({ configured: true, available: true });
+    expect(list.broker).toEqual({ available: true });
     expect(list.servers.map((s: { store: string; config: { id: string } }) => [s.config.id, s.store])).toEqual([
       ["github", "broker"],
       ["monsemi-frontend", "sandbox"],
@@ -164,16 +164,6 @@ describe("MCP registry", () => {
     broker = await startFakeBroker(); // afterEach가 닫을 수 있게
   });
 
-  it("broker가 설정되지 않았으면 broker 서버를 만들 수 없고 목록은 sandbox 서버만 보인다", async () => {
-    h = await buildHarness();
-    expect(await h.mcp.brokerServersFor("alice", "s")).toEqual([]);
-    const res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers: { ...adminHeaders, ...json }, payload: brokerServer });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("broker_not_configured");
-    const list = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers", headers: adminHeaders })).json();
-    expect(list.broker).toEqual({ configured: false, available: false });
-  });
-
   it("sandbox 서버에 리터럴 자격증명을 넣으면 400이고, broker+{{secret}}을 쓰라고 알려준다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     const literal = { ...sandboxServer, transport: { ...sandboxServer.transport, env: { GITHUB_TOKEN: "ghp_literal_value_123" } } };
@@ -225,7 +215,7 @@ describe("MCP registry", () => {
       await expect(h.mcp.removePluginServers("p@m", "t", { broker: false })).resolves.toEqual([]);
       // 목록은 sandbox 서버만 보여주고 이유를 알려준다
       const list = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers", headers: adminHeaders })).json();
-      expect(list.broker).toMatchObject({ configured: true, available: false });
+      expect(list.broker).toMatchObject({ available: false });
     } finally {
       broker.setDown(false);
     }

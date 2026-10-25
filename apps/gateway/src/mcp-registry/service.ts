@@ -41,7 +41,7 @@ export interface McpServerEntry {
 
 export interface McpServerList {
   servers: McpServerEntry[];
-  broker: { configured: boolean; available: boolean; error?: string };
+  broker: { available: boolean; error?: string };
 }
 
 export interface McpRegistryOptions {
@@ -82,24 +82,20 @@ function toEntry(view: McpServerView): McpServerEntry {
 /**
  * MCP 서버 목록. sandbox 실행 서버는 gateway DB에, broker 실행 서버는 broker에 저장된다.
  * 서버 id는 두 저장소를 합쳐서 유일해야 한다.
- * broker가 설정돼 있는데 연결되지 않으면, broker를 확인해야 하는 변경은 모두 503으로 실패한다
+ * broker에 연결되지 않으면, broker를 확인해야 하는 변경은 모두 503으로 실패한다
  * (조용히 한쪽만 바뀌어 두 저장소가 어긋나는 일을 막는다).
  */
 export class McpRegistryService implements McpRegistry {
   readonly store: SandboxServerStore;
-  readonly #broker: BrokerClient | null;
+  readonly #broker: BrokerClient;
   readonly #log: PlatformLogger;
   readonly #pluginsDir: string;
 
   constructor(db: Db, config: Pick<GatewayConfig, "broker" | "pluginsDir">, log: PlatformLogger, options: McpRegistryOptions = {}) {
     this.store = new SandboxServerStore(db, log);
-    this.#broker = config.broker ? new BrokerClient(config.broker, options.fetch) : null;
+    this.#broker = new BrokerClient(config.broker, options.fetch);
     this.#log = log;
     this.#pluginsDir = config.pluginsDir;
-  }
-
-  get brokerConfigured(): boolean {
-    return this.#broker !== null;
   }
 
   // ── 세션용 (McpRegistry) ────────────────────────────────────────
@@ -109,7 +105,6 @@ export class McpRegistryService implements McpRegistry {
   }
 
   async brokerServersFor(principal: string, sessionId: string): Promise<VisibleServer[]> {
-    if (!this.#broker) return [];
     try {
       return await this.#broker.visibleServers(principal, sessionId);
     } catch (error) {
@@ -127,16 +122,14 @@ export class McpRegistryService implements McpRegistry {
       config,
       requiredSecrets: requiredSecretNames(config),
     }));
-    const broker: McpServerList["broker"] = { configured: this.#broker !== null, available: false };
-    if (this.#broker) {
-      try {
-        const views = await this.#broker.listServers();
-        this.store.replaceBrokerIds(views.map((v) => v.config.id));
-        servers.push(...views.map(toEntry));
-        broker.available = true;
-      } catch (error) {
-        broker.error = describe(error);
-      }
+    const broker: McpServerList["broker"] = { available: false };
+    try {
+      const views = await this.#broker.listServers();
+      this.store.replaceBrokerIds(views.map((v) => v.config.id));
+      servers.push(...views.map(toEntry));
+      broker.available = true;
+    } catch (error) {
+      broker.error = describe(error);
     }
     servers.sort((a, b) => a.config.id.localeCompare(b.config.id));
     return { servers, broker };
@@ -173,10 +166,10 @@ export class McpRegistryService implements McpRegistry {
       const askBroker = !this.store.get(config.id) || this.store.knownBrokerId(config.id);
       const remote = askBroker ? await this.#brokerEntry(config.id, { tolerateDown: true }) : undefined;
       this.store.upsert(config, actor);
-      if (remote && this.#broker) await this.#deleteFromBroker(config.id, actor);
+      if (remote) await this.#deleteFromBroker(config.id, actor);
       return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
     }
-    const view = await this.#requireBroker().putServer(config, actor);
+    const view = await this.#broker.putServer(config, actor);
     this.store.rememberBrokerId(config.id);
     this.store.delete(config.id);
     return toEntry(view);
@@ -186,11 +179,10 @@ export class McpRegistryService implements McpRegistry {
     const removedLocal = this.store.delete(id);
     if (removedLocal) {
       // 같은 id가 broker에도 남아 있으면 지운다. broker가 안 되면 로컬 삭제만으로 끝낸다 (id는 하나만 쓰인다).
-      if (this.#broker && this.store.knownBrokerId(id)) await this.#deleteFromBroker(id, actor).catch(() => false);
+      if (this.store.knownBrokerId(id)) await this.#deleteFromBroker(id, actor).catch(() => false);
       return;
     }
-    const removedRemote = this.#broker ? await this.#deleteFromBroker(id, actor) : false;
-    if (!removedRemote) throw notFound(`MCP server '${id}' not found`);
+    if (!(await this.#deleteFromBroker(id, actor))) throw notFound(`MCP server '${id}' not found`);
   }
 
   async setSecret(id: string, name: unknown, body: unknown, actor: string): Promise<void> {
@@ -200,39 +192,38 @@ export class McpRegistryService implements McpRegistry {
     // 값 자체는 오류 메시지에 넣지 않는다.
     if (!parsed.success) throw badRequest("body must be { value: string } (1..65536 chars)");
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets; switch the server to runIn=broker");
-    await this.#requireBroker().putSecret(id, secretName.data, parsed.data.value, actor);
+    await this.#broker.putSecret(id, secretName.data, parsed.data.value, actor);
   }
 
   async deleteSecret(id: string, name: unknown, actor: string): Promise<void> {
     const secretName = SecretName.safeParse(name);
     if (!secretName.success) throw badRequest("secret name must match [A-Za-z0-9_.-]{1,64}");
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets");
-    await this.#requireBroker().deleteSecret(id, secretName.data, actor);
+    await this.#broker.deleteSecret(id, secretName.data, actor);
   }
 
   async test(id: string, user: string | undefined, actor: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
     const local = this.store.get(id);
     if (local) return this.#staticCheck(local);
-    return this.#requireBroker().test(id, user, actor);
+    return this.#broker.test(id, user, actor);
   }
 
   async tools(id: string, user: string | undefined): Promise<ToolSummary[]> {
     if (this.store.get(id)) {
       throw new PlatformError(400, "not_available", "sandbox servers start on first use in a session; tools cannot be listed here");
     }
-    return this.#requireBroker().tools(id, user);
+    return this.#broker.tools(id, user);
   }
 
   async audit(limit: number): Promise<AuditEvent[]> {
-    if (!this.#broker) return [];
     return this.#broker.audit(limit);
   }
 
   // ── plugin 연동 ────────────────────────────────────────────────
 
-  /** broker가 설정돼 있으면 연결되는지 확인한다. 안 되면 503. */
+  /** broker에 연결되는지 확인한다. 안 되면 503. */
   async assertBrokerReachable(): Promise<void> {
-    if (this.#broker) await this.#listBroker();
+    await this.#listBroker();
   }
 
   /**
@@ -271,8 +262,7 @@ export class McpRegistryService implements McpRegistry {
       config,
       requiredSecrets: requiredSecretNames(config),
     }));
-    const askBroker = this.#broker !== null && options.broker !== false;
-    const remote = askBroker ? (await this.#listBroker()).filter((v) => owned(v.config)).map(toEntry) : [];
+    const remote = options.broker !== false ? (await this.#listBroker()).filter((v) => owned(v.config)).map(toEntry) : [];
     return [...local, ...remote];
   }
 
@@ -294,7 +284,7 @@ export class McpRegistryService implements McpRegistry {
    */
   async removePluginServers(pluginId: string, actor: string, options: { broker?: boolean } = {}): Promise<string[]> {
     const removed: string[] = [];
-    if (this.#broker && options.broker !== false) {
+    if (options.broker !== false) {
       for (const view of await this.#listBroker()) {
         if (view.config.source.kind === "plugin" && view.config.source.pluginId === pluginId) {
           await this.#deleteFromBroker(view.config.id, actor);
@@ -311,19 +301,11 @@ export class McpRegistryService implements McpRegistry {
 
   // ── 내부 ───────────────────────────────────────────────────────
 
-  #requireBroker(): BrokerClient {
-    if (!this.#broker) {
-      throw new PlatformError(409, "broker_not_configured", "the MCP broker is not configured (BROKER_URL); broker servers are unavailable");
-    }
-    return this.#broker;
-  }
-
   /**
    * broker의 서버 하나 (없으면 undefined). broker가 안 되면 503.
    * tolerateDown이면 마지막으로 본 broker id 목록에 없는 id는 없는 것으로 보고, 있으면 503을 그대로 던진다.
    */
   async #brokerEntry(id: string, options: { tolerateDown?: boolean } = {}): Promise<McpServerEntry | undefined> {
-    if (!this.#broker) return undefined;
     try {
       const view = await this.#broker.getServer(id);
       if (view) this.store.rememberBrokerId(id);
@@ -339,13 +321,13 @@ export class McpRegistryService implements McpRegistry {
   }
 
   async #listBroker(): Promise<McpServerView[]> {
-    const views = await this.#requireBroker().listServers();
+    const views = await this.#broker.listServers();
     this.store.replaceBrokerIds(views.map((v) => v.config.id));
     return views;
   }
 
   async #deleteFromBroker(id: string, actor: string): Promise<boolean> {
-    const removed = await this.#requireBroker().deleteServer(id, actor);
+    const removed = await this.#broker.deleteServer(id, actor);
     this.store.forgetBrokerId(id);
     return removed;
   }

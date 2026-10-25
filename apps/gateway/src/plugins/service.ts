@@ -622,18 +622,6 @@ export class PluginService implements PluginResources {
         config = { ...config, id: alt };
       }
       used.add(config.id);
-      if (config.runIn === "broker" && !this.#registry.brokerConfigured) {
-        records.push({
-          name,
-          id: config.id,
-          runIn: "broker",
-          status: "broker_unavailable",
-          reason: "this server needs the MCP broker (BROKER_URL is not configured)",
-          requiredSecrets: mapped.requiredSecrets,
-          warnings: mapped.warnings,
-        });
-        continue;
-      }
       const problems = policyProblems(config);
       if (problems.length > 0) {
         records.push({ name, id: config.id, runIn: config.runIn, status: "error", reason: problems.join("; "), requiredSecrets: mapped.requiredSecrets, warnings: mapped.warnings });

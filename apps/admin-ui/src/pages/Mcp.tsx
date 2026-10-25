@@ -43,8 +43,7 @@ export function McpPage(props: { focus?: string | undefined }) {
         <p class="muted">
           <RunsInBadge value="sandbox" /> 비밀키 없이 사용자 sandbox 안에서 실행 · <RunsInBadge value="broker" /> 비밀키를 가진 격리된 broker가 원격 HTTP 서버로 프록시
         </p>
-        {!list.broker.configured && <Notice tone="warn">MCP broker가 설정되지 않았습니다 (BROKER_URL). broker 서버는 쓸 수 없습니다.</Notice>}
-        {list.broker.configured && !list.broker.available && <Notice tone="error">broker에 연결할 수 없습니다: {list.broker.error}</Notice>}
+        {!list.broker.available && <Notice tone="error">broker에 연결할 수 없습니다: {list.broker.error}</Notice>}
         <table class="table">
           <thead>
             <tr>
@@ -90,7 +89,6 @@ export function McpPage(props: { focus?: string | undefined }) {
         <ServerEditor
           key={editing === "new" ? "new" : editing.config.id}
           entry={editing === "new" ? null : editing}
-          brokerAvailable={list.broker.configured}
           onClose={() => setEditing(null)}
           onSaved={async (id) => {
             const next = await reload();
@@ -197,7 +195,7 @@ function fromForm(f: FormState, source: McpServerConfig["source"]): McpServerCon
   };
 }
 
-function ServerEditor(props: { entry: McpServerEntry | null; brokerAvailable: boolean; onClose: () => void; onSaved: (id: string) => Promise<void> }) {
+function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void; onSaved: (id: string) => Promise<void> }) {
   const [form, setForm] = useState<FormState>(() => toForm(props.entry?.config ?? null));
   const [errors, setErrors] = useState<string[]>([]);
   const [required, setRequired] = useState<string[]>(props.entry?.requiredSecrets ?? []);
@@ -303,9 +301,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; brokerAvailable: bo
         <label class="field">
           <span>실행 위치</span>
           <select value={form.runIn} onChange={(e) => set("runIn", (e.currentTarget as HTMLSelectElement).value as FormState["runIn"])}>
-            <option value="broker" disabled={!props.brokerAvailable}>
-              broker (원격 HTTP 서버, 비밀키 사용)
-            </option>
+            <option value="broker">broker (원격 HTTP 서버, 비밀키 사용)</option>
             <option value="sandbox">sandbox (stdio, 비밀키 없음)</option>
           </select>
         </label>

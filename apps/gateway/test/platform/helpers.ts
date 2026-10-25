@@ -51,6 +51,8 @@ export function makeConfig(options: { dataDir: string; pluginsDir: string; env?:
     PLUGINS_DIR: options.pluginsDir,
     LOG_LEVEL: "silent",
     PROMPT_LANGUAGE: "Korean",
+    // broker를 쓰지 않는 테스트의 기본값: 연결되지 않는 주소 (broker를 쓰는 테스트는 brokerEnv로 덮어쓴다)
+    ...brokerEnv("http://127.0.0.1:9"),
     ...options.env,
   };
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];

@@ -4,6 +4,9 @@ import { loadConfig } from "../src/config.js";
 const base = {
   API_KEY: "service-key-0123456789",
   SANDBOXD_JWT_SECRET: "x".repeat(40),
+  BROKER_URL: "http://mcp-broker:7080",
+  BROKER_JWT_SECRET: "y".repeat(40),
+  BROKER_ADMIN_TOKEN: "broker-admin-token-0123456789",
 };
 
 describe("gateway config", () => {
@@ -14,6 +17,11 @@ describe("gateway config", () => {
     expect(loadConfig({ ...base, TRUST_PROXY: "10.0.0.0/8, 172.18.0.5" }).trustProxy).toEqual(["10.0.0.0/8", "172.18.0.5"]);
     expect(() => loadConfig({ ...base, TRUST_PROXY: "1" })).toThrow(/hop counts are not supported/);
     expect(() => loadConfig({ ...base, TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
+  });
+
+  it("requires the MCP broker", () => {
+    expect(() => loadConfig({ ...base, BROKER_URL: "" })).toThrow(/BROKER_URL/);
+    expect(() => loadConfig({ ...base, BROKER_ADMIN_TOKEN: "" })).toThrow(/BROKER_ADMIN_TOKEN/);
   });
 
   it("treats empty env strings as unset", () => {

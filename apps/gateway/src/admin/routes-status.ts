@@ -22,7 +22,6 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
         uptimeSeconds: Math.round(process.uptime()),
         nodeVersion: process.version,
       },
-      broker: { configured: ctx.mcp.brokerConfigured },
       plugins: { installed: plugins.length, enabled: plugins.filter((p) => p.enabled).length },
       prompt: { name: live.name, version: live.version, isDefault: live.isDefault },
     };

@@ -47,7 +47,7 @@ export interface Harness {
   gateway: Gateway;
   llm: FakeLlm;
   sandbox: FakeSandboxd;
-  broker: FakeBroker | null;
+  broker: FakeBroker;
   /** PromptService 스텁이 돌려줄 텍스트 (바꾸면 새 세션부터 적용) */
   prompt: { text: string };
   post(body: unknown, opts?: { key?: string | null; headers?: Record<string, string> }): Promise<{ status: number; headers: Headers; json: any }>;
@@ -74,7 +74,7 @@ export function parseSse(raw: string): SseEvent[] {
 export async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   const llm = await startFakeLlm();
   const sandbox = await startFakeSandboxd(jwtSecretBytes(SANDBOXD_SECRET), options.fakeSandbox ?? {});
-  const broker = options.brokerServers ? await startFakeBroker(jwtSecretBytes(BROKER_SECRET), options.brokerServers) : null;
+  const broker = await startFakeBroker(jwtSecretBytes(BROKER_SECRET), options.brokerServers ?? {});
   const dataDir = mkdtempSync(join(tmpdir(), "gw-test-"));
   const env: Record<string, string> = {
     USER_API_KEYS: JSON.stringify({ alice: ALICE_KEY, bob: BOB_KEY }),
@@ -88,7 +88,9 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     MCP_METADATA_KEYS: "thread_id",
     SSE_KEEPALIVE_SECONDS: "1",
     LOG_LEVEL: "silent",
-    ...(broker ? { BROKER_URL: broker.url, BROKER_JWT_SECRET: BROKER_SECRET, BROKER_ADMIN_TOKEN: "broker-admin-token-xyz" } : {}),
+    BROKER_URL: broker.url,
+    BROKER_JWT_SECRET: BROKER_SECRET,
+    BROKER_ADMIN_TOKEN: "broker-admin-token-xyz",
     ...(options.env ?? {}),
   };
   const config = loadConfig(env);
@@ -179,7 +181,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       } finally {
         await llm.close();
         await sandbox.close();
-        await broker?.close();
+        await broker.close();
         rmSync(dataDir, { recursive: true, force: true });
       }
     },

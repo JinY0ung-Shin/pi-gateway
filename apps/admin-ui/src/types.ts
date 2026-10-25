@@ -97,7 +97,7 @@ export interface McpServerEntry {
 
 export interface McpServerList {
   servers: McpServerEntry[];
-  broker: { configured: boolean; available: boolean; error?: string };
+  broker: { available: boolean; error?: string };
 }
 
 export interface ToolSummary {
@@ -168,7 +168,6 @@ export interface StatusView {
   stats: { liveSessions: number; activeTurns: number; queuedTurns: number };
   sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string; memoryBytes?: number }[]; error?: string };
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
-  broker: { configured: boolean };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };
 }
