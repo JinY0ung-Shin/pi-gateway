@@ -112,17 +112,16 @@ function RetentionSection() {
     <Section title="보관 기간">
       {action.view}
       <div class="row">
-        <label class="field">
-          <span>마지막 활동 뒤 며칠이 지나면 지울까요? (0 = 지우지 않음)</span>
-          <input type="number" min={0} max={3650} value={days} onInput={(e) => setDays(e.currentTarget.value)} />
-        </label>
+        <input class="days" type="number" min={0} max={3650} value={days} aria-label="보관 기간(일)" onInput={(e) => setDays(e.currentTarget.value)} />
+        <span>일 보관</span>
         <button class="primary" disabled={action.busy || !retention || !days.trim() || days === String(retention.days)} onClick={() => void save()}>
           저장
         </button>
+        {retention && <span class="muted small-text">현재: {retention.days === 0 ? "지우지 않음" : `${retention.days}일`}</span>}
       </div>
       <p class="muted small-text">
-        기간이 지난 세션은 기록과 메타가 지워져 더 이상 이어갈 수 없습니다. workspace 파일은 남습니다.
-        {retention?.updatedAt && ` 마지막 변경: ${formatTime(retention.updatedAt)} (${retention.updatedBy})`}
+        마지막 활동 뒤 이 기간이 지난 세션은 기록이 지워져 더 이상 이어갈 수 없습니다. 0이면 지우지 않습니다. workspace 파일은 남습니다.
+        {retention?.updatedAt && ` (마지막 변경 ${formatTime(retention.updatedAt)}, ${retention.updatedBy})`}
       </p>
     </Section>
   );

@@ -522,6 +522,11 @@ a:focus-visible {
   flex: 3 1 18rem;
 }
 
+.row > input.days {
+  flex: 0 0 6rem;
+  text-align: right;
+}
+
 .form {
   display: flex;
   flex-direction: column;
