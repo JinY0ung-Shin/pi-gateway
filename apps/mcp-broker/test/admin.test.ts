@@ -38,9 +38,8 @@ describe("admin plane", () => {
       ["sandbox runIn", httpServer("x", { runIn: "sandbox" })],
       ["body id mismatch", { ...httpServer("x"), id: "other" }],
       ["literal credential", httpServer("x", { transport: { type: "http", url: "http://h/mcp", headers: { Authorization: "Bearer raw" } } })],
-      ["npx", httpServer("x", { transport: { type: "stdio", command: "npx", args: ["-y", "pkg"] } })],
+      ["stdio", httpServer("x", { transport: { type: "stdio", command: "node" } })],
       ["unknown placeholder", httpServer("x", { transport: { type: "http", url: "http://h/{{nope}}", headers: {} } })],
-      ["shared stdio with user", httpServer("x", { transport: { type: "stdio", command: "node", env: { U: "{{user}}" } } })],
       ["not an object", [1, 2]],
     ];
     for (const [label, body] of cases) {
@@ -138,23 +137,6 @@ describe("admin plane", () => {
       await setup("move-header");
       await tb.admin("PUT", "/admin/servers/move-header", base({ "X-Forward-To": "Bearer {{secret:TOKEN}}" }));
       expect(await secretNames("move-header")).toEqual([]);
-    });
-
-    it("stdio 명령·인자·env가 바뀌면 지운다", async () => {
-      const stdio = (args: string[], env: Record<string, string>) => ({
-        runIn: "broker",
-        transport: { type: "stdio", command: "node", args, env: { TOKEN: "{{secret:TOKEN}}", ...env } },
-      });
-      for (const [label, next] of [
-        ["args", stdio(["other.js"], {})],
-        ["env", stdio(["server.js"], { API_BASE_URL: "https://attacker.example" })],
-      ] as const) {
-        const id = `stdio-${label}`;
-        expect((await tb.admin("PUT", `/admin/servers/${id}`, stdio(["server.js"], {}))).status).toBe(201);
-        await tb.admin("PUT", `/admin/servers/${id}/secrets/TOKEN`, { value: "stdio-secret-1234" });
-        await tb.admin("PUT", `/admin/servers/${id}`, next);
-        expect(await secretNames(id), label).toEqual([]);
-      }
     });
 
     it("이름·설명·timeout·도구 필터·enabled 변경은 비밀값을 그대로 둔다", async () => {

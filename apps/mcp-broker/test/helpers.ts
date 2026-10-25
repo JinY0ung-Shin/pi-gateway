@@ -2,14 +2,11 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { McpClient, StreamableHttpTransport } from "@earendil-works/pi-mcp";
 import { AUD_BROKER, type InternalClaims, signInternalToken } from "@pi-gateway/shared";
 import { pino } from "pino";
 import { type Broker, createBroker } from "../src/app.js";
 import type { BrokerConfig } from "../src/config.js";
-
-export const STDIO_FIXTURE = fileURLToPath(new URL("./fixtures/stdio-server.mjs", import.meta.url));
 
 export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig {
   const root = mkdtempSync(join(tmpdir(), "mcp-broker-test-"));
@@ -20,13 +17,10 @@ export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig 
     adminPort: 0,
     logLevel: "silent",
     dataDir: join(root, "data"),
-    pluginsDir: join(root, "plugins"),
     jwtSecret: new TextEncoder().encode(randomBytes(32).toString("hex")),
     adminToken: randomBytes(32).toString("hex"),
     kek: randomBytes(32),
     limits: {
-      maxProcesses: 16,
-      maxProcessesPerServer: 8,
       maxConnections: 32,
       idleTtlSeconds: 300,
       callTimeoutCapSeconds: 600,
@@ -35,14 +29,6 @@ export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig 
       maxResultBytes: 1024 * 1024,
       maxRequestBodyBytes: 4 * 1024 * 1024,
       toolsCacheSeconds: 60,
-    },
-    stdio: {
-      uidRange: null,
-      path: process.env.PATH ?? "/usr/bin:/bin",
-      lang: "C.UTF-8",
-      workRoot: join(root, "work"),
-      maxMessageBytes: 16 * 1024 * 1024,
-      commandAllowlist: [],
     },
     ...overrides,
   };
@@ -54,8 +40,8 @@ export interface TestBroker {
   dataUrl: string;
   token(claims: InternalClaims): Promise<string>;
   admin(method: "GET" | "PUT" | "POST" | "DELETE", url: string, body?: unknown): Promise<{ status: number; text: string; json: () => any }>;
-  /** 관리 API로 stdio fixture 서버를 등록한다 */
-  addStdioServer(id: string, extra?: Record<string, unknown>): Promise<void>;
+  /** 관리 API로 http upstream 서버를 등록한다 */
+  addHttpServer(id: string, url: string, extra?: { headers?: Record<string, string> } & Record<string, unknown>): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -78,14 +64,10 @@ export async function startTestBroker(overrides: Partial<BrokerConfig> = {}): Pr
     dataUrl: address,
     token: (claims) => signInternalToken(config.jwtSecret, AUD_BROKER, claims),
     admin,
-    async addStdioServer(id, extra = {}) {
-      const { transport: extraTransport, ...rest } = extra as { transport?: Record<string, unknown> };
-      const res = await admin("PUT", `/admin/servers/${id}`, {
-        runIn: "broker",
-        transport: { type: "stdio", command: process.execPath, args: [STDIO_FIXTURE], ...extraTransport },
-        ...rest,
-      });
-      if (res.status >= 300) throw new Error(`addStdioServer failed: ${res.status} ${res.text}`);
+    async addHttpServer(id, url, extra = {}) {
+      const { headers = {}, ...rest } = extra;
+      const res = await admin("PUT", `/admin/servers/${id}`, { runIn: "broker", transport: { type: "http", url, headers }, ...rest });
+      if (res.status >= 300) throw new Error(`addHttpServer failed: ${res.status} ${res.text}`);
     },
     async close() {
       await broker.close(1000);
@@ -108,13 +90,4 @@ export async function piClient(tb: TestBroker, serverId: string, claims: Interna
 
 export function textOf(result: { content?: { type: string; text?: string }[] }): string {
   return (result.content ?? []).map((c) => (c.type === "text" ? c.text : "")).join("\n");
-}
-
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }

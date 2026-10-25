@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 관리 화면, pi 세션 | LLM 키, 내부 JWT 키, broker 관리 토큰, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
-| `mcp-broker` | `pi-gateway/mcp-broker` (root + SETUID/SETGID/CHOWN/KILL/DAC_OVERRIDE) | control, broker-egress | MCP 서버 등록·프록시 | MCP 비밀키, KEK |
+| `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시 | MCP 비밀키, KEK |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
 | `pi-sbx-<key>` | `pi-gateway/sandbox` (uid 1000) | 없음 (`network_mode: none`) | 사용자별 sandbox. sandboxd가 필요할 때 만들고 유휴 시 지운다 | 없음 |
@@ -44,14 +44,13 @@ sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh
 | 경로 | 소유자 | 권한 | 용도 |
 |---|---|---|---|
 | `$PI_GATEWAY_HOME/workspaces` | 1000:1000 | 0700 | 사용자별 workspace (`u-<hash>` 디렉토리) |
-| `$PI_GATEWAY_HOME/plugins` | 10001:10001 | 0755 | 설치된 plugin. gateway만 쓰고 sandbox·broker는 읽기만 한다 |
+| `$PI_GATEWAY_HOME/plugins` | 10001:10001 | 0755 | 설치된 plugin. gateway만 쓰고 sandbox는 읽기만 한다 |
 | `$PI_GATEWAY_HOME/secrets/{gateway,sandboxd,broker}` | root | 0700 | compose secret 파일. 파일은 쓰는 서비스 uid 소유의 0400 ([§4](#4-비밀값)) |
 | `.env` | – | – | `PI_GATEWAY_HOME`, `PI_GATEWAY_SECRETS`, `DOCKER_GID`를 추가한다 |
 
 **비밀값 파일 권한**
 - 디렉토리가 root 0700이라 호스트의 다른 사용자는 읽을 수 없다.
 - 파일은 그 비밀값을 쓰는 서비스의 uid만 읽을 수 있다(0400).
-- mcp-broker의 파일은 root 소유이므로, broker가 띄운 stdio MCP 서버(uid 20000+)는 읽지 못한다.
 - 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다. 예전 평면 구조(`secrets/*` 0444) 파일이 있으면 값을 옮기고 지운다.
 
 스크립트 없이 직접 만들려면 다음을 실행한다. 같이 쓰는 값은 같은 값의 사본이어야 한다.
@@ -180,7 +179,6 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 **확인**
 - `./scripts/security-check/check-secret-files.sh`가 실행 중인 컨테이너에서 다음을 확인한다 ([§8](#8-보안-점검)).
   - 각 서비스의 `/run/secrets/*` 소유자와 권한.
-  - broker 하위 프로세스 uid(20000)로 비밀 파일, `/data`, `/proc/1/environ`을 실제로 읽을 수 없는지.
   - sandbox 컨테이너에 `/run/secrets`가 없는지.
 - 비밀값은 sandbox 컨테이너, gateway의 일반 환경변수, 로그에 들어가지 않는다.
 
@@ -308,7 +306,6 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 ```
 
 - 각 서비스의 `/run/secrets/*`가 그 서비스 uid 소유의 0400인지 본다.
-- broker 하위 프로세스 uid(20000)로 비밀 파일, `/data`, `/proc/1/environ`을 실제로 읽어 본다. 읽히면 실패다.
 - 실행 중인 sandbox 컨테이너에 `/run/secrets`가 없는지 본다.
 
 **점검 항목 (run.mjs)**
@@ -403,14 +400,5 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 
 ## 11. mcp-broker
 
-- **비밀키가 필요한 stdio MCP 서버**: broker 이미지에 미리 설치한다. broker는 실행 중 내려받기를 막으려고 `npx`, `uvx`, `bunx`, `pnpx`, `pipx`, `npm`, `pnpm`, `yarn` 명령을 거부한다.
-
-  ```bash
-  BROKER_EXTRA_NPM_PACKAGES="@modelcontextprotocol/server-github"   # /usr/local (npm -g)
-  BROKER_EXTRA_PIP_PACKAGES="mcp-server-fetch"                       # /opt/mcp-venv (PATH에 있음)
-  docker compose build mcp-broker && docker compose up -d mcp-broker
-  ```
-
-- **실행 uid**: stdio 서버는 `BROKER_STDIO_UID_RANGE`(기본 `20000-20999`)의 uid로 서버마다 따로 실행된다. 그래서 서로의 환경변수(비밀키)를 읽을 수 없다.
-- **실행 명령 제한**: `BROKER_STDIO_COMMAND_ALLOWLIST`로 실행할 수 있는 명령을 제한할 수 있다 (권장).
-- **비밀키 없는 MCP 서버** (예: monsemi-frontend): broker가 아니라 사용자 sandbox 안에서 돈다. 관리 화면에서 `runIn: sandbox`로 등록한다.
+- **비밀키가 필요한 MCP 서버**: 원격 HTTP(streamable HTTP) 서버만 broker에 등록한다. broker가 `{{secret:NAME}}` 값을 헤더·URL에 붙여 프록시한다. broker는 프로세스(stdio 서버)를 실행하지 않는다.
+- **비밀키 없는 MCP 서버** (예: monsemi-frontend): broker가 아니라 사용자 sandbox 안에서 stdio로 돈다. 관리 화면에서 `runIn: sandbox`로 등록한다.

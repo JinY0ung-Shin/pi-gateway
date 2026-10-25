@@ -5,7 +5,7 @@
 #
 # 만드는 것
 #   $PI_GATEWAY_HOME/workspaces   uid 1000 (sandbox 사용자), 0700 — 사용자별 workspace
-#   $PI_GATEWAY_HOME/plugins      uid 10001 (gateway), 0755      — 설치된 plugin (sandbox·broker는 읽기만)
+#   $PI_GATEWAY_HOME/plugins      uid 10001 (gateway), 0755      — 설치된 plugin (sandbox는 읽기만)
 #   $PI_GATEWAY_SECRETS/{gateway,sandboxd,broker}/*  쓰는 서비스의 uid 소유 0400 — compose secrets
 #   .env의 DOCKER_GID, PI_GATEWAY_HOME, PI_GATEWAY_SECRETS (없을 때만 추가)
 set -euo pipefail
@@ -30,7 +30,7 @@ install -d -o 0 -g 0 -m 0700 "$SECRETS"
 # 비밀값 파일: 쓰는 서비스마다 사본을 두고, 그 서비스의 uid 소유 0400으로 만든다.
 #   gateway  (uid 10001): $SECRETS/gateway/*
 #   sandboxd (uid 1000) : $SECRETS/sandboxd/*
-#   broker   (root)     : $SECRETS/broker/*   ← broker의 stdio 하위 프로세스(uid 20000+)는 읽을 수 없다
+#   broker   (root)     : $SECRETS/broker/*
 # 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret, broker_admin_token)은 같은 값의 사본이다.
 GW_UID=10001; SBX_UID=1000
 install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/broker"

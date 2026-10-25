@@ -48,10 +48,8 @@ export interface McpRegistryOptions {
   fetch?: FetchLike;
 }
 
-/** broker가 거절하는 명령: 실행 시 패키지를 내려받는다 (패키지는 broker 이미지에 미리 설치한다). */
-export const BROKER_BANNED_COMMANDS = new Set(["npx", "uvx", "bunx", "pnpx", "pipx", "npm", "pnpm", "yarn"]);
 const SANDBOX_CREDENTIAL_HINT =
-  "sandbox 서버의 env는 agent에게 보이므로 자격증명을 넣을 수 없습니다. runIn=broker로 바꾸고 {{secret:NAME}}을 쓰세요";
+  "sandbox 서버의 env는 agent에게 보이므로 자격증명을 넣을 수 없습니다. 자격증명이 필요한 서버는 HTTP로 띄워 runIn=broker로 등록하고 {{secret:NAME}}을 쓰세요";
 
 function issuesMessage(error: z.ZodError): string {
   return error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`).join("; ");
@@ -60,15 +58,7 @@ function issuesMessage(error: z.ZodError): string {
 /** 스키마 밖의 규칙. upsert와 validate가 같은 규칙을 쓴다. */
 export function policyProblems(config: McpServerConfig): string[] {
   const problems = findLiteralCredentials(config).map((p) => (config.runIn === "sandbox" ? `${p} — ${SANDBOX_CREDENTIAL_HINT}` : p));
-  if (config.runIn === "broker") {
-    if (config.id === "servers") problems.push("id 'servers' is reserved by the broker");
-    if (config.transport.type === "stdio") {
-      const base = config.transport.command.split("/").pop() ?? config.transport.command;
-      if (BROKER_BANNED_COMMANDS.has(base)) {
-        problems.push(`the broker does not run '${base}' (downloads packages at start-up); pre-install the server in the broker image and use its command`);
-      }
-    }
-  }
+  if (config.runIn === "broker" && config.id === "servers") problems.push("id 'servers' is reserved by the broker");
   for (const value of [...(config.transport.type === "stdio" ? [config.transport.command, ...config.transport.args, ...Object.values(config.transport.env)] : [config.transport.url, ...Object.values(config.transport.headers)])]) {
     if (/\{\{\s*plugin_root\s*\}\}/.test(value)) {
       problems.push("{{plugin_root}} must be resolved to the installed plugin path");

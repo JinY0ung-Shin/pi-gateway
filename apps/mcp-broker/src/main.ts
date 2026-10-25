@@ -1,24 +1,10 @@
 import { createBroker, createLogger } from "./app.js";
-import { ALLOW_INSECURE_SECRET_FILES, auditSecretFiles, loadBrokerConfig } from "./config.js";
+import { loadBrokerConfig } from "./config.js";
 
-// broker가 만드는 파일(DB, 작업 디렉토리)은 broker uid만 읽을 수 있게 한다.
+// broker가 만드는 파일(DB)은 broker uid만 읽을 수 있게 한다.
 process.umask(0o077);
 
 const log = createLogger(process.env.LOG_LEVEL ?? "info");
-const audit = auditSecretFiles(process.env);
-for (const warning of audit.warnings) log.warn(warning);
-if (audit.problems.length > 0) {
-  if (process.env[ALLOW_INSECURE_SECRET_FILES] === "1") {
-    log.warn({ problems: audit.problems }, `insecure secret files; continuing because ${ALLOW_INSECURE_SECRET_FILES}=1`);
-  } else {
-    log.fatal(
-      { problems: audit.problems },
-      `refusing to start: secret files must be owned by the broker uid and not accessible by group/other (set ${ALLOW_INSECURE_SECRET_FILES}=1 to override)`,
-    );
-    process.exit(1);
-  }
-}
-
 const config = loadBrokerConfig();
 const broker = createBroker(config, { log });
 

@@ -13,10 +13,8 @@ import { readContainedFile, safeCopyTree } from "../../src/plugins/safe-copy.js"
 import { PluginService } from "../../src/plugins/service.js";
 import {
   adminHeaders,
-  BROKER_STDIO_FIXTURE,
   brokerEnv,
   buildHarness,
-  callBrokerTool,
   captureLogger,
   cleanupTempDirs,
   dbFilesContain,
@@ -141,8 +139,6 @@ function buildFixture(root: string) {
         gh: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/gh.js"], env: { GITHUB_TOKEN: "${GITHUB_TOKEN}", LOG_LEVEL: "${LOG_LEVEL:-info}" } },
         "remote-docs": { type: "http", url: "https://docs.example.com/mcp", headers: { Authorization: "Bearer ${DOCS_TOKEN}" } },
         "legacy-sse": { type: "sse", url: "https://old.example.com/sse" },
-        // 비밀키가 필요한데 실행 시 다운로드하는 명령 → broker가 거절하므로 사전 설치 필요로 기록
-        "npx-tool": { command: "npx", args: ["-y", "@example/mcp"], env: { X_TOKEN: "${X_TOKEN}" } },
         // 비밀키가 없으면 sandbox에서 실행 (npx는 egress 허용 목록의 registry로 받는다)
         "npx-public": { command: "npx", args: ["-y", "@example/public-mcp"] },
         // 리터럴 자격증명: sandbox로 가면 agent env에 들어가므로 등록하지 않는다
@@ -302,17 +298,17 @@ describe("plugin installer (fixture marketplace)", () => {
     expect(readdirSync(h.config.pluginsDir).filter((n) => !n.startsWith("."))).toEqual(["defect-agent-plugins"]);
   });
 
-  it("secret-tools: 비밀키가 필요한 서버는 broker로, sse는 지원 안 함으로 기록한다", async () => {
+  it("secret-tools: 비밀키가 필요한 http 서버는 broker로, 비밀키가 필요한 stdio 서버와 sse는 지원 안 함으로 기록한다", async () => {
     const res = await api("POST", "/admin/api/plugins/install", { marketplace: "defect-agent-plugins", plugin: "secret-tools" });
     expect(res.statusCode).toBe(201);
     const { plugin, warnings } = res.json();
     const byName = Object.fromEntries(plugin.mcp.map((m: { name: string }) => [m.name, m]));
-    expect(byName.gh).toMatchObject({ runIn: "broker", status: "registered", requiredSecrets: ["GITHUB_TOKEN"] });
+    expect(byName.gh).toMatchObject({ status: "unsupported" });
+    expect(byName.gh.reason).toMatch(/GITHUB_TOKEN/);
+    expect(broker.servers.has("gh")).toBe(false);
+    expect(h.mcp.store.get("gh")).toBeUndefined();
     expect(byName["remote-docs"]).toMatchObject({ runIn: "broker", status: "registered", requiredSecrets: ["DOCS_TOKEN"] });
     expect(byName["legacy-sse"]).toMatchObject({ status: "unsupported" });
-    expect(byName["npx-tool"]).toMatchObject({ status: "needs_preinstall", runIn: "broker", requiredSecrets: ["X_TOKEN"] });
-    expect(byName["npx-tool"].reason).toMatch(/npx -y @example\/mcp/);
-    expect(broker.servers.has("npx-tool")).toBe(false);
     expect(byName["npx-public"]).toMatchObject({ status: "registered", runIn: "sandbox" });
     expect(byName["npx-public"].warnings.join(" ")).toMatch(/pre-install/);
     const npxPublic = h.mcp.store.get("npx-public")!;
@@ -321,10 +317,8 @@ describe("plugin installer (fixture marketplace)", () => {
     expect(byName["literal-tool"]).toMatchObject({ status: "error" });
     expect(byName["literal-tool"].reason).toMatch(/API_TOKEN.*literal credential.*runIn=broker/);
     expect(h.mcp.store.get("literal-tool")).toBeUndefined();
-    const gh = broker.servers.get("gh");
-    expect(gh?.transport).toMatchObject({ env: { GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" } });
     expect(broker.servers.get("remote-docs")?.transport).toMatchObject({ headers: { Authorization: "Bearer {{secret:DOCS_TOKEN}}" } });
-    expect(warnings.join("\n")).toMatch(/GITHUB_TOKEN/);
+    expect(warnings.join("\n")).toMatch(/DOCS_TOKEN/);
   });
 
   it("evil: clone은 링크를 링크 경로가 적힌 일반 파일로 받으므로 밖의 내용이 들어오지 않는다", async () => {
@@ -417,7 +411,7 @@ describe("plugin installer (fixture marketplace)", () => {
     expect(existsSync(join(h.config.pluginsDir, "defect-agent-plugins", "defect-agent-frontend"))).toBe(false);
     expect(h.mcp.store.get("monsemi-frontend")).toBeUndefined();
     res = await api("DELETE", "/admin/api/plugins/secret-tools%40defect-agent-plugins");
-    expect(res.json().removedMcpServers.sort()).toEqual(["gh", "npx-public", "remote-docs"]);
+    expect(res.json().removedMcpServers.sort()).toEqual(["npx-public", "remote-docs"]);
     expect(broker.servers.size).toBe(0);
     for (const name of ["evil", "remote", "subdir"]) {
       expect((await api("DELETE", `/admin/api/plugins/${name}%40defect-agent-plugins`)).statusCode).toBe(200);
@@ -471,7 +465,7 @@ describe("plugin 업데이트·broker 장애", () => {
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
       await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "secret-tools" }, "t");
-      expect(broker.servers.has("gh")).toBe(true);
+      expect(broker.servers.has("remote-docs")).toBe(true);
       broker.setDown(true);
       await expect(harness.plugins.setEnabled(sid, false, "t")).rejects.toMatchObject({ status: 503 });
       expect(harness.plugins.getPlugin(sid).enabled).toBe(true);
@@ -479,10 +473,10 @@ describe("plugin 업데이트·broker 장애", () => {
       expect(harness.plugins.getPlugin(sid).version).toBe("0.1.0");
       await expect(harness.plugins.update(sid, {}, "t")).rejects.toMatchObject({ status: 503 });
       broker.setDown(false);
-      expect(broker.servers.get("gh")?.enabled).toBe(true);
+      expect(broker.servers.get("remote-docs")?.enabled).toBe(true);
       const removed = await harness.plugins.uninstall(sid, "t");
-      expect(removed.removedMcpServers).toContain("gh");
-      expect(broker.servers.has("gh")).toBe(false);
+      expect(removed.removedMcpServers).toContain("remote-docs");
+      expect(broker.servers.has("remote-docs")).toBe(false);
     } finally {
       broker.setDown(false);
       await harness.close();
@@ -491,15 +485,10 @@ describe("plugin 업데이트·broker 장애", () => {
   });
 
   for (const kind of ["fake", "real"] as const) {
-    it(`업데이트해도 broker 서버의 실행 대상(current 경로)이 그대로라 비밀키가 남고, 오래된 버전만 정리된다 (${kind} broker)`, async () => {
+    it(`업데이트해도 broker 서버의 비밀키가 남고, 오래된 버전만 정리된다 (${kind} broker)`, async () => {
       const fake = kind === "fake" ? await startFakeTestBroker() : undefined;
       const broker: TestBroker = fake ?? (await startRealBroker());
       const fixture = buildFixture(tempDir(`fixture-keep-${kind}`));
-      if (kind === "real") {
-        // 실제 broker가 current 링크를 거쳐 서버를 띄우는지도 본다
-        writeFileSync(join(fixture.mkt, "plugins/secret-tools/gh.js"), readFileSync(BROKER_STDIO_FIXTURE));
-        commitAll(fixture.mkt);
-      }
       const harness = await buildHarness({ env: testBrokerEnv(broker) });
       const sid = "secret-tools@defect-agent-plugins";
       const bump = (version: string) => {
@@ -511,31 +500,24 @@ describe("plugin 업데이트·broker 장애", () => {
         await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
         const first = await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "secret-tools" }, "t");
         const pluginDir = dirname(first.plugin.installPath);
-        const stableArgs = [join(pluginDir, "current", "gh.js")];
-        expect((await harness.mcp.get("gh")).config.transport).toMatchObject({ args: stableArgs });
-        await harness.mcp.setSecret("gh", "GITHUB_TOKEN", { value: "ghp_kept_across_updates" }, "admin");
-        const secretsBefore = (await harness.mcp.get("gh")).secrets;
-        expect(secretsBefore?.map((s) => s.name)).toEqual(["GITHUB_TOKEN"]);
+        await harness.mcp.setSecret("remote-docs", "DOCS_TOKEN", { value: "docs_kept_across_updates" }, "admin");
+        const secretsBefore = (await harness.mcp.get("remote-docs")).secrets;
+        expect(secretsBefore?.map((s) => s.name)).toEqual(["DOCS_TOKEN"]);
         for (const version of ["0.1.1", "0.1.2"]) {
           bump(version);
           await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
           const { plugin, warnings } = await harness.plugins.update(sid, {}, "t");
           expect(plugin.version).toBe(version);
           expect(readlinkSync(join(pluginDir, "current"))).toBe(version);
-          expect(warnings.join("\n")).not.toMatch(/GITHUB_TOKEN/);
+          expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
         }
-        const gh = await harness.mcp.get("gh");
-        expect(gh.config.transport).toMatchObject({ args: stableArgs });
-        expect(gh.missingSecrets).toEqual([]);
+        const docs = await harness.mcp.get("remote-docs");
+        expect(docs.missingSecrets).toEqual([]);
         // 다시 넣은 값이 아니라 처음 넣은 값이 그대로 남았다 (setAt·fingerprint가 같다)
-        expect(gh.secrets).toEqual(secretsBefore);
-        if (fake) expect(fake.fake.secrets.get("gh")?.get("GITHUB_TOKEN")).toBe("ghp_kept_across_updates");
+        expect(docs.secrets).toEqual(secretsBefore);
+        if (fake) expect(fake.fake.secrets.get("remote-docs")?.get("DOCS_TOKEN")).toBe("docs_kept_across_updates");
         // 현재와 바로 이전 버전만 남는다
         expect(readdirSync(pluginDir).filter((n) => !n.startsWith(".")).sort()).toEqual(["0.1.1", "0.1.2", "current"]);
-        if (kind === "real") {
-          const result = await callBrokerTool(broker, "gh", "whoami");
-          expect(result.isError).toBeFalsy();
-        }
       } finally {
         await harness.close();
         await broker.close();
@@ -576,7 +558,7 @@ describe("plugin 업데이트·broker 장애", () => {
 });
 
 describe("plugin 설치 권한 (gateway는 umask 077로 돈다)", () => {
-  it("설치본과 상위 디렉토리는 sandbox(uid 1000)·broker가 읽을 수 있다", async () => {
+  it("설치본과 상위 디렉토리는 sandbox(uid 1000)가 읽을 수 있다", async () => {
     const fixture = buildFixture(tempDir("fixture-umask"));
     const harness = await buildHarness();
     const previous = process.umask(0o077);

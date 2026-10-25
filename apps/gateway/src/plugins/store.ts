@@ -57,7 +57,7 @@ export interface McpRecord {
   name: string;
   id?: string;
   runIn?: McpRunIn;
-  status: "registered" | "unsupported" | "error" | "broker_unavailable" | "needs_preinstall";
+  status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
   requiredSecrets: string[];
   /** broker 서버: 등록 직후 아직 값이 없는 비밀키 */

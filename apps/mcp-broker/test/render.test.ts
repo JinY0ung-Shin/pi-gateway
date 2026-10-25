@@ -1,7 +1,6 @@
 import { findLiteralCredentials, McpServerConfig } from "@pi-gateway/shared";
 import { describe, expect, it } from "vitest";
 import {
-  checkStdioCommand,
   ConfigError,
   effectiveScope,
   MissingSessionError,
@@ -36,10 +35,9 @@ describe("renderTransport", () => {
       runIn: "broker",
       scope: "per-session",
       transport: {
-        type: "stdio",
-        command: "node",
-        args: ["server.js", "--user={{user}}"],
-        env: { TOKEN: "{{secret:TOKEN}}", FWD: "{{ctx.header:x-user-token}}", THREAD: "{{metadata:thread_id}}", SID: "{{session}}" },
+        type: "http",
+        url: "https://example.com/mcp?user={{user}}",
+        headers: { Authorization: "Bearer {{secret:TOKEN}}", FWD: "{{ctx.header:x-user-token}}", THREAD: "{{metadata:thread_id}}", SID: "{{session}}" },
       },
     });
     const out = renderTransport(
@@ -48,10 +46,8 @@ describe("renderTransport", () => {
       new Map([["TOKEN", "sekret-value"]]),
     );
     expect(out.transport).toEqual({
-      type: "stdio",
-      command: "node",
-      args: ["server.js", "--user=alice"],
-      env: { TOKEN: "sekret-value", FWD: "utok-123456", THREAD: "t9", SID: "s1" },
+      url: "https://example.com/mcp?user=alice",
+      headers: { Authorization: "Bearer sekret-value", FWD: "utok-123456", THREAD: "t9", SID: "s1" },
     });
     expect(out.credentials.sort()).toEqual(["sekret-value", "utok-123456"]);
     expect(out.missingSecrets).toEqual([]);
@@ -68,31 +64,17 @@ describe("renderTransport", () => {
     const config = McpServerConfig.parse({
       id: "p",
       runIn: "broker",
-      transport: { type: "stdio", command: "node", args: ["{{plugin_root}}/server.js"] },
+      transport: { type: "http", url: "https://example.com/mcp", headers: { "X-Root": "{{plugin_root}}" } },
     });
     expect(() => renderTransport(config, { sub: "a" }, new Map())).toThrow(ConfigError);
   });
 });
 
 describe("admin input checks", () => {
-  it("실행 시 패키지를 내려받는 명령을 거부한다", () => {
-    expect(checkStdioCommand("npx", [])).toMatch(/downloads packages/);
-    expect(checkStdioCommand("/usr/bin/uvx", [])).toMatch(/downloads packages/);
-    expect(checkStdioCommand("node", [])).toBeNull();
-    expect(checkStdioCommand("python3", ["node"])).toMatch(/allowlist/i);
-    expect(checkStdioCommand("/usr/local/bin/node", ["node"])).toBeNull();
-  });
-
   it("자격증명 자리의 리터럴 값을 거부한다", () => {
     expect(findLiteralCredentials(http({ Authorization: "Bearer ghp_literal" }))).toHaveLength(1);
     expect(findLiteralCredentials(http({ Authorization: "Bearer {{secret:T}}" }))).toEqual([]);
     expect(findLiteralCredentials(http({ "X-Request-Source": "pi-gateway" }))).toEqual([]);
-    const stdio = McpServerConfig.parse({
-      id: "s",
-      runIn: "broker",
-      transport: { type: "stdio", command: "node", env: { GITHUB_TOKEN: "literal", LOG_LEVEL: "debug", API_KEY: "{{secret:K}}" } },
-    });
-    expect(findLiteralCredentials(stdio)).toEqual(["env 'GITHUB_TOKEN' holds a literal credential; use {{secret:NAME}}"]);
     const url = McpServerConfig.parse({
       id: "u",
       runIn: "broker",

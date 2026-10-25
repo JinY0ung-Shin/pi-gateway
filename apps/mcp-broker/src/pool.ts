@@ -10,12 +10,9 @@ export interface PoolKey {
   scopeKey: string;
   /** 렌더링된 transport의 해시. 사용자 토큰이 바뀌면 다른 연결이 된다. */
   renderedHash: string;
-  kind: "stdio" | "http";
 }
 
 export interface PoolLimits {
-  maxProcesses: number;
-  maxProcessesPerServer: number;
   maxConnections: number;
   idleTtlSeconds: number;
 }
@@ -36,8 +33,6 @@ interface Entry {
 
 export interface Lease {
   readonly client: Client;
-  readonly pid: number | undefined;
-  readonly uid: number | undefined;
   cachedTools(maxAgeMs: number): Tool[] | undefined;
   setTools(tools: Tool[]): void;
   release(): void;
@@ -58,9 +53,9 @@ function entryId(key: PoolKey): string {
 }
 
 /**
- * upstream 연결(stdio 프로세스 또는 http 연결) 풀.
+ * upstream 연결 풀.
  * 키가 같으면 같은 연결을 쓰고, 키에는 사용자·세션 범위와 렌더링 결과 해시가 들어간다.
- * 그래서 사용자 A의 프로세스나 env가 사용자 B에게 쓰이는 일이 없다.
+ * 그래서 사용자 A의 헤더 값으로 맺은 연결이 사용자 B에게 쓰이는 일이 없다.
  */
 export class UpstreamPool {
   readonly #limits: PoolLimits;
@@ -68,7 +63,7 @@ export class UpstreamPool {
   readonly #log: Logger;
   readonly #now: () => number;
   readonly #entries = new Map<string, Entry>();
-  readonly #pending = new Map<string, { key: PoolKey; promise: Promise<Entry> }>();
+  readonly #pending = new Map<string, Promise<Entry>>();
   readonly #failures = new Map<string, { count: number; until: number }>();
   readonly #timer: NodeJS.Timeout;
   #closing = false;
@@ -82,15 +77,14 @@ export class UpstreamPool {
     this.#timer.unref();
   }
 
-  async acquire(key: PoolKey, rendered: RenderedTransport, onStderrLine: (line: string) => void): Promise<Lease> {
+  async acquire(key: PoolKey, rendered: RenderedTransport): Promise<Lease> {
     if (this.#closing) throw new PoolCapacityError("broker is shutting down");
     this.#retireStale(key.serverId, key.revision);
     const id = entryId(key);
 
     let entry = this.#entries.get(id);
     if (!entry || entry.closed || entry.retired) {
-      const pending = this.#pending.get(id);
-      entry = await (pending ? pending.promise : this.#create(id, key, rendered, onStderrLine));
+      entry = await (this.#pending.get(id) ?? this.#create(id, key, rendered));
     }
     entry.inflight++;
     entry.lastUsedAt = this.#now();
@@ -101,8 +95,6 @@ export class UpstreamPool {
     let released = false;
     return {
       client: entry.conn.client,
-      pid: entry.conn.pid,
-      uid: entry.conn.uid,
       cachedTools: (maxAgeMs) =>
         entry.tools && this.#now() - entry.tools.fetchedAt <= maxAgeMs ? entry.tools.list : undefined,
       setTools: (tools) => {
@@ -118,7 +110,7 @@ export class UpstreamPool {
     };
   }
 
-  #create(id: string, key: PoolKey, rendered: RenderedTransport, onStderrLine: (line: string) => void): Promise<Entry> {
+  #create(id: string, key: PoolKey, rendered: RenderedTransport): Promise<Entry> {
     const failure = this.#failures.get(id);
     if (failure && failure.until > this.#now()) {
       return Promise.reject(new UpstreamBackoffError(`upstream ${key.serverId} is backing off after ${failure.count} failed connects`));
@@ -130,14 +122,13 @@ export class UpstreamPool {
       const hooks: ConnectHooks = {
         onClosed: () => {
           if (entry && !entry.closed) {
-            this.#log.info({ serverId: key.serverId, kind: key.kind }, "upstream connection closed");
+            this.#log.info({ serverId: key.serverId }, "upstream connection closed");
             void this.#close(entry, "upstream closed");
           }
         },
         onToolsChanged: () => {
           if (entry) entry.tools = undefined;
         },
-        onStderrLine,
       };
       try {
         const conn = await this.#connect(rendered, hooks);
@@ -166,34 +157,19 @@ export class UpstreamPool {
         this.#pending.delete(id);
       }
     })();
-    this.#pending.set(id, { key, promise });
+    this.#pending.set(id, promise);
     return promise;
   }
 
   /** 새 연결을 만들기 전에 한도를 확인하고, 넘으면 오래 쉰 연결부터 닫는다. */
   #makeRoom(key: PoolKey): void {
     const live = () => [...this.#entries.values()].filter((e) => !e.closed);
-    const pending = [...this.#pending.values()].map((p) => p.key);
-    const count = (pred: (k: PoolKey) => boolean) => live().filter((e) => pred(e.key)).length + pending.filter(pred).length;
-    const constraints: { over: () => boolean; match: (k: PoolKey) => boolean }[] =
-      key.kind === "stdio"
-        ? [
-            { over: () => count((k) => k.kind === "stdio") >= this.#limits.maxProcesses, match: (k) => k.kind === "stdio" },
-            {
-              over: () => count((k) => k.kind === "stdio" && k.serverId === key.serverId) >= this.#limits.maxProcessesPerServer,
-              match: (k) => k.kind === "stdio" && k.serverId === key.serverId,
-            },
-          ]
-        : [{ over: () => count((k) => k.kind === "http") >= this.#limits.maxConnections, match: (k) => k.kind === "http" }];
-
-    for (const c of constraints) {
-      while (c.over()) {
-        const idle = live()
-          .filter((e) => e.inflight === 0 && c.match(e.key))
-          .sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0];
-        if (!idle) throw new PoolCapacityError(`upstream capacity reached for ${key.serverId}`);
-        void this.#close(idle, "evicted for capacity");
-      }
+    while (live().length + this.#pending.size >= this.#limits.maxConnections) {
+      const idle = live()
+        .filter((e) => e.inflight === 0)
+        .sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0];
+      if (!idle) throw new PoolCapacityError(`upstream capacity reached for ${key.serverId}`);
+      void this.#close(idle, "evicted for capacity");
     }
   }
 
@@ -212,7 +188,7 @@ export class UpstreamPool {
     if (entry.closed) return;
     entry.closed = true;
     if (this.#entries.get(entry.id) === entry) this.#entries.delete(entry.id);
-    this.#log.debug({ serverId: entry.key.serverId, kind: entry.key.kind, reason }, "closing upstream connection");
+    this.#log.debug({ serverId: entry.key.serverId, reason }, "closing upstream connection");
     await entry.conn.close().catch((error) => this.#log.warn({ err: String(error) }, "failed to close upstream"));
   }
 
@@ -239,7 +215,7 @@ export class UpstreamPool {
   async closeAll(): Promise<void> {
     this.#closing = true;
     clearInterval(this.#timer);
-    await Promise.allSettled([...this.#pending.values()].map((p) => p.promise));
+    await Promise.allSettled([...this.#pending.values()]);
     await Promise.all([...this.#entries.values()].map((e) => this.#close(e, "shutdown")));
   }
 }

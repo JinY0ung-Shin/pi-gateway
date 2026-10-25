@@ -38,10 +38,9 @@ export function literalCredentials(config: ServerLike): string[] {
 
 /** broker(mcp-broker store.ts transportTarget)와 같은 기준. 이 값이 바뀌면 broker가 저장된 비밀키를 지운다. */
 function transportTarget(t: Transport): string {
+  // broker 서버는 http만 쓴다
+  if (t.type !== "http") return JSON.stringify(t);
   const sorted = (entries: [string, string][]) => entries.sort(([a], [b]) => a.localeCompare(b));
-  if (t.type === "stdio") {
-    return JSON.stringify({ type: "stdio", command: t.command, args: t.args, cwd: t.cwd ?? null, env: sorted(Object.entries(t.env)) });
-  }
   let origin: string;
   try {
     // host에 자리표시자가 있으면 그 자체가 행선지를 바꿀 수 있으므로 문자 그대로 비교한다
@@ -56,7 +55,7 @@ function transportTarget(t: Transport): string {
 
 /**
  * broker는 서버의 실행 대상이 바뀌면 저장된 비밀키를 지운다 (다른 대상에 옛 비밀값을 보내지 않으려고).
- * 대상: http는 URL origin·헤더(이름은 대소문자 무시)·URL 안의 {{secret}} 참조, stdio는 command·args·cwd·env. runIn을 바꿔도 지워진다.
+ * 대상: URL origin·헤더(이름은 대소문자 무시)·URL 안의 {{secret}} 참조. runIn을 바꿔도 지워진다.
  */
 export function clearsSecrets(before: ServerLike, after: ServerLike): boolean {
   return before.runIn !== after.runIn || transportTarget(before.transport) !== transportTarget(after.transport);

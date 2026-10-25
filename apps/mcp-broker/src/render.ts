@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import {
   collectTemplateRefs,
   type McpScope,
@@ -15,9 +14,11 @@ export interface Identity {
   ctx?: RequestContext;
 }
 
-export type RenderedTransport =
-  | { type: "stdio"; command: string; args: string[]; env: Record<string, string>; cwd?: string }
-  | { type: "http"; url: string; headers: Record<string, string> };
+/** 원격 MCP 서버에 붙을 주소와 헤더 (자리표시자를 채운 값) */
+export interface RenderedTransport {
+  url: string;
+  headers: Record<string, string>;
+}
 
 export interface RenderResult {
   transport: RenderedTransport;
@@ -98,37 +99,13 @@ export function renderTransport(config: McpServerConfig, identity: Identity, sec
   };
 
   const t = config.transport;
-  let transport: RenderedTransport;
-  if (t.type === "stdio") {
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(t.env)) env[k] = render(v);
-    transport = { type: "stdio", command: render(t.command), args: t.args.map(render), env };
-    if (t.cwd) transport.cwd = render(t.cwd);
-  } else {
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(t.headers)) headers[k] = render(v);
-    transport = { type: "http", url: render(t.url), headers };
-  }
+  if (t.type !== "http") throw new ConfigError("broker servers must use the http transport");
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(t.headers)) headers[k] = render(v);
   return {
-    transport,
+    transport: { url: render(t.url), headers },
     credentials: [...credentials],
     missingSecrets: [...missingSecrets].sort(),
     missingOptional: [...missingOptional],
   };
-}
-
-// ── 관리 API 입력 검사 ────────────────────────────────────────────────
-
-/** 실행 시 패키지를 내려받는 명령. 이미지에 미리 설치한 명령만 쓴다. */
-const DOWNLOADING_COMMANDS = new Set(["npx", "uvx", "bunx", "pnpx", "pipx", "npm", "pnpm", "yarn"]);
-
-export function checkStdioCommand(command: string, allowlist: readonly string[]): string | null {
-  const name = basename(command);
-  if (DOWNLOADING_COMMANDS.has(name)) {
-    return `command '${name}' downloads packages at runtime; pre-install the server in the broker image and run it directly`;
-  }
-  if (allowlist.length > 0 && !allowlist.includes(command) && !allowlist.includes(name)) {
-    return `command '${command}' is not in BROKER_STDIO_COMMAND_ALLOWLIST`;
-  }
-  return null;
 }

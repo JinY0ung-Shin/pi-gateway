@@ -36,6 +36,8 @@ const MIGRATIONS = [
      last_version INTEGER NOT NULL,
      PRIMARY KEY (server_id, name)
    )`,
+  // broker는 stdio 서버를 더 실행하지 않는다. 남아 있던 stdio 서버와 그 비밀키를 지운다.
+  `DELETE FROM servers WHERE json_extract(config, '$.transport.type') = 'stdio'`,
 ] as const;
 
 export interface StoredServer {
@@ -245,15 +247,12 @@ export class BrokerStore {
 
 /**
  * 비밀값이 어디로 가는지를 나타내는 정규화된 문자열. 이 값이 바뀌면 저장된 비밀값을 지운다.
- * - stdio: 실행 명령·인자·cwd·env 전체 (env의 다른 값으로도 비밀값의 행선지를 바꿀 수 있다)
- * - http: url의 origin, 헤더 전체, url 안에서 쓰는 비밀키 이름
+ * url의 origin, 헤더 전체, url 안에서 쓰는 비밀키 이름으로 정한다.
  */
 export function transportTarget(config: Pick<McpServerConfig, "transport">): string {
   const t = config.transport;
-  if (t.type === "stdio") {
-    const env = Object.entries(t.env).sort(([a], [b]) => a.localeCompare(b));
-    return JSON.stringify({ type: "stdio", command: t.command, args: t.args, cwd: t.cwd ?? null, env });
-  }
+  // broker 서버는 http만 쓴다 (스키마가 검사한다)
+  if (t.type !== "http") return JSON.stringify(t);
   let origin: string;
   try {
     // 자리표시자가 host에 들어 있으면 그 자체가 행선지를 바꿀 수 있으므로 문자 그대로 비교한다.

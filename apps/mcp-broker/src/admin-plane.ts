@@ -11,7 +11,6 @@ import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
 import { constantTimeEqual } from "./crypto.js";
-import { checkStdioCommand } from "./render.js";
 import { AdminUpstreamError, type BrokerService } from "./service.js";
 import type { BrokerStore } from "./store.js";
 
@@ -117,10 +116,6 @@ export function buildAdminPlane(deps: {
       return reply.code(400).send(errorBody("invalid_request", "only runIn=broker servers are stored in the broker"));
     }
     const problems = findLiteralCredentials(cfg);
-    if (cfg.transport.type === "stdio") {
-      const commandProblem = checkStdioCommand(cfg.transport.command, config.stdio.commandAllowlist);
-      if (commandProblem) problems.push(commandProblem);
-    }
     if (collectTemplateRefs(cfg).refs.some((r) => r.kind === "plugin_root")) {
       problems.push("{{plugin_root}} must be resolved when the plugin is installed");
     }

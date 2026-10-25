@@ -13,7 +13,6 @@ import type { BrokerConfig } from "./config.js";
 import { type Lease, PoolCapacityError, type UpstreamPool, UpstreamBackoffError } from "./pool.js";
 import { describeError, Redactor } from "./redact.js";
 import {
-  checkStdioCommand,
   ConfigError,
   effectiveScope,
   type Identity,
@@ -23,7 +22,7 @@ import {
   scopeKey,
 } from "./render.js";
 import type { BrokerStore, StoredServer } from "./store.js";
-import { connectUpstream, type StdioRuntime } from "./upstream/connect.js";
+import { connectUpstream } from "./upstream/connect.js";
 
 /** 서버가 없거나, 꺼져 있거나, 필요한 비밀키가 없다. 데이터 평면에서는 404로 답한다. */
 export class ServerUnavailableError extends Error {
@@ -51,15 +50,13 @@ export class BrokerService {
   readonly #pool: UpstreamPool;
   readonly #config: BrokerConfig;
   readonly #log: Logger;
-  readonly #stdio: StdioRuntime;
   readonly #lastErrors = new Map<string, { message: string; at: string }>();
 
-  constructor(deps: { store: BrokerStore; pool: UpstreamPool; config: BrokerConfig; log: Logger; stdio: StdioRuntime }) {
+  constructor(deps: { store: BrokerStore; pool: UpstreamPool; config: BrokerConfig; log: Logger }) {
     this.#store = deps.store;
     this.#pool = deps.pool;
     this.#config = deps.config;
     this.#log = deps.log;
-    this.#stdio = deps.stdio;
   }
 
   // ── 조회 ──────────────────────────────────────────────────────────
@@ -130,10 +127,6 @@ export class BrokerService {
     if (rendered.missingSecrets.length > 0) {
       throw new ServerUnavailableError(`missing secrets: ${rendered.missingSecrets.join(", ")}`);
     }
-    if (rendered.transport.type === "stdio") {
-      const problem = checkStdioCommand(rendered.transport.command, this.#config.stdio.commandAllowlist);
-      if (problem) throw new ConfigError(problem);
-    }
     const redactor = new Redactor([...values.values(), ...rendered.credentials]);
     const renderedHash = createHash("sha256").update(JSON.stringify(rendered.transport)).digest("hex");
     return {
@@ -144,24 +137,9 @@ export class BrokerService {
     };
   }
 
-  #stderrLogger(serverId: string, redactor: Redactor, tail?: string[]): (line: string) => void {
-    return (line) => {
-      const safe = redactor.redact(line);
-      this.#log.debug({ serverId, stderr: safe }, "upstream stderr");
-      if (tail) {
-        tail.push(safe);
-        if (tail.length > 20) tail.shift();
-      }
-    };
-  }
-
   async #acquire(prepared: Prepared): Promise<Lease> {
-    const { server, rendered, redactor, key } = prepared;
-    return this.#pool.acquire(
-      { serverId: server.config.id, revision: server.revision, kind: rendered.transport.type, ...key },
-      rendered.transport,
-      this.#stderrLogger(server.config.id, redactor),
-    );
+    const { server, rendered, key } = prepared;
+    return this.#pool.acquire({ serverId: server.config.id, revision: server.revision, ...key }, rendered.transport);
   }
 
   // ── 도구 ──────────────────────────────────────────────────────────
@@ -303,7 +281,6 @@ export class BrokerService {
     const started = Date.now();
     const identity: Identity = { sub: user ?? "_admin", sid: `admin-test-${randomUUID()}` };
     let redactor = new Redactor([]);
-    const stderrTail: string[] = [];
     try {
       const missing = this.#store.missingSecrets(server);
       if (missing.length > 0) return { ok: false, error: `missing secrets: ${missing.join(", ")}`, durationMs: 0 };
@@ -311,12 +288,7 @@ export class BrokerService {
       redactor = prepared.redactor;
       const conn = await connectUpstream(prepared.rendered.transport, {
         connectTimeoutMs: this.#config.limits.connectTimeoutSeconds * 1000,
-        stdio: this.#stdio,
-        hooks: {
-          onClosed: () => {},
-          onToolsChanged: () => {},
-          onStderrLine: this.#stderrLogger(server.config.id, redactor, stderrTail),
-        },
+        hooks: { onClosed: () => {}, onToolsChanged: () => {} },
       });
       try {
         const { tools } = await conn.client.listTools(undefined, {
@@ -332,9 +304,7 @@ export class BrokerService {
         await conn.close();
       }
     } catch (error) {
-      // 관리자만 보는 응답이라 가린 stderr 끝부분을 붙여 원인을 찾기 쉽게 한다.
-      const stderr = stderrTail.length > 0 ? `\nstderr:\n${stderrTail.join("\n")}` : "";
-      return { ok: false, error: `${describeError(error, redactor, 1000)}${stderr}`.slice(0, 4000), durationMs: Date.now() - started };
+      return { ok: false, error: describeError(error, redactor, 1000), durationMs: Date.now() - started };
     }
   }
 }
@@ -368,7 +338,7 @@ function classify(error: unknown, signals: { deadline?: AbortSignal; caller?: Ab
     if (error.code === ProtocolErrorCode.InvalidParams || error.code === ProtocolErrorCode.MethodNotFound) return "rejected";
     return "error";
   }
-  if (error instanceof Error && /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENOENT|EACCES|fetch failed/i.test(error.message)) {
+  if (error instanceof Error && /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed/i.test(error.message)) {
     return "unavailable";
   }
   return "error";

@@ -5,13 +5,15 @@ import { transportTarget } from "../../../mcp-broker/src/store.js";
 
 /** 관리 화면이 저장 전에 알려주는 규칙(admin-ui mcp-rules.ts)이 서버·broker 규칙과 같은지 */
 
-const stdio = (env: Record<string, string>, extra: Record<string, unknown> = {}) =>
-  McpServerConfig.parse({ id: "s", runIn: "broker", transport: { type: "stdio", command: "node", args: ["/opt/plugins/m/p/current/s.js"], env, ...extra } });
+const stdio = (env: Record<string, string>) => ({
+  runIn: "sandbox" as const,
+  transport: { type: "stdio" as const, command: "node", args: ["/opt/plugins/m/p/current/s.js"], env },
+});
 const http = (url: string, headers: Record<string, string> = {}) => McpServerConfig.parse({ id: "h", runIn: "broker", transport: { type: "http", url, headers } });
 
 describe("관리 화면 MCP 규칙", () => {
   it("자격증명으로 보이는 리터럴 값 감지가 서버(findLiteralCredentials)와 같다", () => {
-    const cases: [McpServerConfig, number][] = [
+    const cases: [ReturnType<typeof stdio> | McpServerConfig, number][] = [
       [stdio({ GITHUB_TOKEN: "ghp_x" }), 1],
       [stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}" }), 0],
       [stdio({ API_KEY: "a", APIKEY: "b", MY_PASSWORD: "c", AWS_ACCESS_KEY: "d", CREDENTIALS: "e" }), 5],
@@ -30,19 +32,13 @@ describe("관리 화면 MCP 규칙", () => {
   });
 
   it("비밀키가 지워지는지 예측이 broker(transportTarget)와 같다", () => {
-    const base = stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" });
     const docs = http("https://docs.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}" });
     const cases: [McpServerConfig, McpServerConfig, boolean][] = [
-      [base, stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" }, {}), false],
-      [base, stdio({ LOG_LEVEL: "info", GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}" }), false],
-      [base, stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "debug" }), true],
-      [base, stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" }, { args: ["/opt/plugins/m/p/1.0.1/s.js"] }), true],
-      [base, stdio({ GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" }, { cwd: "/tmp" }), true],
-      [base, { ...base, runIn: "sandbox" }, true],
       [docs, http("https://docs.example.com/other?b={{secret:B}}&a={{secret:A}}", { authorization: "Bearer {{secret:T}}" }), false],
       [docs, http("https://docs.example.com/mcp?a={{secret:A}}", { Authorization: "Bearer {{secret:T}}" }), true],
       [docs, http("https://evil.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}" }), true],
       [docs, http("https://docs.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}", "X-Extra": "1" }), true],
+      [docs, { ...docs, runIn: "sandbox" }, true],
     ];
     for (const [before, after, expected] of cases) {
       const label = `${JSON.stringify(before.transport)} -> ${JSON.stringify(after.transport)}`;

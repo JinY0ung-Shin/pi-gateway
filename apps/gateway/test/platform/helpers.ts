@@ -2,20 +2,16 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
-import { type CallToolResult, McpClient, StreamableHttpTransport } from "@earendil-works/pi-mcp";
 import {
   AUD_BROKER,
   bearerToken,
   collectTemplateRefs,
   findLiteralCredentials,
-  type InternalClaims,
   jwtSecretBytes,
   McpServerConfig,
   requiredSecretNames,
-  signInternalToken,
   verifyInternalToken,
 } from "@pi-gateway/shared";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
@@ -239,10 +235,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     if (config.id === "servers") return bad(reply, "id 'servers' is reserved");
     const literals = findLiteralCredentials(config);
     if (literals.length > 0) return bad(reply, literals.join("; "));
-    if (config.transport.type === "stdio") {
-      const base = config.transport.command.split("/").pop() ?? "";
-      if (["npx", "uvx", "bunx", "pnpx", "pipx", "npm", "pnpm", "yarn"].includes(base)) return bad(reply, `command '${base}' is not allowed`);
-    }
     if (JSON.stringify(config.transport).includes("{{plugin_root}}")) return bad(reply, "unresolved {{plugin_root}}");
     const previous = servers.get(config.id);
     if (previous && transportTarget(previous) !== transportTarget(config)) secrets.delete(config.id);
@@ -315,10 +307,7 @@ export function brokerEnv(url: string): Record<string, string> {
 /** 실제 broker(store.ts transportTarget)와 같은 기준: 이 값이 바뀌면 저장된 비밀키를 지운다. */
 function transportTarget(config: McpServerConfig): string {
   const t = config.transport;
-  if (t.type === "stdio") {
-    const env = Object.entries(t.env).sort(([a], [b]) => a.localeCompare(b));
-    return JSON.stringify({ type: "stdio", command: t.command, args: t.args, cwd: t.cwd ?? null, env });
-  }
+  if (t.type !== "http") return JSON.stringify(t);
   let origin: string;
   try {
     origin = /\{\{/.test(t.url.split("/").slice(0, 3).join("/")) ? t.url : new URL(t.url).origin;
@@ -341,11 +330,8 @@ export interface TestBroker {
   close(): Promise<void>;
 }
 
-/** broker 테스트의 최소 MCP stdio 서버 (의존성 없음) */
-export const BROKER_STDIO_FIXTURE = fileURLToPath(new URL("../../../mcp-broker/test/fixtures/stdio-server.mjs", import.meta.url));
-
 /**
- * 실제 broker(apps/mcp-broker createBroker). stdio 자식은 지금 node로 띄운다.
+ * 실제 broker(apps/mcp-broker createBroker).
  * 다른 테스트가 broker 모듈을 불러오지 않도록 동적 import한다.
  */
 export async function startRealBroker(): Promise<TestBroker> {
@@ -357,9 +343,6 @@ export async function startRealBroker(): Promise<TestBroker> {
     BROKER_ADMIN_TOKEN,
     BROKER_KEK: randomBytes(32).toString("base64"),
     DATA_DIR: join(dir, "data"),
-    PLUGINS_DIR: join(dir, "plugins"),
-    BROKER_STDIO_WORK_ROOT: join(dir, "work"),
-    BROKER_STDIO_PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
     LOG_LEVEL: "silent",
   });
   const broker = createBroker(config, { log: createLogger("silent") });
@@ -376,27 +359,4 @@ export async function startFakeTestBroker(): Promise<TestBroker & { fake: FakeBr
 /** gateway 설정용 (data plane과 관리 평면 주소가 다를 수 있다) */
 export function testBrokerEnv(b: TestBroker): Record<string, string> {
   return { ...brokerEnv(b.dataUrl), BROKER_ADMIN_URL: b.adminUrl };
-}
-
-/** gateway와 같은 방식(pi-mcp, 요청마다 내부 JWT)으로 broker data plane의 도구를 부른다 */
-export async function callBrokerTool(
-  b: TestBroker,
-  serverId: string,
-  tool: string,
-  claims: InternalClaims = { sub: "u-test", sid: "s-test" },
-): Promise<CallToolResult> {
-  const secret = jwtSecretBytes(BROKER_JWT_SECRET);
-  const client = new McpClient({ name: "pi-gateway-platform-test", version: "0.0.0", requestTimeoutMs: 30_000 });
-  await client.connect(
-    new StreamableHttpTransport({
-      url: `${b.dataUrl}/mcp/${serverId}`,
-      openGetStream: false,
-      authProvider: { token: () => signInternalToken(secret, AUD_BROKER, claims, 60) },
-    }),
-  );
-  try {
-    return await client.callTool(tool, {});
-  } finally {
-    await client.close();
-  }
 }

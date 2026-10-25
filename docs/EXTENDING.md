@@ -32,8 +32,8 @@ agent가 쓸 수 있는 도구를 늘리는 방법이에요. 대부분은 코드
 | | `broker` | `sandbox` |
 |---|---|---|
 | 언제 쓰나 | 인증키가 필요한 서버 (GitHub, 사내 API 등) | 키가 필요 없고 사용자 workspace 파일을 다루는 서버 |
-| 어디서 도나 | mcp-broker 컨테이너 (원격 HTTP 서버면 broker가 프록시) | 그 사용자의 sandbox 컨테이너 안 (stdio) |
-| 쓸 수 있는 transport | `stdio`, `http` (streamable HTTP) | `stdio`만 |
+| 어디서 도나 | 원격 서버 (broker가 비밀키를 붙여 프록시) | 그 사용자의 sandbox 컨테이너 안 (stdio) |
+| 쓸 수 있는 transport | `http` (streamable HTTP)만 | `stdio`만 |
 | 비밀값 | `{{secret:NAME}}`로 참조, 값은 관리 화면에서 쓰기 전용으로 입력 | 쓸 수 없음 (설정 검증에서 거부) |
 
 ### 설정 예시
@@ -114,7 +114,6 @@ agent가 `bash`로 쓰는 프로그램은 sandbox 이미지에 미리 설치해�
 
 - 이미 떠 있는 사용자 컨테이너는 예전 이미지를 써요. 유휴 시간이 지나 다시 만들어질 때 새 이미지가 적용돼요. 바로 적용하려면 해당 사용자 컨테이너(`pi-sbx-…`)를 지워요. 다음 도구 호출 때 새 이미지로 다시 만들어져요 (workspace는 남아요).
 - 운영 절차(빌드·배포·확인)는 [OPERATIONS.md §5 "sandbox에 도구 추가하기"](OPERATIONS.md#5-sandbox에-도구-추가하기)에 있어요.
-- broker에서 도는 stdio MCP 서버에 필요한 런타임은 `BROKER_EXTRA_APT_PACKAGES`/`_NPM_`/`_PIP_`로 broker 이미지에 넣어요.
 
 ---
 

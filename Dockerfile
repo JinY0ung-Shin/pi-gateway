@@ -107,36 +107,16 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
 CMD ["node", "apps/sandboxd/dist/main.js"]
 
 # ── mcp-broker ──────────────────────────────────────────────────────
-# MCP 비밀키를 가진 서비스. 비밀키가 필요한 stdio MCP 서버는 여기서 실행된다.
-# 실행 중에 npx/uvx로 내려받지 않도록, 쓸 서버는 build arg로 미리 설치한다:
-#   BROKER_EXTRA_NPM_PACKAGES="@modelcontextprotocol/server-github"   → /usr/local (npm -g)
-#   BROKER_EXTRA_PIP_PACKAGES="mcp-server-fetch"                       → /opt/mcp-venv
-#   BROKER_EXTRA_APT_PACKAGES="..."
+# MCP 비밀키를 가진 서비스. 원격 MCP 서버(streamable HTTP)에 비밀키를 붙여 프록시한다.
 FROM runtime AS mcp-broker
-# 사내 PyPI 미러 (.env). HTTP 미러면 PIP_TRUSTED_HOST에 호스트명을 넣는다.
-ARG PIP_INDEX_URL=""
-ARG PIP_TRUSTED_HOST=""
-ARG BROKER_EXTRA_APT_PACKAGES=""
-ARG BROKER_EXTRA_NPM_PACKAGES=""
-ARG BROKER_EXTRA_PIP_PACKAGES=""
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv util-linux ${BROKER_EXTRA_APT_PACKAGES} \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
- && python3 -m venv /opt/mcp-venv \
- && if [ -n "${BROKER_EXTRA_PIP_PACKAGES}" ]; then /opt/mcp-venv/bin/pip install --no-cache-dir ${BROKER_EXTRA_PIP_PACKAGES}; fi \
- && if [ -n "${BROKER_EXTRA_NPM_PACKAGES}" ]; then \
-      npm install -g --prefix /usr/local --no-audit --no-fund ${BROKER_EXTRA_NPM_PACKAGES} && npm cache clean --force; \
-    fi \
- && mkdir -p /data /opt/plugins \
+RUN mkdir -p /data \
  && chmod 0700 /data \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=deps-broker /app/node_modules node_modules
 COPY --from=build-broker /app/packages/shared/dist packages/shared/dist
 COPY --from=build-broker /app/apps/mcp-broker/package.json apps/mcp-broker/
 COPY --from=build-broker /app/apps/mcp-broker/dist apps/mcp-broker/dist
-ENV DATA_DIR=/data PLUGINS_DIR=/opt/plugins HOME=/tmp \
-    BROKER_STDIO_PATH=/opt/mcp-venv/bin:/usr/local/bin:/usr/bin:/bin \
-    BROKER_STDIO_WORK_ROOT=/tmp/mcp-broker
+ENV DATA_DIR=/data HOME=/tmp
 EXPOSE 7080 7081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.BROKER_PORT||7080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"

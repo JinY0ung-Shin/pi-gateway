@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /**
- * MCP 서버 설정 — gateway(관리 UI, sandbox 실행)와 mcp-broker(broker 실행)가 함께 쓰는 스키마.
+ * MCP 서버 설정 — gateway(관리 UI, sandbox 실행)와 mcp-broker(broker 프록시)가 함께 쓰는 스키마.
  *
  * runIn
- * - "broker": 비밀키가 필요한 서버. broker DB에 저장되고 broker가 실행하거나 프록시한다.
+ * - "broker": 비밀키가 필요한 원격 HTTP 서버. broker DB에 저장되고 broker가 비밀키를 붙여 프록시한다.
  * - "sandbox": 비밀키가 없고 workspace 파일이 필요한 서버. gateway DB에 저장되고,
  *   사용자 sandbox 컨테이너 안에서 stdio로 실행한다.
  *
@@ -142,6 +142,7 @@ export function requiredSecretNames(config: Pick<McpServerConfig, "transport">):
 
 /**
  * 스키마 밖의 규칙 검사. 오류 메시지 목록을 돌려준다 (비어 있으면 통과).
+ * - sandbox 서버는 stdio, broker 서버는 http만 쓴다.
  * - sandbox 실행 서버에는 {{secret:…}}, {{ctx.header:…}}를 쓸 수 없다.
  * - stdio 서버는 env·args가 프로세스 시작 시 고정되므로,
  *   {{user}}/{{ctx.header}}를 쓰면 scope가 per-user 이상, {{session}}/{{metadata}}를 쓰면 per-session이어야 한다.
@@ -154,6 +155,8 @@ export function validateMcpServerConfig(config: z.infer<typeof McpServerConfigBa
     if (refs.some((r) => r.kind === "secret")) errors.push("sandbox servers must not use {{secret:...}}");
     if (refs.some((r) => r.kind === "header")) errors.push("sandbox servers must not use {{ctx.header:...}}");
     if (config.transport.type !== "stdio") errors.push("sandbox servers must use the stdio transport");
+  } else if (config.transport.type !== "http") {
+    errors.push("broker servers must use the http transport");
   }
   if (config.transport.type === "stdio") {
     const needsUser = refs.some((r) => r.kind === "user" || r.kind === "header");

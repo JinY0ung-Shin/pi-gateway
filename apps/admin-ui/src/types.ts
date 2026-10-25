@@ -135,7 +135,7 @@ export interface McpRecord {
   name: string;
   id?: string;
   runIn?: "broker" | "sandbox";
-  status: "registered" | "unsupported" | "error" | "broker_unavailable" | "needs_preinstall";
+  status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
   requiredSecrets: string[];
   missingSecrets?: string[];

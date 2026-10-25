@@ -76,9 +76,9 @@ async function scenario(b: TestBroker): Promise<unknown[]> {
   out.push(["hidden after clear", await visible()]);
   const rejected: [string, Record<string, unknown>][] = [
     ["literal credential", { ...docs, id: "lit", transport: { type: "http", url: "https://x.example.com/mcp", headers: { Authorization: "Bearer abc" } } }],
-    ["npx", { id: "npxsrv", runIn: "broker", transport: { type: "stdio", command: "npx", args: ["-y", "@x/mcp"] } }],
+    ["stdio", { id: "stdiosrv", runIn: "broker", transport: { type: "stdio", command: "node", args: ["x.js"] } }],
     ["reserved id", { ...docs, id: "servers" }],
-    ["plugin_root", { id: "pr", runIn: "broker", transport: { type: "stdio", command: "node", args: ["{{plugin_root}}/x.js"] } }],
+    ["plugin_root", { ...docs, id: "pr", transport: { ...docs.transport, headers: { "X-Root": "{{plugin_root}}" } } }],
     ["sandbox", { id: "sb", runIn: "sandbox", scope: "per-user", transport: { type: "stdio", command: "node", args: ["x.js"] } }],
   ];
   for (const [label, body] of rejected) {
@@ -95,32 +95,6 @@ async function scenario(b: TestBroker): Promise<unknown[]> {
   out.push(["delete again", r.status]);
   r = await adminCall(b, "GET", "/admin/servers/docs");
   out.push(["get deleted", r.status]);
-  return out;
-}
-
-/** plugin 업데이트: 같은 stdio 실행 대상으로 다시 등록하면 비밀키가 남고, 경로가 바뀌면 지워진다 */
-async function stdioScenario(b: TestBroker): Promise<unknown[]> {
-  const out: unknown[] = [];
-  const stable = "/opt/plugins/mkt/secret-tools/current/gh.js";
-  const env = { GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}", LOG_LEVEL: "info" };
-  const gh = (args: string[], envs: Record<string, string>, extra: Record<string, unknown> = {}) => ({
-    id: "gh",
-    runIn: "broker",
-    transport: { type: "stdio", command: "node", args, env: envs },
-    ...extra,
-  });
-  let r = await adminCall(b, "PUT", "/admin/servers/gh", gh([stable], env));
-  out.push(["create", r.status, r.json?.missingSecrets]);
-  r = await adminCall(b, "PUT", "/admin/servers/gh/secrets/GITHUB_TOKEN", { value: "ghp_contract_value_1" });
-  out.push(["put secret", r.status]);
-  r = await adminCall(b, "PUT", "/admin/servers/gh", gh([stable], env, { description: "0.1.1" }));
-  out.push(["same target keeps secret", r.status, r.json?.missingSecrets]);
-  r = await adminCall(b, "PUT", "/admin/servers/gh", gh([stable], { LOG_LEVEL: "info", GITHUB_TOKEN: "{{secret:GITHUB_TOKEN}}" }));
-  out.push(["env order keeps secret", r.status, r.json?.missingSecrets]);
-  r = await adminCall(b, "PUT", "/admin/servers/gh", gh(["/opt/plugins/mkt/secret-tools/0.1.1/gh.js"], env));
-  out.push(["versioned path clears secret", r.status, r.json?.missingSecrets]);
-  r = await adminCall(b, "DELETE", "/admin/servers/gh");
-  out.push(["delete", r.status]);
   return out;
 }
 
@@ -174,7 +148,7 @@ describe("broker contract (fake vs real createBroker)", () => {
       ["header change clears secret", 200, ["T"]],
       ["hidden after clear", [200, []]],
       ["literal credential", 400, "invalid_request"],
-      ["npx", 400, "invalid_request"],
+      ["stdio", 400, "invalid_request"],
       ["reserved id", 400, "invalid_request"],
       ["plugin_root", 400, "invalid_request"],
       ["sandbox", 400, "invalid_request"],
@@ -183,22 +157,6 @@ describe("broker contract (fake vs real createBroker)", () => {
       ["delete", 204],
       ["delete again", 404],
       ["get deleted", 404],
-    ]);
-  });
-
-  it("stdio 실행 대상 비교가 두 broker에서 같다 (plugin은 고정 경로를 써서 업데이트해도 비밀키가 남는다)", async () => {
-    const real = await startRealBroker();
-    const fake = await startFakeTestBroker();
-    started.push(real, fake);
-    const realLog = await stdioScenario(real);
-    expect(await stdioScenario(fake)).toEqual(realLog);
-    expect(realLog).toEqual([
-      ["create", 201, ["GITHUB_TOKEN"]],
-      ["put secret", 204],
-      ["same target keeps secret", 200, []],
-      ["env order keeps secret", 200, []],
-      ["versioned path clears secret", 200, ["GITHUB_TOKEN"]],
-      ["delete", 204],
     ]);
   });
 

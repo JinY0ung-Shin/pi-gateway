@@ -8,7 +8,6 @@ const MCP_STATUS_LABEL: Record<string, string> = {
   unsupported: "지원 안 함",
   error: "오류",
   broker_unavailable: "broker 없음",
-  needs_preinstall: "사전 설치 필요",
 };
 
 const UNSUPPORTED_LABEL: Record<string, string> = {
@@ -278,7 +277,7 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
                   ...(m.status === "registered" && m.id ? { href: `#/mcp/${enc(m.id)}` } : {}),
                   badge:
                     m.status !== "registered" ? (
-                      <Badge tone={m.status === "needs_preinstall" ? "amber" : "red"} title={m.reason}>
+                      <Badge tone="red" title={m.reason}>
                         {MCP_STATUS_LABEL[m.status] ?? m.status}
                       </Badge>
                     ) : (m.missingSecrets ?? []).length > 0 ? (

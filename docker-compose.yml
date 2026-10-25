@@ -17,8 +17,6 @@ x-mirror-args: &mirror-args
   APT_MIRROR_URL: ${APT_MIRROR_URL:-}
   APT_SECURITY_MIRROR_URL: ${APT_SECURITY_MIRROR_URL:-}
   NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
-  PIP_INDEX_URL: ${PIP_INDEX_URL:-}
-  PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
   GOPROXY: ${GOPROXY:-}
 
 x-hardening: &hardening
@@ -123,35 +121,17 @@ services:
     build:
       context: .
       target: mcp-broker
-      args:
-        <<: *mirror-args
-        BROKER_EXTRA_APT_PACKAGES: ${BROKER_EXTRA_APT_PACKAGES:-}
-        BROKER_EXTRA_NPM_PACKAGES: ${BROKER_EXTRA_NPM_PACKAGES:-}
-        BROKER_EXTRA_PIP_PACKAGES: ${BROKER_EXTRA_PIP_PACKAGES:-}
-    # stdio MCP 서버를 서버마다 다른 uid로 띄우기 위해 root + 최소 capability로 실행한다.
-    # (BROKER_STDIO_UID_RANGE를 비우면 cap_add 없이 비 root로 돌려도 된다: user "10002:10002")
+      args: *mirror-args
+    # 비밀 파일(root 소유 0400)과 데이터 볼륨이 root 소유라 uid 0으로 돈다. capability는 없다 (cap_drop ALL).
     user: "0:0"
-    # SETUID/SETGID: 하위 프로세스 uid 전환, CHOWN: 프로세스별 작업 디렉토리 소유권,
-    # KILL: 다른 uid의 process group 정리, DAC_OVERRIDE: 하위 프로세스가 만든 작업 디렉토리 삭제
-    cap_add:
-      - SETUID
-      - SETGID
-      - CHOWN
-      - KILL
-      - DAC_OVERRIDE
     environment:
       BROKER_PORT: "7080"
       BROKER_ADMIN_PORT: "7081"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATA_DIR: /data
-      PLUGINS_DIR: /opt/plugins
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
       BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker_admin_token
       BROKER_KEK_FILE: /run/secrets/broker_kek
-      BROKER_STDIO_UID_RANGE: ${BROKER_STDIO_UID_RANGE:-20000-20999}
-      BROKER_STDIO_COMMAND_ALLOWLIST: ${BROKER_STDIO_COMMAND_ALLOWLIST:-}
-      BROKER_MAX_PROCESSES: ${BROKER_MAX_PROCESSES:-64}
-      BROKER_MAX_PROCESSES_PER_SERVER: ${BROKER_MAX_PROCESSES_PER_SERVER:-16}
       BROKER_MAX_CONNECTIONS: ${BROKER_MAX_CONNECTIONS:-512}
       BROKER_IDLE_TTL_SECONDS: ${BROKER_IDLE_TTL_SECONDS:-300}
       BROKER_CALL_TIMEOUT_CAP_SECONDS: ${BROKER_CALL_TIMEOUT_CAP_SECONDS:-600}
@@ -159,7 +139,6 @@ services:
       BROKER_MAX_RESULT_BYTES: ${BROKER_MAX_RESULT_BYTES:-4194304}
       BROKER_MAX_REQUEST_BODY_BYTES: ${BROKER_MAX_REQUEST_BODY_BYTES:-4194304}
       BROKER_TOOLS_CACHE_SECONDS: ${BROKER_TOOLS_CACHE_SECONDS:-60}
-    # 비밀 파일은 root 소유 0400이라 stdio 하위 프로세스(uid 20000+)가 읽을 수 없다
     secrets:
       - source: broker_jwt_secret
         target: broker_jwt_secret
@@ -169,14 +148,8 @@ services:
         target: broker_kek
     volumes:
       - broker-data:/data
-      - type: bind
-        source: ${PI_GATEWAY_HOME}/plugins
-        target: /opt/plugins
-        read_only: true
-        bind:
-          create_host_path: false
     tmpfs:
-      - /tmp:size=512m,mode=1777
+      - /tmp:size=16m
     networks:
       - control
       - broker-egress

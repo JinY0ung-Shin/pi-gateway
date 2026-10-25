@@ -159,9 +159,9 @@ export function pluginDataDir(marketplace: string, plugin: string): string {
  * 디렉토리
  * - `${dataDir}/plugin-marketplaces/<name>`: marketplace 저장소 사본 (gateway 전용, sandbox에 보이지 않음)
  * - `${dataDir}/plugin-work/`: git 작업용 임시 디렉토리
- * - `${pluginsDir}/<marketplace>/<plugin>/<version>`: 설치본 (sandbox·broker에 읽기 전용으로 보인다). 현재와 바로 이전 버전만 남긴다.
+ * - `${pluginsDir}/<marketplace>/<plugin>/<version>`: 설치본 (sandbox에 읽기 전용으로 보인다). 현재와 바로 이전 버전만 남긴다.
  * - `${pluginsDir}/<marketplace>/<plugin>/current` → `<version>`: 상대 symlink. 기록·skill 경로·MCP args·`${CLAUDE_PLUGIN_ROOT}`는
- *   이 고정 경로를 쓴다. 업데이트해도 broker 서버의 실행 대상이 그대로라 broker가 비밀키를 지우지 않는다.
+ *   이 고정 경로를 쓴다. 업데이트해도 세션에 남은 skill 경로를 그대로 쓸 수 있다.
  */
 export class PluginService implements PluginResources {
   readonly store: PluginStore;
@@ -444,8 +444,7 @@ export class PluginService implements PluginResources {
       );
       const pluginDir = join(this.#pluginsDir, marketplace.name, entry.name);
       const versionDir = join(pluginDir, version);
-      // 기록·치환·MCP 인자에는 버전 없는 고정 경로를 쓴다. 업데이트해도 broker가 보는 실행 대상이 바뀌지 않고
-      // (비밀키 유지), 세션에 남은 skill 경로도 그대로 쓸 수 있다.
+      // 기록·치환·MCP 인자에는 버전 없는 고정 경로를 쓴다. 업데이트해도 세션에 남은 skill 경로를 그대로 쓸 수 있다.
       const finalDir = stablePluginPath(pluginDir);
       const dataDir = pluginDataDir(marketplace.name, entry.name);
 
@@ -468,7 +467,7 @@ export class PluginService implements PluginResources {
         read: (rel) => readContainedFile(staging, rel, { optional: true }).catch(() => undefined),
       });
       const needsBroker =
-        mappedServers.some((m) => m.mapped.config?.runIn === "broker" && !m.mapped.needsPreinstall) || (previous ? usesBroker(previous) : false);
+        mappedServers.some((m) => m.mapped.config?.runIn === "broker") || (previous ? usesBroker(previous) : false);
       if (needsBroker) await this.#registry.assertBrokerReachable();
       await this.#swapInto(staging, pluginDir, versionDir);
       await pointCurrentAt(pluginDir, version);
@@ -512,7 +511,7 @@ export class PluginService implements PluginResources {
         else if ((m.missingSecrets ?? m.requiredSecrets).length > 0) {
           warnings.push(
             `MCP 서버 ${m.id}: 비밀키 ${(m.missingSecrets ?? m.requiredSecrets).join(", ")}를 관리 화면에서 입력해야 합니다` +
-              (previous ? " (실행 명령이 바뀌면 broker가 저장된 비밀키를 지웁니다)" : ""),
+              (previous ? " (접속 대상이 바뀌면 broker가 저장된 비밀키를 지웁니다)" : ""),
           );
         }
       }
@@ -607,20 +606,6 @@ export class PluginService implements PluginResources {
     for (const { name, mapped } of mappedServers) {
       if (!mapped.config) {
         records.push({ name, status: "unsupported", reason: mapped.unsupported ?? "unsupported", requiredSecrets: [], warnings: mapped.warnings });
-        continue;
-      }
-      if (mapped.needsPreinstall) {
-        records.push({
-          name,
-          id: mapped.config.id,
-          runIn: "broker",
-          status: "needs_preinstall",
-          reason:
-            `broker는 실행할 때 패키지를 내려받는 명령을 허용하지 않습니다 (${mapped.needsPreinstall}). ` +
-            "패키지를 broker 이미지에 미리 설치(BROKER_EXTRA_NPM/PIP/APT_PACKAGES)한 뒤 MCP 페이지에서 설치된 명령으로 직접 등록하세요.",
-          requiredSecrets: mapped.requiredSecrets,
-          warnings: mapped.warnings,
-        });
         continue;
       }
       const previous = ctx.previous.find((r) => r.name === name);
@@ -737,7 +722,7 @@ export class PluginService implements PluginResources {
 
   async #swapInto(staging: string, pluginDir: string, finalDir: string): Promise<void> {
     await mkdir(pluginDir, { recursive: true, mode: 0o755 });
-    // umask와 관계없이 sandbox·broker가 읽을 수 있게 한다.
+    // umask와 관계없이 sandbox가 읽을 수 있게 한다.
     for (const dir of [this.#pluginsDir, dirname(pluginDir), pluginDir]) await chmod(dir, 0o755).catch(() => {});
     if (existsSync(finalDir)) {
       const trash = join(this.#pluginsDir, ".trash", randomId());

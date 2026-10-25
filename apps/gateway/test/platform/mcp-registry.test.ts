@@ -140,7 +140,7 @@ describe("MCP registry", () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     await h.mcp.upsert(sandboxServer, "t");
     const moved = await h.mcp.upsert(
-      { ...sandboxServer, runIn: "broker", transport: { ...sandboxServer.transport, env: { T: "{{secret:T}}" } } },
+      { ...sandboxServer, runIn: "broker", transport: { type: "http", url: "https://monsemi.example.com/mcp", headers: { Authorization: "Bearer {{secret:T}}" } } },
       "t",
     );
     expect(moved.store).toBe("broker");
@@ -184,14 +184,14 @@ describe("MCP registry", () => {
     res = await h.app.inject({ method: "POST", url: "/admin/api/mcp/validate", headers: { ...adminHeaders, ...json }, payload: { config: literal } });
     expect(res.json().ok).toBe(false);
     expect(res.json().errors.join(" ")).toMatch(/runIn=broker/);
-    // broker 서버도 같은 규칙과 npx 금지를 미리 알려준다
+    // broker 서버는 http만 쓴다
     res = await h.app.inject({
       method: "POST",
       url: "/admin/api/mcp/validate",
       headers: { ...adminHeaders, ...json },
-      payload: { config: { id: "x", runIn: "broker", transport: { type: "stdio", command: "npx", args: ["-y", "x"] } } },
+      payload: { config: { id: "x", runIn: "broker", transport: { type: "stdio", command: "node", args: ["x.js"] } } },
     });
-    expect(res.json().errors.join(" ")).toMatch(/npx/);
+    expect(res.json().errors.join(" ")).toMatch(/broker servers must use the http transport/);
   });
 
   it("broker가 안 될 때 broker를 확인해야 하는 변경은 503으로 실패하고 아무것도 바꾸지 않는다", async () => {

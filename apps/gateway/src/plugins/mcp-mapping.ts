@@ -2,7 +2,6 @@ import {
   collectTemplateRefs,
   MCP_SERVER_ID_PATTERN,
   McpServerConfig,
-  type McpRunIn,
   type McpScope,
   requiredSecretNames,
   SANDBOX_WORKSPACE,
@@ -59,7 +58,7 @@ export interface PluginMcpContext {
   pluginId: string;
   pluginName: string;
   version: string;
-  /** 설치 경로 (gateway·sandbox·broker 공통) */
+  /** 설치 경로 (gateway·sandbox 공통) */
   root: string;
   /** sandbox 안에서 쓰는 plugin 데이터 디렉토리 (사용자별, workspace 안) */
   dataDir: string;
@@ -72,16 +71,10 @@ export interface MappedMcpServer {
   /** plugin 안에서의 서버 이름 */
   name: string;
   config?: McpServerConfig;
-  runIn?: McpRunIn;
   requiredSecrets: string[];
   unsupported?: string;
-  /** broker가 거절하는 명령(npx 등 실행 시 다운로드)이라 미리 설치가 필요하다. 값은 원래 명령줄. */
-  needsPreinstall?: string;
   warnings: string[];
 }
-
-/** broker는 실행 시 패키지를 내려받는 명령을 거절한다 (패키지는 broker 이미지에 미리 설치). */
-export const BROKER_BANNED_COMMANDS = new Set(["npx", "uvx", "bunx", "pnpx", "pipx", "npm", "pnpm", "yarn"]);
 
 const SECRETISH = /(TOKEN|KEY|SECRET|PASSW|AUTH|CREDENTIAL|COOKIE|SESSION|PAT$|PRIVATE)/i;
 const CLAUDE_VAR = /\$\{([A-Za-z_][A-Za-z0-9_.]*)(?::-([^}]*))?\}/g;
@@ -142,7 +135,6 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
   if (!id) id = sanitizeServerId(`${ctx.pluginName}-mcp`);
 
   let config: McpServerConfig;
-  let runIn: McpRunIn;
   if (type === "stdio") {
     if (typeof cfg.command !== "string" || !cfg.command.trim()) return { name, requiredSecrets: [], unsupported: "stdio server has no command", warnings };
     const command = conv(cfg.command);
@@ -150,14 +142,14 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     const pluginEnv = Object.fromEntries(Object.entries(stringRecord(cfg.env)).map(([k, v]) => [k, conv(v)]));
     const cwd = typeof cfg.cwd === "string" ? conv(cfg.cwd) : undefined;
     const draft = { type: "stdio" as const, command, args, env: pluginEnv, ...(cwd ? { cwd } : {}) };
-    const needsSecrets = requiredSecretNames({ transport: draft }).length > 0;
-    runIn = needsSecrets ? "broker" : "sandbox";
-    const env =
-      runIn === "sandbox"
-        ? { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env, ...(override.env ?? {}) }
-        : { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, ...(override.env ?? {}) };
+    // stdio 서버는 사용자 sandbox에서만 돈다. sandbox에는 비밀키를 둘 수 없다.
+    const secrets = requiredSecretNames({ transport: draft });
+    if (secrets.length > 0) {
+      return { name, requiredSecrets: [], unsupported: `stdio server needs secrets (${secrets.join(", ")}); only http servers can use secrets`, warnings };
+    }
+    const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env, ...(override.env ?? {}) };
     if (command.startsWith("npx") || command === "uvx") warnings.push(`'${command}' downloads packages at start-up; pre-install the server instead if possible`);
-    const requested: McpScope = override.scope ?? (runIn === "sandbox" ? ctx.defaults.scope : "shared");
+    const requested: McpScope = override.scope ?? ctx.defaults.scope;
     const transport = { ...draft, env };
     const minimum = requiredScope({ transport });
     const scope = SCOPE_RANK[requested] >= SCOPE_RANK[minimum] ? requested : minimum;
@@ -166,35 +158,23 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
       displayName: `${name} (${ctx.pluginName})`,
       ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
       enabled: override.enabled ?? true,
-      runIn,
+      runIn: "sandbox",
       scope,
       transport,
       source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
     });
     if (!parsed.success) return { name, requiredSecrets: [], unsupported: parsed.error.issues.map((i) => i.message).join("; "), warnings };
     config = parsed.data;
-    const base = command.split("/").pop() ?? command;
-    if (runIn === "broker" && BROKER_BANNED_COMMANDS.has(base)) {
-      return {
-        name,
-        config,
-        runIn,
-        requiredSecrets: requiredSecretNames(config),
-        needsPreinstall: [command, ...args].join(" "),
-        warnings,
-      };
-    }
   } else {
     if (typeof cfg.url !== "string") return { name, requiredSecrets: [], unsupported: "http server has no url", warnings };
     const headers = Object.fromEntries(Object.entries(stringRecord(cfg.headers)).map(([k, v]) => [k, conv(v)]));
     // 원격 서버는 sandbox에서 직접 부르지 않고 항상 broker가 프록시한다.
-    runIn = "broker";
     const parsed = McpServerConfig.safeParse({
       id,
       displayName: `${name} (${ctx.pluginName})`,
       ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
       enabled: override.enabled ?? true,
-      runIn,
+      runIn: "broker",
       scope: override.scope ?? "shared",
       transport: { type: "http", url: conv(cfg.url), headers },
       source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
@@ -202,7 +182,7 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     if (!parsed.success) return { name, requiredSecrets: [], unsupported: parsed.error.issues.map((i) => i.message).join("; "), warnings };
     config = parsed.data;
   }
-  return { name, config, runIn, requiredSecrets: requiredSecretNames(config), warnings };
+  return { name, config, requiredSecrets: requiredSecretNames(config), warnings };
 }
 
 /** `.mcp.json` 내용(`{mcpServers:{…}}` 또는 바로 이름→설정 맵)에서 서버 맵을 꺼낸다. */

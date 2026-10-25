@@ -65,6 +65,10 @@ describe("MCP server config", () => {
     expect(requiredSecretNames(config)).toEqual(["TOKEN"]);
   });
 
+  it("broker 서버는 http만 쓴다", () => {
+    expect(McpServerConfig.safeParse({ ...base, transport: { type: "stdio", command: "node" } }).success).toBe(false);
+  });
+
   it("sandbox 서버는 secret·header 자리표시자를 쓸 수 없다", () => {
     const result = McpServerConfig.safeParse({
       ...base,

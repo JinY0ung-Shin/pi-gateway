@@ -41,7 +41,7 @@ export function McpPage(props: { focus?: string | undefined }) {
         }
       >
         <p class="muted">
-          <RunsInBadge value="sandbox" /> 비밀키 없이 사용자 sandbox 안에서 실행 · <RunsInBadge value="broker" /> 비밀키를 가진 격리된 broker가 실행·프록시
+          <RunsInBadge value="sandbox" /> 비밀키 없이 사용자 sandbox 안에서 실행 · <RunsInBadge value="broker" /> 비밀키를 가진 격리된 broker가 원격 HTTP 서버로 프록시
         </p>
         {!list.broker.configured && <Notice tone="warn">MCP broker가 설정되지 않았습니다 (BROKER_URL). broker 서버는 쓸 수 없습니다.</Notice>}
         {list.broker.configured && !list.broker.available && <Notice tone="error">broker에 연결할 수 없습니다: {list.broker.error}</Notice>}
@@ -112,11 +112,11 @@ export function McpPage(props: { focus?: string | undefined }) {
             </tr>
             <tr>
               <td class="mono">{"{{user}}"}</td>
-              <td>사용자 id (stdio는 per-user 이상)</td>
+              <td>사용자 id (sandbox 서버는 per-user 이상)</td>
             </tr>
             <tr>
               <td class="mono">{"{{session}} · {{metadata:KEY}}"}</td>
-              <td>세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, stdio는 per-session)</td>
+              <td>세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, sandbox 서버는 per-session)</td>
             </tr>
           </tbody>
         </table>
@@ -132,7 +132,6 @@ interface FormState {
   enabled: boolean;
   runIn: "broker" | "sandbox";
   scope: McpScope;
-  type: "stdio" | "http";
   command: string;
   args: string;
   env: string;
@@ -153,7 +152,6 @@ function toForm(config: McpServerConfig | null): FormState {
     enabled: config?.enabled ?? true,
     runIn: config?.runIn ?? "broker",
     scope: config?.scope ?? "shared",
-    type: t?.type ?? "http",
     command: t?.type === "stdio" ? t.command : "",
     args: t?.type === "stdio" ? t.args.join("\n") : "",
     env: t?.type === "stdio" ? recordToLines(t.env) : "",
@@ -172,9 +170,10 @@ const list = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
+/** sandbox 서버는 stdio, broker 서버는 streamable HTTP다. */
 function fromForm(f: FormState, source: McpServerConfig["source"]): McpServerConfig {
   const transport: McpServerConfig["transport"] =
-    f.type === "stdio"
+    f.runIn === "sandbox"
       ? {
           type: "stdio",
           command: f.command.trim(),
@@ -305,9 +304,9 @@ function ServerEditor(props: { entry: McpServerEntry | null; brokerAvailable: bo
           <span>실행 위치</span>
           <select value={form.runIn} onChange={(e) => set("runIn", (e.currentTarget as HTMLSelectElement).value as FormState["runIn"])}>
             <option value="broker" disabled={!props.brokerAvailable}>
-              broker (비밀키 사용)
+              broker (원격 HTTP 서버, 비밀키 사용)
             </option>
-            <option value="sandbox">sandbox (비밀키 없음)</option>
+            <option value="sandbox">sandbox (stdio, 비밀키 없음)</option>
           </select>
         </label>
         <label class="field">
@@ -319,18 +318,11 @@ function ServerEditor(props: { entry: McpServerEntry | null; brokerAvailable: bo
           </select>
         </label>
         <label class="field">
-          <span>연결 방식</span>
-          <select value={form.type} onChange={(e) => set("type", (e.currentTarget as HTMLSelectElement).value as FormState["type"])}>
-            <option value="http">streamable HTTP</option>
-            <option value="stdio">stdio</option>
-          </select>
-        </label>
-        <label class="field">
           <span>timeout (초)</span>
           <input type="number" min={1} max={3600} {...input("timeoutSec")} />
         </label>
       </div>
-      {form.type === "stdio" ? (
+      {form.runIn === "sandbox" ? (
         <div class="grid-2">
           <label class="field">
             <span>command</span>
@@ -367,7 +359,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; brokerAvailable: bo
         return form.runIn === "sandbox" ? (
           <Notice tone="error">
             자격증명으로 보이는 값이 있습니다: <span class="mono">{found.join(", ")}</span>. sandbox 서버의 env는 agent에게 보이므로 저장할 수 없습니다 —
-            실행 위치를 broker로 바꾸고 <span class="mono">{"{{secret:NAME}}"}</span>을 쓴 뒤 아래 비밀키 칸에 값을 넣으세요.
+            자격증명이 필요한 서버는 HTTP로 띄워 broker에 등록하고 <span class="mono">{"{{secret:NAME}}"}</span>을 쓰세요.
           </Notice>
         ) : (
           <Notice tone="warn">
