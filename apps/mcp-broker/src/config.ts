@@ -1,4 +1,4 @@
-import { jwtSecretBytes, readSecret, requireSecret } from "@pi-gateway/shared";
+import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 
 /** mcp-broker 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원). */
 export interface BrokerConfig {
@@ -11,9 +11,8 @@ export interface BrokerConfig {
   logLevel: string;
   /** broker.db 위치 */
   dataDir: string;
-  /** gateway 내부 JWT 검증 키 (AUD_BROKER) */
+  /** gateway 내부 JWT 검증 키 (데이터 평면 AUD_BROKER, 관리 평면 AUD_BROKER_ADMIN) */
   jwtSecret: Uint8Array;
-  adminToken: string;
   /** 비밀값 암호화 키 (32바이트) */
   kek: Buffer;
   limits: {
@@ -60,7 +59,6 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
     logLevel: env.LOG_LEVEL ?? "info",
     dataDir: env.DATA_DIR ?? "/data",
     jwtSecret: jwtSecretBytes(jwtSecret),
-    adminToken: requireSecret(env, "BROKER_ADMIN_TOKEN", 32),
     kek: parseKek(kek),
     limits: {
       maxConnections: int(env, "BROKER_MAX_CONNECTIONS", 512, 1),

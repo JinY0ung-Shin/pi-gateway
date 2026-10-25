@@ -1,4 +1,4 @@
-import { AUD_BROKER, AUD_SANDBOXD, signInternalToken } from "@pi-gateway/shared";
+import { AUD_BROKER, AUD_BROKER_ADMIN, AUD_SANDBOXD, signInternalToken } from "@pi-gateway/shared";
 import { SignJWT } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startTestBroker, type TestBroker } from "./helpers.js";
@@ -31,9 +31,11 @@ describe("data plane authentication", () => {
     expect(res.headers["www-authenticate"]).toContain("Bearer");
   });
 
-  it("다른 audience(sandboxd용) 토큰은 거부한다", async () => {
-    const token = await signInternalToken(tb.config.jwtSecret, AUD_SANDBOXD, { sub: "alice" });
-    expect((await get(token)).statusCode).toBe(401);
+  it("다른 audience(sandboxd용·관리 평면용) 토큰은 거부한다", async () => {
+    for (const audience of [AUD_SANDBOXD, AUD_BROKER_ADMIN]) {
+      const token = await signInternalToken(tb.config.jwtSecret, audience, { sub: "alice" });
+      expect((await get(token)).statusCode, audience).toBe(401);
+    }
   });
 
   it("다른 비밀키로 서명한 토큰은 거부한다", async () => {
@@ -71,7 +73,7 @@ describe("data plane authentication", () => {
     expect((await get(`${header}.${payload}.`)).statusCode).toBe(401);
   });
 
-  it("관리 평면은 관리 토큰이 없으면 401, 데이터 평면 토큰으로도 401", async () => {
+  it("관리 평면은 토큰이 없거나 데이터 평면용 토큰이면 401", async () => {
     const none = await tb.broker.adminPlane.inject({ method: "GET", url: "/admin/servers" });
     expect(none.statusCode).toBe(401);
     const jwt = await tb.token({ sub: "alice" });

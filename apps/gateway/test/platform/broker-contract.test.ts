@@ -1,9 +1,8 @@
-import { AUD_BROKER, jwtSecretBytes, signInternalToken } from "@pi-gateway/shared";
+import { AUD_BROKER, AUD_BROKER_ADMIN, jwtSecretBytes, signInternalToken } from "@pi-gateway/shared";
 import { afterAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db.js";
 import { McpRegistryService } from "../../src/mcp-registry/service.js";
 import {
-  BROKER_ADMIN_TOKEN,
   BROKER_JWT_SECRET,
   captureLogger,
   cleanupTempDirs,
@@ -22,9 +21,10 @@ import {
  */
 
 async function adminCall(b: TestBroker, method: string, path: string, body?: unknown) {
+  const token = await signInternalToken(jwtSecretBytes(BROKER_JWT_SECRET), AUD_BROKER_ADMIN, { sub: "_admin" }, 60);
   const res = await fetch(b.adminUrl + path, {
     method,
-    headers: { authorization: `Bearer ${BROKER_ADMIN_TOKEN}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();

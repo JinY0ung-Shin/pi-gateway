@@ -130,7 +130,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATA_DIR: /data
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
-      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker_admin_token
       BROKER_KEK_FILE: /run/secrets/broker_kek
       BROKER_MAX_CONNECTIONS: ${BROKER_MAX_CONNECTIONS:-512}
       BROKER_IDLE_TTL_SECONDS: ${BROKER_IDLE_TTL_SECONDS:-300}
@@ -142,8 +141,6 @@ services:
     secrets:
       - source: broker_jwt_secret
         target: broker_jwt_secret
-      - source: broker_admin_token
-        target: broker_admin_token
       - source: broker_kek
         target: broker_kek
     volumes:
@@ -185,10 +182,7 @@ services:
       # 내부 서비스
       SANDBOXD_URL: http://sandboxd:7070
       SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
-      BROKER_URL: http://mcp-broker:7080
-      BROKER_ADMIN_URL: http://mcp-broker:7081
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
-      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker_admin_token
       # 세션
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-300}
       NON_STREAM_TIMEOUT_SECONDS: ${NON_STREAM_TIMEOUT_SECONDS:-600}
@@ -218,8 +212,6 @@ services:
         target: sandboxd_jwt_secret
       - source: gw_broker_jwt_secret
         target: broker_jwt_secret
-      - source: gw_broker_admin_token
-        target: broker_admin_token
     volumes:
       - gateway-data:/data
       - type: bind
@@ -267,15 +259,11 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/sandboxd_jwt_secret
   gw_broker_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/broker_jwt_secret
-  gw_broker_admin_token:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/broker_admin_token
   # sandboxd (uid 1000)
   sbx_sandboxd_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/sandboxd/sandboxd_jwt_secret
   # mcp-broker (root)
   broker_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_jwt_secret
-  broker_admin_token:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_admin_token
   broker_kek:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_kek

@@ -11,13 +11,6 @@ export function readSecret(env: NodeJS.ProcessEnv, name: string): string | undef
   return value === undefined || value === "" ? undefined : value;
 }
 
-export function requireSecret(env: NodeJS.ProcessEnv, name: string, minLength = 16): string {
-  const value = readSecret(env, name);
-  if (!value) throw new Error(`${name} (or ${name}_FILE) is required`);
-  if (value.length < minLength) throw new Error(`${name} must be at least ${minLength} characters`);
-  return value;
-}
-
 /** 내부 JWT용 HMAC 키. 32바이트 이상이어야 한다. */
 export function jwtSecretBytes(value: string): Uint8Array {
   const bytes = new TextEncoder().encode(value);

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { constantTimeEqual, SecretCipher } from "../src/crypto.js";
+import { SecretCipher } from "../src/crypto.js";
 import { openDatabase } from "../src/db.js";
 import { BrokerStore } from "../src/store.js";
 
@@ -49,11 +49,6 @@ describe("SecretCipher", () => {
     expect(cipher.fingerprint("abc")).not.toBe(cipher.fingerprint("abd"));
     expect(cipher.fingerprint("abc")).toMatch(/^[0-9a-f]{12}$/);
     expect(new SecretCipher(randomBytes(32)).fingerprint("abc")).not.toBe(cipher.fingerprint("abc"));
-  });
-
-  it("constantTimeEqual", () => {
-    expect(constantTimeEqual("a", "a")).toBe(true);
-    expect(constantTimeEqual("a", "ab")).toBe(false);
   });
 });
 

@@ -4,9 +4,7 @@ import { loadConfig } from "../src/config.js";
 const base = {
   API_KEY: "service-key-0123456789",
   SANDBOXD_JWT_SECRET: "x".repeat(40),
-  BROKER_URL: "http://mcp-broker:7080",
   BROKER_JWT_SECRET: "y".repeat(40),
-  BROKER_ADMIN_TOKEN: "broker-admin-token-0123456789",
 };
 
 describe("gateway config", () => {
@@ -19,9 +17,10 @@ describe("gateway config", () => {
     expect(() => loadConfig({ ...base, TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
   });
 
-  it("requires the MCP broker", () => {
-    expect(() => loadConfig({ ...base, BROKER_URL: "" })).toThrow(/BROKER_URL/);
-    expect(() => loadConfig({ ...base, BROKER_ADMIN_TOKEN: "" })).toThrow(/BROKER_ADMIN_TOKEN/);
+  it("uses the compose broker addresses by default and requires the broker JWT secret", () => {
+    const { broker } = loadConfig({ ...base });
+    expect([broker.url, broker.adminUrl]).toEqual(["http://mcp-broker:7080", "http://mcp-broker:7081"]);
+    expect(() => loadConfig({ ...base, BROKER_JWT_SECRET: "" })).toThrow(/BROKER_JWT_SECRET/);
   });
 
   it("treats empty env strings as unset", () => {

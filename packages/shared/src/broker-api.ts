@@ -13,7 +13,7 @@ import { McpServerConfig } from "./mcp-config.js";
  *   - GET  /mcp/servers    — 이 사용자가 쓸 수 있는(enabled + 필요한 비밀키가 다 있는) 서버 목록
  *
  * 관리 평면 (BROKER_ADMIN_PORT, control 네트워크)
- *   - 인증: `Authorization: Bearer <BROKER_ADMIN_TOKEN>`, 행위자 이름은 `X-Admin-Actor` 헤더.
+ *   - 인증: `Authorization: Bearer <internal JWT, aud=AUD_BROKER_ADMIN>`, 행위자 이름은 `X-Admin-Actor` 헤더.
  *   - 비밀값은 어떤 응답에도 들어가지 않는다 (이름, 설정 시각, fingerprint만).
  *   - 오류 응답: `{ error: { code, message } }`
  */

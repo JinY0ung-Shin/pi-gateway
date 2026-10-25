@@ -28,12 +28,11 @@ export interface GatewayConfig {
     url: string;
     jwtSecret: Uint8Array;
   };
-  /** 비밀키가 필요한 MCP 서버를 프록시하는 mcp-broker */
+  /** 비밀키가 필요한 MCP 서버를 프록시하는 mcp-broker. 데이터·관리 평면 모두 같은 키의 내부 JWT로 부른다. */
   broker: {
     url: string;
     adminUrl: string;
     jwtSecret: Uint8Array;
-    adminToken: string;
   };
   sessions: {
     idleSeconds: number;
@@ -148,12 +147,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
 
   const trustProxy = parseTrustProxy(env.TRUST_PROXY);
 
-  const brokerUrl = env.BROKER_URL;
   const brokerSecret = readSecret(env, "BROKER_JWT_SECRET");
-  const brokerAdminToken = readSecret(env, "BROKER_ADMIN_TOKEN");
-  if (!brokerUrl || !brokerSecret || !brokerAdminToken) {
-    throw new Error("BROKER_URL, BROKER_JWT_SECRET (or _FILE) and BROKER_ADMIN_TOKEN (or _FILE) are required");
-  }
+  if (!brokerSecret) throw new Error("BROKER_JWT_SECRET (or _FILE) is required");
 
   return {
     host: env.HOST || "0.0.0.0",
@@ -167,10 +162,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       jwtSecret: jwtSecretBytes(sandboxdSecret),
     },
     broker: {
-      url: brokerUrl.replace(/\/+$/, ""),
-      adminUrl: (env.BROKER_ADMIN_URL || brokerUrl).replace(/\/+$/, ""),
+      url: (env.BROKER_URL || "http://mcp-broker:7080").replace(/\/+$/, ""),
+      adminUrl: (env.BROKER_ADMIN_URL || "http://mcp-broker:7081").replace(/\/+$/, ""),
       jwtSecret: jwtSecretBytes(brokerSecret),
-      adminToken: brokerAdminToken,
     },
     sessions: {
       idleSeconds: int("SESSION_IDLE_SECONDS", 300, env),

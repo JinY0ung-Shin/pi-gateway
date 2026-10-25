@@ -5,7 +5,6 @@ import { loadBrokerConfig } from "../src/config.js";
 describe("loadBrokerConfig", () => {
   const base = {
     BROKER_JWT_SECRET: "j".repeat(40),
-    BROKER_ADMIN_TOKEN: "a".repeat(40),
     BROKER_KEK: randomBytes(32).toString("base64"),
   };
 
@@ -18,6 +17,6 @@ describe("loadBrokerConfig", () => {
 
   it("잘못된 값을 거부한다", () => {
     expect(() => loadBrokerConfig({ ...base, BROKER_KEK: "short" })).toThrow(/32 bytes/);
-    expect(() => loadBrokerConfig({ ...base, BROKER_ADMIN_TOKEN: "short" })).toThrow(/at least 32/);
+    expect(() => loadBrokerConfig({ ...base, BROKER_JWT_SECRET: "short" })).toThrow(/at least 32 bytes/);
   });
 });

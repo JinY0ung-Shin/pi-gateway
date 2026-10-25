@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import {
   AUD_BROKER,
+  AUD_BROKER_ADMIN,
   bearerToken,
   collectTemplateRefs,
   findLiteralCredentials,
@@ -26,7 +27,6 @@ import { PromptManager } from "../../src/prompts/service.js";
 import { SessionStore } from "../../src/sessions/store.js";
 
 export const ADMIN_KEY = "admin-key-for-tests-0123456789";
-export const BROKER_ADMIN_TOKEN = "broker-admin-token-0123456789-abcdefgh";
 export const BROKER_JWT_SECRET = "b".repeat(40);
 
 const createdDirs: string[] = [];
@@ -214,9 +214,9 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     const actor = req.headers["x-admin-actor"];
     requests.push({ method: req.method, url: req.url, ...(typeof actor === "string" ? { actor: decodeURIComponent(actor) } : {}) });
     if (req.url.startsWith("/admin/")) {
-      if (req.headers.authorization !== `Bearer ${BROKER_ADMIN_TOKEN}`) {
-        return reply.code(401).send({ error: { code: "unauthorized", message: "bad admin token" } });
-      }
+      const token = bearerToken(req.headers.authorization);
+      const valid = token !== null && (await verifyInternalToken(jwtSecret, AUD_BROKER_ADMIN, token).then(() => true, () => false));
+      if (!valid) return reply.code(401).send({ error: { code: "unauthorized", message: "bad admin token" } });
     }
   });
 
@@ -302,7 +302,6 @@ export function brokerEnv(url: string): Record<string, string> {
     BROKER_URL: url,
     BROKER_ADMIN_URL: url,
     BROKER_JWT_SECRET,
-    BROKER_ADMIN_TOKEN,
   };
 }
 
@@ -342,7 +341,6 @@ export async function startRealBroker(): Promise<TestBroker> {
   const dir = tempDir("real-broker");
   const config = loadBrokerConfig({
     BROKER_JWT_SECRET,
-    BROKER_ADMIN_TOKEN,
     BROKER_KEK: randomBytes(32).toString("base64"),
     DATA_DIR: join(dir, "data"),
     LOG_LEVEL: "silent",

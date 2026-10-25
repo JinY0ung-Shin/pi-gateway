@@ -90,7 +90,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     LOG_LEVEL: "silent",
     BROKER_URL: broker.url,
     BROKER_JWT_SECRET: BROKER_SECRET,
-    BROKER_ADMIN_TOKEN: "broker-admin-token-xyz",
     ...(options.env ?? {}),
   };
   const config = loadConfig(env);

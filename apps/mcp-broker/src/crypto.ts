@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from "node:crypto";
 
 export interface EncryptedValue {
   iv: Buffer;
@@ -48,11 +48,4 @@ export class SecretCipher {
   fingerprint(plaintext: string): string {
     return createHmac("sha256", this.#fpKey).update(plaintext, "utf8").digest("hex").slice(0, 12);
   }
-}
-
-/** 길이와 무관하게 상수 시간으로 비교한다. */
-export function constantTimeEqual(a: string, b: string): boolean {
-  const ha = createHash("sha256").update(a, "utf8").digest();
-  const hb = createHash("sha256").update(b, "utf8").digest();
-  return timingSafeEqual(ha, hb);
 }

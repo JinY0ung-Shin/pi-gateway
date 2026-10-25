@@ -2,10 +2,12 @@ import { jwtVerify, SignJWT } from "jose";
 
 /**
  * gateway → sandboxd / mcp-broker 호출에 쓰는 짧은 수명의 HS256 JWT.
- * audience마다 다른 비밀키를 쓰므로, 한쪽 비밀키로 다른 쪽 토큰을 만들 수 없다.
+ * 서비스마다 다른 비밀키를 쓰므로, 한 서비스의 비밀키로 다른 서비스의 토큰을 만들 수 없다.
+ * broker의 데이터 평면과 관리 평면은 같은 비밀키를 쓰고 audience로 나눈다.
  */
 export const AUD_SANDBOXD = "pi-gateway:sandboxd";
 export const AUD_BROKER = "pi-gateway:mcp-broker";
+export const AUD_BROKER_ADMIN = "pi-gateway:mcp-broker-admin";
 const ISSUER = "pi-gateway:gateway";
 const MAX_TTL_SECONDS = 300;
 

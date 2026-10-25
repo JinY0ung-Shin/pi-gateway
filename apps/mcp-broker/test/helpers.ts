@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpClient, StreamableHttpTransport } from "@earendil-works/pi-mcp";
-import { AUD_BROKER, type InternalClaims, signInternalToken } from "@pi-gateway/shared";
+import { AUD_BROKER, AUD_BROKER_ADMIN, type InternalClaims, signInternalToken } from "@pi-gateway/shared";
 import { pino } from "pino";
 import { type Broker, createBroker } from "../src/app.js";
 import type { BrokerConfig } from "../src/config.js";
@@ -18,7 +18,6 @@ export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig 
     logLevel: "silent",
     dataDir: join(root, "data"),
     jwtSecret: new TextEncoder().encode(randomBytes(32).toString("hex")),
-    adminToken: randomBytes(32).toString("hex"),
     kek: randomBytes(32),
     limits: {
       maxConnections: 32,
@@ -50,10 +49,11 @@ export async function startTestBroker(overrides: Partial<BrokerConfig> = {}): Pr
   const broker = createBroker(config, { log: pino({ level: "silent" }) });
   const address = await broker.dataPlane.listen({ host: "127.0.0.1", port: 0 });
   const admin: TestBroker["admin"] = async (method, url, body) => {
+    const token = await signInternalToken(config.jwtSecret, AUD_BROKER_ADMIN, { sub: "_admin" });
     const res = await broker.adminPlane.inject({
       method,
       url,
-      headers: { authorization: `Bearer ${config.adminToken}`, "x-admin-actor": "tester" },
+      headers: { authorization: `Bearer ${token}`, "x-admin-actor": "tester" },
       ...(body !== undefined ? { payload: body as object } : {}),
     });
     return { status: res.statusCode, text: res.body, json: () => JSON.parse(res.body) };

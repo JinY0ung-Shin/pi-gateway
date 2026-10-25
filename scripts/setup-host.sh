@@ -31,7 +31,7 @@ install -d -o 0 -g 0 -m 0700 "$SECRETS"
 #   gateway  (uid 10001): $SECRETS/gateway/*
 #   sandboxd (uid 1000) : $SECRETS/sandboxd/*
 #   broker   (root)     : $SECRETS/broker/*
-# 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret, broker_admin_token)은 같은 값의 사본이다.
+# 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret)은 같은 값의 사본이다.
 GW_UID=10001; SBX_UID=1000
 install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/broker"
 
@@ -87,7 +87,6 @@ kek() { openssl rand -base64 32 | tr -d '\n'; }
 G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
 secret sandboxd_jwt_secret gen48 "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
 secret broker_jwt_secret   gen48 "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
-secret broker_admin_token  gen48 "$G/broker_admin_token:$GW_UID"  "$B/broker_admin_token:0"
 secret broker_kek          kek   "$B/broker_kek:0"
 secret admin_cookie_secret gen48 "$G/admin_cookie_secret:$GW_UID"
 secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"

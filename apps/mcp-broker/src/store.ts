@@ -113,7 +113,7 @@ export class BrokerStore {
 
   /**
    * 서버를 만들거나 고친다. 비밀값이 가는 곳(transportTarget)이 바뀌면 저장된 비밀값을 모두 지운다.
-   * 관리 토큰을 가진 사람이 url이나 헤더를 공격자 쪽으로 바꿔 기존 비밀값을 빼내지 못하게 하려는 것이다.
+   * 관리 API를 부를 수 있는 쪽이 url이나 헤더를 공격자 쪽으로 바꿔 기존 비밀값을 빼내지 못하게 하려는 것이다.
    * 표시 이름·timeout·도구 필터 같은 변경은 비밀값을 그대로 둔다.
    */
   upsertServer(config: McpServerConfig): { server: StoredServer; created: boolean; clearedSecrets: string[] } {

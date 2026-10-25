@@ -1,16 +1,18 @@
 import {
+  AUD_BROKER_ADMIN,
+  bearerToken,
   collectTemplateRefs,
   findLiteralCredentials,
   McpServerConfig,
   PutSecretRequest,
   SecretName,
   TestServerRequest,
+  verifyInternalToken,
 } from "@pi-gateway/shared";
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
-import { constantTimeEqual } from "./crypto.js";
 import { AdminUpstreamError, type BrokerService } from "./service.js";
 import type { BrokerStore } from "./store.js";
 
@@ -46,7 +48,7 @@ function actorOf(req: FastifyRequest): string {
 }
 
 /**
- * 관리 평면 — gateway의 관리 백엔드만 부른다. 별도 포트, 별도 토큰.
+ * 관리 평면 — gateway의 관리 백엔드만 부른다. 별도 포트, 관리용 audience(AUD_BROKER_ADMIN)의 내부 JWT.
  * 비밀값은 어떤 응답·로그·감사 기록에도 들어가지 않는다.
  */
 export function buildAdminPlane(deps: {
@@ -75,11 +77,9 @@ export function buildAdminPlane(deps: {
 
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/admin")) return;
-    const header = req.headers.authorization ?? "";
-    const match = /^Bearer\s+(\S+)$/i.exec(header);
-    if (!match?.[1] || !constantTimeEqual(match[1], config.adminToken)) {
-      return reply.code(401).send(errorBody("unauthorized", "invalid admin token"));
-    }
+    const token = bearerToken(req.headers.authorization);
+    const valid = token !== null && (await verifyInternalToken(config.jwtSecret, AUD_BROKER_ADMIN, token).then(() => true, () => false));
+    if (!valid) return reply.code(401).send(errorBody("unauthorized", "invalid admin token"));
   });
 
   const getServerOr404 = (id: string, reply: FastifyReply) => {

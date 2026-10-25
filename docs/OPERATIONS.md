@@ -9,7 +9,7 @@
 
 | 서비스 | 이미지 | 네트워크 | 하는 일 | 가진 비밀 |
 |---|---|---|---|---|
-| `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 관리 화면, pi 세션 | LLM 키, 내부 JWT 키, broker 관리 토큰, 관리 키 |
+| `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 관리 화면, pi 세션 | LLM 키, 내부 JWT 키, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
 | `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시 | MCP 비밀키, KEK |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
@@ -64,7 +64,6 @@ put() { printf '%s' "$1" > "$2"; chown "$3:$3" "$2"; chmod 0400 "$2"; }
 r() { openssl rand -base64 "$1" | tr -d '\n'; }
 v=$(r 48); put "$v" $S/gateway/sandboxd_jwt_secret 10001; put "$v" $S/sandboxd/sandboxd_jwt_secret 1000
 v=$(r 48); put "$v" $S/gateway/broker_jwt_secret 10001;   put "$v" $S/broker/broker_jwt_secret 0
-v=$(r 48); put "$v" $S/gateway/broker_admin_token 10001;  put "$v" $S/broker/broker_admin_token 0
 put "$(openssl rand -base64 32 | tr -d '\n')" $S/broker/broker_kek 0      # 정확히 32바이트(base64)
 put "$(r 48)" $S/gateway/admin_cookie_secret 10001
 put "$(r 32)" $S/gateway/admin_api_key 10001
@@ -166,8 +165,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |
 | `gateway/admin_cookie_secret` | 10001 | gateway | 관리 화면 세션 쿠키 서명 키 |
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
-| `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT. 두 사본이 같은 값 |
-| `gateway/broker_admin_token`, `broker/broker_admin_token` | 10001 / root | gateway / mcp-broker | broker 관리 API 토큰 (32자 이상). 두 사본이 같은 값 |
+| `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
 
 **교체**

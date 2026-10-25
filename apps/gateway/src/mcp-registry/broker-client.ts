@@ -1,5 +1,7 @@
 import {
+  ADMIN_PRINCIPAL,
   AUD_BROKER,
+  AUD_BROKER_ADMIN,
   BROKER_ADMIN_ROUTES,
   BROKER_ROUTES,
   ListAuditResponse,
@@ -29,7 +31,7 @@ const DATA_TIMEOUT_MS = 5_000;
 export class BrokerError extends PlatformError {}
 
 /**
- * mcp-broker 클라이언트. 관리 평면(BROKER_ADMIN_TOKEN)과 데이터 평면(내부 JWT)을 함께 다룬다.
+ * mcp-broker 클라이언트. 관리 평면과 데이터 평면을 함께 다룬다 (둘 다 같은 키의 내부 JWT, audience만 다르다).
  * 비밀값은 putSecret의 본문으로만 지나가고, 로그나 오류 메시지에는 넣지 않는다.
  */
 export class BrokerClient {
@@ -122,10 +124,8 @@ export class BrokerClient {
     path: string,
     options: { body?: unknown; actor?: string; timeoutMs?: number } = {},
   ): Promise<unknown> {
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${this.#config.adminToken}`,
-      accept: "application/json",
-    };
+    const token = await signInternalToken(this.#config.jwtSecret, AUD_BROKER_ADMIN, { sub: ADMIN_PRINCIPAL }, 60);
+    const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" };
     if (options.actor) headers["x-admin-actor"] = encodeURIComponent(options.actor);
     let payload: string | undefined;
     if (options.body !== undefined) {
