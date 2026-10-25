@@ -27,6 +27,7 @@ import { type Db, openDatabase } from "../../src/db.js";
 import { McpRegistryService } from "../../src/mcp-registry/service.js";
 import { PluginService } from "../../src/plugins/service.js";
 import { PromptManager } from "../../src/prompts/service.js";
+import { SessionStore } from "../../src/sessions/store.js";
 
 export const ADMIN_KEY = "admin-key-for-tests-0123456789";
 export const BROKER_ADMIN_TOKEN = "broker-admin-token-0123456789-abcdefgh";
@@ -117,6 +118,7 @@ export async function buildHarness(options: {
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
     chat: { respond: async () => ({}), cancel: async () => ({}), preview: async () => ({}) },
     llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },
+    sessions: new SessionStore(db),
   };
   await registerAdminRoutes(app, deps);
   await app.ready();

@@ -122,6 +122,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       },
       sandboxes: () => sandboxClient.list(),
       llm: models,
+      sessions: store,
       chat: {
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),

@@ -165,9 +165,26 @@ export class SessionHub {
     }
   }
 
+  /** 보관 기간(관리 화면 설정)이 지난 세션을 지운다. */
+  async purgeExpired(now = Date.now()): Promise<void> {
+    const { days } = this.deps.store.retention();
+    if (days <= 0) return;
+    const before = new Date(now - days * 86_400_000).toISOString();
+    for (const id of this.deps.store.inactiveSince(before)) {
+      if (this.locks.isLocked(id)) continue;
+      await this.locks.run(id, async () => {
+        // lock을 기다리는 동안 이어진 세션은 남긴다
+        const record = this.deps.store.get(id);
+        if (!record || record.lastActiveAt >= before) return;
+        await this.discardLocked(id);
+        this.deps.log.info({ session: id }, "expired session deleted");
+      });
+    }
+  }
+
   startReaper(intervalMs = 30_000): void {
     this.reaper = setInterval(() => {
-      void this.reap().catch((err) => this.deps.log.warn({ err }, "session reaper failed"));
+      void Promise.all([this.reap(), this.purgeExpired()]).catch((err) => this.deps.log.warn({ err }, "session reaper failed"));
     }, intervalMs);
     this.reaper.unref?.();
   }

@@ -78,7 +78,20 @@ const MIGRATIONS = [
    )`,
   `CREATE INDEX sessions_principal ON sessions(principal)`,
   `CREATE INDEX sessions_last_active ON sessions(last_active_at)`,
+  `CREATE TABLE session_retention (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     days INTEGER NOT NULL,
+     updated_at TEXT NOT NULL,
+     updated_by TEXT NOT NULL
+   )`,
 ];
+
+/** 대화 기록 보관 기간. 마지막 활동 뒤 days일이 지나면 지운다 (0 = 지우지 않는다). */
+export interface Retention {
+  days: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
 
 function fromRow(row: Row): SessionRecord {
   return {
@@ -163,6 +176,37 @@ export class SessionStore {
 
   delete(id: string): void {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+  }
+
+  /** 최근 활동 순 (user를 주면 그 사용자의 세션만) */
+  list(user: string | undefined, limit: number): SessionRecord[] {
+    const rows = user
+      ? this.db.prepare("SELECT * FROM sessions WHERE principal = ? ORDER BY last_active_at DESC LIMIT ?").all(user, limit)
+      : this.db.prepare("SELECT * FROM sessions ORDER BY last_active_at DESC LIMIT ?").all(limit);
+    return (rows as Row[]).map(fromRow);
+  }
+
+  /** 마지막 활동이 before보다 이른 세션 id */
+  inactiveSince(before: string): string[] {
+    return (this.db.prepare("SELECT id FROM sessions WHERE last_active_at < ?").all(before) as { id: string }[]).map((r) => r.id);
+  }
+
+  retention(): Retention {
+    const row = this.db.prepare("SELECT days, updated_at, updated_by FROM session_retention WHERE id = 1").get() as
+      | { days: number; updated_at: string; updated_by: string }
+      | undefined;
+    return row ? { days: row.days, updatedAt: row.updated_at, updatedBy: row.updated_by } : { days: 0, updatedAt: null, updatedBy: null };
+  }
+
+  setRetention(days: number, actor: string): Retention {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO session_retention (id, days, updated_at, updated_by) VALUES (1, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET days = excluded.days, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+      )
+      .run(days, now, actor);
+    return { days, updatedAt: now, updatedBy: actor };
   }
 
   count(): number {

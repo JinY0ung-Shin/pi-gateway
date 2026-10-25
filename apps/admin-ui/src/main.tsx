@@ -4,6 +4,7 @@ import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Brand, Notice } from "./components";
 import { AgentsPage, SkillsPage, ToolsPage } from "./pages/Catalog";
 import { ChatPage } from "./pages/Chat";
+import { HistoryPage } from "./pages/History";
 import { LlmPage } from "./pages/Llm";
 import { Login } from "./pages/Login";
 import { McpPage } from "./pages/Mcp";
@@ -25,6 +26,7 @@ const PAGES = [
   { id: "plugins", group: "설치", label: "plugin", desc: "marketplace에서 plugin을 설치하고 켜고 끕니다" },
   { id: "status", group: "운영", label: "상태", desc: "세션·sandbox·메모리 현황 (10초마다 갱신)" },
   { id: "chat", group: "운영", label: "채팅 테스트", desc: "운영과 같은 도구·MCP·skill 구성으로 대화해 봅니다" },
+  { id: "history", group: "운영", label: "대화 기록", desc: "서버에 저장된 세션의 대화·시스템 프롬프트와 보관 기간" },
 ] as const;
 const GROUPS = [...new Set(PAGES.map((p) => p.group))];
 type PageId = (typeof PAGES)[number]["id"];
@@ -105,6 +107,7 @@ function App() {
         {route.page === "plugins" && <PluginsPage />}
         {route.page === "status" && <StatusPage />}
         {route.page === "chat" && <ChatPage />}
+        {route.page === "history" && <HistoryPage focus={route.arg} />}
       </main>
     </div>
   );

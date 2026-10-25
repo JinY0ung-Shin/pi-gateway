@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayModels } from "./agent/runtime.js";
 import type { GatewayConfig } from "./config.js";
 import type { Db } from "./db.js";
+import type { SessionStore } from "./sessions/store.js";
 
 /**
  * gateway 안의 레인 간 계약.
@@ -100,6 +101,8 @@ export interface AdminDeps {
     /** body `{ user, model? }`로 새 세션을 열면 모델이 받는 시스템 프롬프트와 도구 */
     preview: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
   };
+  /** 대화 기록 보기와 보관 기간 */
+  sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;
 }
 
 /** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */

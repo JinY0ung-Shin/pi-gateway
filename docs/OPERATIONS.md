@@ -380,6 +380,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 |---|---|---|
 | sandbox | 15분 (`SANDBOX_IDLE_SECONDS`) | 컨테이너를 제거한다. workspace는 남는다 |
 | gateway 세션 | 5분 (`SESSION_IDLE_SECONDS`) | 메모리에서 내린다. 다음 요청 때 기록에서 되살린다 |
+| 대화 기록 | 지우지 않음 (관리 화면 "대화 기록"의 보관 기간) | 마지막 활동 뒤 기간이 지나면 세션 기록(JSONL)과 메타를 지운다. workspace는 남는다 |
 
 **sandboxd 재시작**
 - 실행 중인 sandbox는 그대로 둔다. 다시 시작할 때 label(`pi-gateway.instance`)로 찾아 채택한다.

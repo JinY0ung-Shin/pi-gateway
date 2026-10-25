@@ -18,7 +18,7 @@ interface ChatOptions {
   metadataKeys: string[];
 }
 
-interface ToolCall {
+export interface ToolCall {
   id: string;
   name: string;
   input?: unknown;
@@ -33,7 +33,7 @@ interface Usage {
   cached: number;
 }
 
-interface Turn {
+export interface Turn {
   role: "user" | "assistant";
   text: string;
   images?: string[];
@@ -137,7 +137,7 @@ function usageOf(u: any): Usage | undefined {
   return { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0, cached: u.input_tokens_details?.cached_tokens ?? 0 };
 }
 
-function newTurn(role: Turn["role"], text = "", images?: string[]): Turn {
+export function newTurn(role: Turn["role"], text = "", images?: string[]): Turn {
   return { role, text, reasoning: "", tools: [], ...(images?.length ? { images } : {}) };
 }
 
@@ -421,51 +421,7 @@ export function ChatPage() {
       <div class="chat-log">
         {turns.current.length === 0 && <p class="muted">메시지를 보내면 운영과 같은 도구·MCP·skill 구성으로 대화합니다.</p>}
         {turns.current.map((turn, i) => (
-          <div key={i} class={`msg msg-${turn.role}`}>
-            {turn.reasoning && (
-              <details>
-                <summary>생각</summary>
-                <div class="code-block">{turn.reasoning}</div>
-              </details>
-            )}
-            {turn.tools.map((t) => (
-              <details key={t.id} class="tool">
-                <summary>
-                  <span class="mono">{t.name}</span>{" "}
-                  {t.name === "AskUserQuestion" ? (
-                    <Badge tone="violet">질문</Badge>
-                  ) : t.result === undefined ? (
-                    <Badge tone="blue">{t.progress ? `실행 중 · ${t.progress}` : "실행 중"}</Badge>
-                  ) : t.isError ? (
-                    <Badge tone="red">오류</Badge>
-                  ) : (
-                    <Badge tone="green">완료</Badge>
-                  )}
-                </summary>
-                {t.input !== undefined && <div class="code-block mono">{JSON.stringify(t.input, null, 2)}</div>}
-                {t.result !== undefined && (
-                  <div class="code-block mono">{t.result.length > RESULT_LIMIT ? `${t.result.slice(0, RESULT_LIMIT)}\n… (${t.result.length}자)` : t.result}</div>
-                )}
-              </details>
-            ))}
-            {turn.images && (
-              <div class="row wrap">
-                {turn.images.map((src, k) => (
-                  <img key={k} class="thumb" src={src} alt="" />
-                ))}
-              </div>
-            )}
-            {turn.text &&
-              (turn.role === "assistant" ? <div class="md" dangerouslySetInnerHTML={{ __html: markdown(turn.text) }} /> : <div class="msg-text">{turn.text}</div>)}
-            {turn.role === "assistant" && busy && i === turns.current.length - 1 && !turn.text && <span class="muted">…</span>}
-            {turn.usage && (
-              <div class="muted small-text">
-                토큰: 입력 {turn.usage.input.toLocaleString()}
-                {turn.usage.cached ? ` (캐시 ${turn.usage.cached.toLocaleString()})` : ""} · 출력 {turn.usage.output.toLocaleString()}
-              </div>
-            )}
-            {turn.note && <Notice tone={turn.note.tone}>{turn.note.text}</Notice>}
-          </div>
+          <TurnView key={i} turn={turn} waiting={busy && i === turns.current.length - 1} />
         ))}
       </div>
 
@@ -524,6 +480,58 @@ export function ChatPage() {
         </>
       )}
     </Section>
+  );
+}
+
+/** 메시지 하나 (채팅 테스트와 대화 기록이 같이 쓴다). waiting이면 답을 기다리는 중이다. */
+export function TurnView(props: { turn: Turn; waiting?: boolean }) {
+  const { turn } = props;
+  return (
+    <div class={`msg msg-${turn.role}`}>
+      {turn.reasoning && (
+        <details>
+          <summary>생각</summary>
+          <div class="code-block">{turn.reasoning}</div>
+        </details>
+      )}
+      {turn.tools.map((t) => (
+        <details key={t.id} class="tool">
+          <summary>
+            <span class="mono">{t.name}</span>{" "}
+            {t.name === "AskUserQuestion" ? (
+              <Badge tone="violet">질문</Badge>
+            ) : t.result === undefined ? (
+              <Badge tone="blue">{t.progress ? `실행 중 · ${t.progress}` : "실행 중"}</Badge>
+            ) : t.isError ? (
+              <Badge tone="red">오류</Badge>
+            ) : (
+              <Badge tone="green">완료</Badge>
+            )}
+          </summary>
+          {t.input !== undefined && <div class="code-block mono">{JSON.stringify(t.input, null, 2)}</div>}
+          {t.result !== undefined && (
+            <div class="code-block mono">{t.result.length > RESULT_LIMIT ? `${t.result.slice(0, RESULT_LIMIT)}\n… (${t.result.length}자)` : t.result}</div>
+          )}
+        </details>
+      ))}
+      {turn.images && (
+        <div class="row wrap">
+          {turn.images.map((src, k) => (
+            <img key={k} class="thumb" src={src} alt="" />
+          ))}
+        </div>
+      )}
+      {turn.text &&
+        (turn.role === "assistant" ? <div class="md" dangerouslySetInnerHTML={{ __html: markdown(turn.text) }} /> : <div class="msg-text">{turn.text}</div>)}
+      {turn.role === "assistant" && props.waiting && !turn.text && <span class="muted">…</span>}
+      {turn.usage && (
+        <div class="muted small-text">
+          토큰: 입력 {turn.usage.input.toLocaleString()}
+          {turn.usage.cached ? ` (캐시 ${turn.usage.cached.toLocaleString()})` : ""} · 출력 {turn.usage.output.toLocaleString()}
+        </div>
+      )}
+      {turn.note && <Notice tone={turn.note.tone}>{turn.note.text}</Notice>}
+    </div>
   );
 }
 
