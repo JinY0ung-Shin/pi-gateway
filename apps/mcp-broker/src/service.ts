@@ -374,7 +374,7 @@ function classify(error: unknown, signals: { deadline?: AbortSignal; caller?: Ab
   return "error";
 }
 
-/** 결과가 너무 크면 텍스트만 남겨 자른다. */
+/** 결과가 너무 크면 텍스트만 남겨 자른다. 표시는 앞에 둔다 (gateway가 긴 결과의 앞부분만 모델에 보여 주므로). */
 export function capResult(result: CallToolResult, maxBytes: number): CallToolResult {
   const size = Buffer.byteLength(JSON.stringify(result), "utf8");
   if (size <= maxBytes) return result;
@@ -388,7 +388,7 @@ export function capResult(result: CallToolResult, maxBytes: number): CallToolRes
     content: [
       {
         type: "text",
-        text: `${truncated}\n\n[mcp-broker: result truncated — ${size} bytes exceeds the ${maxBytes}-byte limit]`,
+        text: `[mcp-broker: result truncated — ${size} bytes exceeds the ${maxBytes}-byte limit]\n\n${truncated}`,
       },
     ],
     isError: result.isError ?? false,

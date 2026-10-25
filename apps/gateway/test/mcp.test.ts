@@ -21,6 +21,7 @@ beforeAll(async () => {
           handler: (args, claims) => ({ text: `echo:${String(args.text)} user=${claims.sub} token=${claims.ctx?.headers?.["x-user-token"] ?? "-"}` }),
         },
         { name: "fail", handler: () => ({ text: "upstream refused", isError: true }) },
+        { name: "rows", handler: () => ({ text: Array.from({ length: 10_000 }, (_, i) => `row ${i}`).join("\n") }) },
         {
           name: "picture",
           handler: (args) => ({
@@ -73,6 +74,19 @@ describe("MCP via the broker", () => {
     const res = await h.stream({ input: "fail mcp" });
     const result = ofType(res.events, "response.tool_result")[0]!.data;
     expect(result).toMatchObject({ is_error: true, content: "upstream refused" });
+  });
+});
+
+describe("long MCP results", () => {
+  it("shows the head and saves the full text inside the sandbox", async () => {
+    h.llm.enqueue({ toolCalls: [{ id: "big1", name: "mcp__demo__rows", arguments: {} }] }, { text: "ok" });
+    const res = await h.stream({ input: "rows" });
+    const content = String(ofType(res.events, "response.tool_result")[0]!.data.content);
+    expect(content.startsWith("row 0\nrow 1\n")).toBe(true);
+    expect(content).not.toContain("row 9999");
+    expect(content).toContain("Full result: /tmp/pi-mcp-big1.txt]");
+    const write = h.sandbox.calls.find((c) => c.route === SANDBOXD_ROUTES.fsWrite && c.body.path === "/tmp/pi-mcp-big1.txt");
+    expect(Buffer.from(String(write!.body.content), "base64").toString("utf8")).toMatch(/^row 0\n[\s\S]*\nrow 9999$/);
   });
 });
 

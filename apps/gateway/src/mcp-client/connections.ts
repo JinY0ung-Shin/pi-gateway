@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, formatSize, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpClient, McpHttpError, McpSessionExpiredError, StreamableHttpTransport, type Tool, toLlmContent } from "@earendil-works/pi-mcp";
 import {
   AUD_BROKER,
@@ -328,7 +328,7 @@ export class McpConnectionSet {
       label,
       description: tool.description?.trim() || tool.title || `MCP tool ${tool.name} from server ${server.displayName ?? server.id}`,
       parameters: toParameters(tool.inputSchema) as never,
-      execute: async (_toolCallId, params, signal, onUpdate) => {
+      execute: async (toolCallId, params, signal, onUpdate) => {
         const args = (params ?? {}) as Record<string, unknown>;
         const call = async () => {
           let client = await this.client(server, signal);
@@ -363,7 +363,7 @@ export class McpConnectionSet {
           result = await call();
         }
         // MCP 서버가 준 이미지는 pi가 gateway에서 디코딩한다. 그 전에 크기를 확인한다.
-        const content = guardImageBlocks(toLlmContent(result), `${server.id}/${tool.name}`);
+        const content = await this.spillLongText(guardImageBlocks(toLlmContent(result), `${server.id}/${tool.name}`), toolCallId, signal);
         return {
           content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
           details: { server: server.id, tool: tool.name },
@@ -371,6 +371,23 @@ export class McpConnectionSet {
         };
       },
     };
+  }
+
+  /** 텍스트가 길면 앞부분만 모델에 주고 전체는 sandbox /tmp에 저장한다 (bash 도구와 같은 기준). */
+  private async spillLongText(content: ReturnType<typeof guardImageBlocks>, toolCallId: string, signal?: AbortSignal) {
+    const text = content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
+    const size = Buffer.byteLength(text, "utf8");
+    if (size <= DEFAULT_MAX_BYTES) return content;
+    const path = `/tmp/pi-mcp-${toolCallId.replace(/[^A-Za-z0-9_-]/g, "_")}.txt`;
+    let where = `Full result: ${path}`;
+    try {
+      await this.deps.sandbox.writeFile(path, text, signal);
+    } catch {
+      where = "Full result could not be saved";
+    }
+    const head = Buffer.from(text, "utf8").subarray(0, DEFAULT_MAX_BYTES).toString("utf8").replace(/\uFFFD$/, "");
+    const notice = `[Showing the first ${formatSize(DEFAULT_MAX_BYTES)} of ${formatSize(size)}. ${where}]`;
+    return [{ type: "text" as const, text: `${head}\n\n${notice}` }, ...content.filter((c) => c.type !== "text")];
   }
 
   async close(): Promise<void> {

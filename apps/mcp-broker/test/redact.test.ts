@@ -58,7 +58,7 @@ describe("capResult", () => {
     const out = capResult(big, 2048);
     expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThan(5000);
     expect(out.content[0]!.type).toBe("text");
-    expect((out.content[0] as { text: string }).text).toContain("result truncated");
+    expect((out.content[0] as { text: string }).text).toMatch(/^\[mcp-broker: result truncated/);
   });
 
   it("한도 안이면 그대로 돌려준다", () => {
