@@ -32,6 +32,7 @@ interface PiMessage {
   isError?: boolean;
   stopReason?: string;
   errorMessage?: string;
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 function textOf(content: Content): string {
@@ -45,16 +46,25 @@ function textOf(content: Content): string {
 interface SystemItem {
   system: PiMessage;
   first: boolean;
+  /** 대화의 첫 LLM 호출 입력 토큰 (시스템 프롬프트 + 도구 선언 + 첫 메시지) */
+  firstInput?: number;
 }
 
-/** pi 메시지 → 채팅 화면의 턴 (사용자 메시지 하나와 그에 대한 답 하나씩)과 시스템 프롬프트 */
+/**
+ * pi 메시지 → 채팅 화면의 턴 (사용자 메시지 하나와 그에 대한 답 하나씩)과 시스템 프롬프트.
+ * 답의 토큰은 채팅 화면과 같게 센다: 입력은 그 턴 마지막 LLM 호출의 대화 크기, 출력은 호출들의 합.
+ */
 function toTurns(messages: PiMessage[]): (Turn | SystemItem)[] {
   const turns: (Turn | SystemItem)[] = [];
   const tools = new Map<string, ToolCall>();
   let reply: Turn | null = null;
+  let firstSystem: SystemItem | null = null;
+  let firstCallSeen = false;
   for (const m of messages) {
     if (m.role === "system") {
-      turns.push({ system: m, first: !turns.some((t) => "system" in t) });
+      const item: SystemItem = { system: m, first: !firstSystem };
+      firstSystem ??= item;
+      turns.push(item);
       reply = null;
     } else if (m.role === "user") {
       turns.push(newTurn("user", textOf(m.content)));
@@ -69,6 +79,12 @@ function toTurns(messages: PiMessage[]): (Turn | SystemItem)[] {
           reply.tools.push(t);
           tools.set(c.id, t);
         }
+      }
+      if (m.usage) {
+        const input = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite;
+        if (!firstCallSeen && firstSystem && input > 0) firstSystem.firstInput = input;
+        firstCallSeen = true;
+        reply.usage = { input: input || (reply.usage?.input ?? 0), output: (reply.usage?.output ?? 0) + m.usage.output };
       }
       if (m.stopReason === "error") reply.note = { tone: "error", text: m.errorMessage ?? "응답 실패" };
       else if (m.stopReason === "aborted") reply.note = { tone: "warn", text: "중지된 응답입니다." };
@@ -233,6 +249,7 @@ function SystemView(props: SystemItem) {
     <details class="tool">
       <summary>
         {first ? "시스템 프롬프트" : "시스템 프롬프트 변경"}
+        {props.firstInput !== undefined && ` · 첫 요청 입력 ${props.firstInput.toLocaleString()} 토큰`}
         {added.length > 0 && ` · 도구 +${added.length}`}
         {removed.length > 0 && ` · 도구 −${removed.length}`}
       </summary>
