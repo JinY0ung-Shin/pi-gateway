@@ -117,9 +117,10 @@ curl -fsS http://127.0.0.1:8080/healthz
 | `GATEWAY_BIND_ADDR` | `127.0.0.1` (기본) | 같은 호스트의 reverse proxy(nginx 등)가 TLS를 맡고 이 포트로 넘긴다. LAN에서 gateway 포트에 바로 닿지 않는다 |
 | `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 잠금(IP별)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 받는다.** hop 수와 `true`(아무 클라이언트나 IP를 속일 수 있다)는 거부한다. 직접 공개할 때는 `false` |
 | `SANDBOX_EGRESS_ALLOW` | sandbox가 써야 하는 도메인·IP만 | 목록에 없는 목적지는 모두 막힌다. 호스트 주소나 넓은 CIDR을 넣으면 그 안의 모든 서비스가 열리므로 포트까지 적는다 ([§6](#6-네트워크-차단-규칙)) |
+| `SANDBOX_RUNTIME` | `runsc` (gVisor), `SANDBOX_PIDS_LIMIT=4096`과 함께 | sandbox의 시스템 콜을 호스트 커널 대신 gVisor가 처리한다. 설치와 필요한 옵션은 [§7](#7-gvisorrunsc로-커널-분리하기) |
 | `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
-| `NODE_EXTRA_CA_CERTS` | 사내 CA PEM 파일의 호스트 경로 (필요할 때만) | LLM 엔드포인트나 사내 git 저장소(plugin marketplace)가 사내 CA 인증서를 쓰면 gateway와 gateway가 실행하는 git이 그 CA를 믿게 한다. compose가 gateway 컨테이너에 읽기 전용으로 mount한다 |
+| `NODE_EXTRA_CA_CERTS` | 사내 CA PEM 파일의 호스트 경로 (필요할 때만) | LLM 엔드포인트, 사내 git 저장소(plugin marketplace), 원격 MCP 서버가 사내 CA 인증서를 쓰면 gateway와 gateway가 실행하는 git, mcp-broker가 그 CA를 믿게 한다. compose가 gateway·mcp-broker 컨테이너에 읽기 전용으로 mount한다 |
 
 `TRUST_PROXY`에 넣을 주소: `GATEWAY_BIND_ADDR=127.0.0.1`로 공개한 포트에 같은 호스트의 nginx가 연결하면, Docker의 userland-proxy를 거치므로 gateway에는 edge 네트워크의 gateway IP에서 온 연결로 보인다.
 
@@ -263,22 +264,35 @@ docker compose up -d egress-proxy
 - 허용하지 않은 나머지(같은 호스트의 다른 포트, 다른 주소, metadata)는 계속 막힌다.
 - 적용한 뒤에는 [§8 보안 점검](#8-보안-점검)으로 확인한다.
 
-## 7. (선택) gVisor로 커널 정보까지 숨기기
+## 7. gVisor(runsc)로 커널 분리하기
 
-일반 컨테이너는 호스트 커널을 공유한다. 그래서 sandbox에서 커널 버전과 CPU·메모리 총량이 보인다. gVisor(`runsc`)를 쓰면 sandbox마다 가상 커널이 붙어 이 정보도 가려지고, 커널 공격 표면이 줄어든다.
+일반 컨테이너(runc)는 호스트 커널을 공유한다. gVisor(`runsc`)를 쓰면 sandbox의 시스템 콜을 호스트 커널 대신 sandbox마다 붙는 gVisor 커널이 처리한다. 커널 공격 표면이 줄고, sandbox에서 호스트 커널 버전과 CPU·메모리 총량도 보이지 않는다. 코드는 그대로이고 Docker 런타임 설정만 바꾼다.
 
 ```bash
-# 1) runsc 설치: https://gvisor.dev/docs/user_guide/install/
-# 2) /etc/docker/daemon.json
-#    { "runtimes": { "runsc": { "path": "/usr/local/bin/runsc" } } }
-sudo systemctl restart docker
+# 1) 설치: 사내 apt 미러 (Ubuntu는 universe, Debian은 기본 저장소에 runsc 패키지가 있다)
+sudo apt-get update && sudo apt-get install -y runsc
+# 2) Docker 런타임 등록: /etc/docker/daemon.json의 runtimes에 runsc만 더한다 (다른 설정은 그대로 둔다)
+sudo runsc install -- --host-uds=open --oci-seccomp
+# 설정만 다시 읽는다 (컨테이너는 재시작되지 않는다). reload는 신호만 보내고 끝나므로 잠깐 기다린다
+sudo systemctl reload docker && sleep 3
+docker run --rm --runtime=runsc pi-gateway/sandbox:latest uname -r   # 호스트와 다른 커널 버전이 나오면 된다
 # 3) .env
 SANDBOX_RUNTIME=runsc
+SANDBOX_PIDS_LIMIT=4096
 docker compose up -d sandboxd
 docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
 ```
 
-명령 실행이 조금 느려질 수 있다. 적용한 뒤 보안 점검을 다시 돌린다.
+- `--host-uds=open`: sandbox의 유일한 바깥 출구는 egress 프록시의 unix socket이다 ([§6](#6-네트워크-차단-규칙)). runsc는 기본으로 호스트 unix socket 연결을 막으므로, 빠지면 모든 바깥 요청이 끊긴다. 열리는 것은 sandbox에 mount된 socket(프록시 socket)뿐이다.
+- `--oci-seccomp`: runsc는 기본으로 Docker의 seccomp 프로필을 sandbox 안에 걸지 않는다. 빠지면 sandbox 안에서 user namespace를 만들 수 있어 보안 점검이 FAIL이다.
+- `SANDBOX_PIDS_LIMIT`: gVisor 커널의 호스트 스레드와 stub 프로세스도 이 제한에 들어간다. 256이면 fd·rg처럼 스레드를 많이 쓰는 도구에서 sandbox가 통째로 죽는다 (`WaitPID ... failed: EOF`). 4096에서 시작해 운영에서 `pids.peak`를 보고 맞춘다 (cgroup v2, systemd 드라이버):
+  `cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <sandbox 컨테이너>).scope/pids.peak`
+- 파일 조작이 한 번에 약 60ms 느려지고, sandbox마다 메모리가 약 17MB 더 든다 ([§9](#9-용량-참고값)).
+- 배포판 패키지는 오래된 판이다 (Ubuntu 24.04: 2023-08, Debian 13: 2024-07). 최신판이 필요하면 gVisor 공식 apt 저장소(`https://storage.googleapis.com/gvisor/releases`, `release main`, 키 `https://gvisor.dev/archive.key`)를 사내 미러에 더한다.
+- 기본 platform(systrap)이 `failed to create a syscall thread`로 죽는 커널(예: WSL2 개발 머신)에서는 개발용으로만 runtimeArgs에 `--platform=ptrace`를 더한다 (느리다).
+- 되돌리기: `.env`의 `SANDBOX_RUNTIME`을 비우고, `docker compose up -d sandboxd`와 위의 `docker rm -f` 명령을 실행한다.
+
+적용한 뒤 보안 점검([§8](#8-보안-점검))을 `--strict`로 다시 돌린다.
 
 ## 8. 보안 점검
 
@@ -351,6 +365,8 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 | pi 세션 | 대화 기록 크기 정도 (120KB 기록 → 약 0.1MB, 1MB 기록 → 약 1.1MB) |
 | gateway 프로세스 기본 | 약 135MB |
 
+gVisor(`SANDBOX_RUNTIME=runsc`)면 sandbox마다 메모리가 약 17MB 더 들고(유휴 cgroup 기준 1.3MB → 18.5MB), 파일 조작은 약 120ms, 컨테이너 생성은 약 0.45초다. 쓰고 난 메모리는 호스트로 돌아온다. 개발 머신에서 ptrace platform으로 잰 값이라 운영(systrap)에서 다시 잰다.
+
 **용량 계산**: 동시에 활동하는 사용자 수 × (sandbox 오버헤드 + agent가 돌리는 프로그램) + gateway 기본 + 세션 수 × 기록 크기.
 
 컨테이너별 상한은 `SANDBOX_MEMORY`, `SANDBOX_CPUS`, `SANDBOX_PIDS_LIMIT`로 건다.
@@ -390,6 +406,8 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 | `permission denied ... docker.sock` | `.env`의 `DOCKER_GID`가 `stat -c %g /var/run/docker.sock` 값과 다르다 |
 | `WORKSPACES_DIR does not exist`, bind mount 오류 | `$PI_GATEWAY_HOME/workspaces`가 없거나 소유자가 1000이 아니다 (`setup-host.sh`) |
 | 도구 호출이 `sandbox_unavailable` | `docker compose logs sandboxd`로 Docker API 오류를 본다 |
+| sandboxd 로그에 `unknown or invalid runtime name: runsc` | runsc를 Docker에 등록하지 않았거나, `systemctl reload docker` 직후라 아직 다시 읽지 않았다 ([§7](#7-gvisorrunsc로-커널-분리하기)) |
+| (runsc) 명령이 exit 128로 끝나고 `WaitPID ... failed: EOF`가 남는다 | sandbox의 gVisor 커널이 죽었다. 대개 `SANDBOX_PIDS_LIMIT`가 작아서다 ([§7](#7-gvisorrunsc로-커널-분리하기)) |
 | 컨테이너 수를 제한하고 싶다 | 유휴 시간을 줄이거나 호스트 메모리에 맞춰 `SANDBOX_MEMORY`를 조정한다 |
 | plugin 설치 실패 | gateway 컨테이너에서 Git 저장소에 닿는지 확인한다 (edge 네트워크) |
 | sandbox에서 바깥 요청이 `407`로 실패한다 | 허용 목록에 없는 목적지다 (도메인은 정확히 같은 이름, 포트를 적었다면 그 포트만). 이유는 `docker compose logs egress-proxy`의 `decision_reason`. 열어야 하면 `SANDBOX_EGRESS_ALLOW`에 넣는다 ([§6](#6-네트워크-차단-규칙)) |

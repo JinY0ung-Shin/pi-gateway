@@ -134,6 +134,8 @@ services:
       BROKER_MAX_RESULT_BYTES: ${BROKER_MAX_RESULT_BYTES:-4194304}
       BROKER_MAX_REQUEST_BODY_BYTES: ${BROKER_MAX_REQUEST_BODY_BYTES:-4194304}
       BROKER_TOOLS_CACHE_SECONDS: ${BROKER_TOOLS_CACHE_SECONDS:-60}
+      # 사내 CA: gateway와 같은 파일을 쓴다 (gateway의 NODE_EXTRA_CA_CERTS 설명)
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:+/etc/pi-gateway/extra-ca.pem}
     secrets:
       - source: broker_jwt_secret
         target: broker_jwt_secret
@@ -141,6 +143,12 @@ services:
         target: broker_kek
     volumes:
       - broker-data:/data
+      - type: bind
+        source: ${NODE_EXTRA_CA_CERTS:-/dev/null}
+        target: /etc/pi-gateway/extra-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:size=16m
     networks:
