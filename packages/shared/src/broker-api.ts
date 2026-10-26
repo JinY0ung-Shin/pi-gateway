@@ -19,13 +19,10 @@ import { McpServerConfig } from "./mcp-config.js";
  */
 
 export const BROKER_ROUTES = {
-  health: "/healthz",
   servers: "/mcp/servers",
-  mcp: (serverId: string) => `/mcp/${encodeURIComponent(serverId)}`,
 } as const;
 
 export const BROKER_ADMIN_ROUTES = {
-  health: "/healthz",
   servers: "/admin/servers",
   server: (id: string) => `/admin/servers/${encodeURIComponent(id)}`,
   secret: (id: string, name: string) => `/admin/servers/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
@@ -55,7 +52,6 @@ export const ToolSummary = z.object({
 export type ToolSummary = z.infer<typeof ToolSummary>;
 
 export const McpServerStatus = z.object({
-  processes: z.number().int(),
   lastError: z.string().optional(),
   lastErrorAt: z.string().optional(),
 });

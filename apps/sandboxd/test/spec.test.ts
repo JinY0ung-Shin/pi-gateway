@@ -121,13 +121,6 @@ describe("config", () => {
     expect(c.reapIntervalMs).toBe(15_000);
   });
 
-  it("egress 프록시 socket 볼륨 이름", () => {
-    const env = { SANDBOXD_JWT_SECRET: SECRET_TEXT, WORKSPACES_DIR: "/w" };
-    expect(loadConfig(env).proxyVolume).toBe("pi-gateway-proxy-sock");
-    expect(loadConfig({ ...env, SANDBOX_PROXY_VOLUME: "other_proxy-sock" }).proxyVolume).toBe("other_proxy-sock");
-    expect(() => loadConfig({ ...env, SANDBOX_PROXY_VOLUME: "../x" })).toThrow(/SANDBOX_PROXY_VOLUME/);
-  });
-
   it("짧은 비밀키는 거부한다", () => {
     expect(() => loadConfig({ SANDBOXD_JWT_SECRET: "short", WORKSPACES_DIR: "/w" })).toThrow(/32 bytes/);
   });

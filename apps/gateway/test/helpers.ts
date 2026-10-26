@@ -13,8 +13,6 @@ import { type FakeBroker, type FakeBrokerTool, startFakeBroker } from "./fixture
 import { type FakeLlm, startFakeLlm } from "./fixtures/fake-llm.js";
 import { type FakeSandboxd, startFakeSandboxd } from "./fixtures/fake-sandboxd.js";
 
-process.env.PI_OFFLINE = "1";
-
 export const ALICE_KEY = "alice-key-0123456789abcdef";
 export const BOB_KEY = "bob-key-0123456789abcdefgh";
 export const SERVICE_KEY = "service-key-0123456789abcdef";
@@ -95,7 +93,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const config = loadConfig(env);
   const prompt = { text: "You are the test agent." };
   const prompts: PromptService = {
-    snapshotForSession: () => ({ text: prompt.text, ref: { name: "test", version: 1, revision: "r1" } }),
+    snapshotForSession: () => prompt.text,
   };
   const plugins: PluginResources = {
     skills: () => options.skills ?? [],

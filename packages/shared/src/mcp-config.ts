@@ -15,7 +15,6 @@ import { z } from "zod";
  *   {{user}}             principal
  *   {{session}}          gateway 세션 id
  *   {{metadata:KEY}}     요청 metadata(allowlist)
- *   {{plugin_root}}      plugin 설치 경로 (설치할 때 치환되어 저장되므로 보통 남아 있지 않다)
  */
 
 export const MCP_SERVER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -81,8 +80,7 @@ export type TemplateRef =
   | { kind: "header"; name: string }
   | { kind: "user" }
   | { kind: "session" }
-  | { kind: "metadata"; key: string }
-  | { kind: "plugin_root" };
+  | { kind: "metadata"; key: string };
 
 const ANY_TEMPLATE = /\{\{([^{}]*)\}\}/g;
 const SECRET_REF = /^secret:([A-Za-z0-9_.-]{1,64})$/;
@@ -93,7 +91,6 @@ function parseRef(body: string): TemplateRef | null {
   const ref = body.trim();
   if (ref === "user") return { kind: "user" };
   if (ref === "session") return { kind: "session" };
-  if (ref === "plugin_root") return { kind: "plugin_root" };
   let m = SECRET_REF.exec(ref);
   if (m?.[1]) return { kind: "secret", name: m[1] };
   m = HEADER_REF.exec(ref);
@@ -140,6 +137,46 @@ export function requiredSecretNames(config: Pick<McpServerConfig, "transport">):
   return [...names].sort();
 }
 
+const SCOPE_RANK: Record<McpScope, number> = { shared: 0, "per-user": 1, "per-session": 2 };
+
+/** 템플릿이 요구하는 최소 scope: {{session}}·{{metadata}}는 per-session, {{user}}·{{ctx.header}}는 per-user */
+export function requiredScope(config: Pick<McpServerConfig, "transport">): McpScope {
+  const { refs } = collectTemplateRefs(config);
+  if (refs.some((r) => r.kind === "session" || r.kind === "metadata")) return "per-session";
+  if (refs.some((r) => r.kind === "user" || r.kind === "header")) return "per-user";
+  return "shared";
+}
+
+/** scope가 min보다 좁으면 min으로 올린다 */
+export function atLeastScope(scope: McpScope, min: McpScope): McpScope {
+  return SCOPE_RANK[scope] >= SCOPE_RANK[min] ? scope : min;
+}
+
+/**
+ * 비밀값이 어디로 가는지를 나타내는 정규화된 문자열. broker는 이 값이 바뀌면 저장된 비밀값을 지운다
+ * (관리 API를 부를 수 있는 쪽이 url이나 헤더를 바꿔 기존 비밀값을 빼내지 못하게).
+ * url의 origin, 헤더 전체, url 안에서 쓰는 비밀키 이름으로 정한다.
+ */
+export function transportTarget(config: Pick<McpServerConfig, "transport">): string {
+  const t = config.transport;
+  // broker 서버는 http만 쓴다 (스키마가 검사한다)
+  if (t.type !== "http") return JSON.stringify(t);
+  let origin: string;
+  try {
+    // 자리표시자가 host에 들어 있으면 그 자체가 행선지를 바꿀 수 있으므로 문자 그대로 비교한다.
+    origin = /\{\{/.test(t.url.split("/").slice(0, 3).join("/")) ? t.url : new URL(t.url).origin;
+  } catch {
+    origin = t.url;
+  }
+  const headers = Object.entries(t.headers)
+    .map(([name, value]) => [name.toLowerCase(), value] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const urlSecrets = collectTemplateRefs({ transport: { ...t, headers: {} } })
+    .refs.flatMap((r) => (r.kind === "secret" ? [r.name] : []))
+    .sort();
+  return JSON.stringify({ type: "http", origin, headers, urlSecrets });
+}
+
 /**
  * 스키마 밖의 규칙 검사. 오류 메시지 목록을 돌려준다 (비어 있으면 통과).
  * - sandbox 서버는 stdio, broker 서버는 http만 쓴다.
@@ -159,12 +196,13 @@ export function validateMcpServerConfig(config: z.infer<typeof McpServerConfigBa
     errors.push("broker servers must use the http transport");
   }
   if (config.transport.type === "stdio") {
-    const needsUser = refs.some((r) => r.kind === "user" || r.kind === "header");
-    const needsSession = refs.some((r) => r.kind === "session" || r.kind === "metadata");
-    if (needsSession && config.scope !== "per-session") {
-      errors.push("stdio servers using {{session}} or {{metadata:...}} must have scope per-session");
-    } else if (needsUser && config.scope === "shared") {
-      errors.push("stdio servers using {{user}} or {{ctx.header:...}} must have scope per-user or per-session");
+    const min = requiredScope(config);
+    if (atLeastScope(config.scope, min) !== config.scope) {
+      errors.push(
+        min === "per-session"
+          ? "stdio servers using {{session}} or {{metadata:...}} must have scope per-session"
+          : "stdio servers using {{user}} or {{ctx.header:...}} must have scope per-user or per-session",
+      );
     }
   }
   return errors;
@@ -176,7 +214,6 @@ export interface TemplateValues {
   /** 소문자 이름 */
   headers?: Record<string, string>;
   metadata?: Record<string, string>;
-  pluginRoot?: string;
   secret?: (name: string) => string | undefined;
 }
 
@@ -192,9 +229,6 @@ export function renderTemplate(value: string, values: TemplateValues): { value: 
         break;
       case "session":
         out = values.session;
-        break;
-      case "plugin_root":
-        out = values.pluginRoot;
         break;
       case "secret":
         out = values.secret?.(ref.name);

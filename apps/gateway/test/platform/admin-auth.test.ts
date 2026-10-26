@@ -1,15 +1,15 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import type { FastifyRequest } from "fastify";
+import Fastify, { type FastifyRequest } from "fastify";
 import { AdminAuth } from "../../src/admin/auth.js";
+import { registerAdminUi } from "../../src/admin/ui.js";
 import { openDatabase } from "../../src/db.js";
 import { ADMIN_KEY, adminHeaders, buildHarness, cleanupTempDirs, type Harness, makeConfig, tempDir } from "./helpers.js";
 
 let h: Harness;
 afterEach(async () => {
   await h?.close();
-  delete process.env.ADMIN_UI_DIR;
 });
 
 describe("admin auth", () => {
@@ -157,46 +157,47 @@ describe("admin auth hardening", () => {
     // 가장 오래된 1.1.1.1이 밀려나 잠금도 풀렸다
     expect(auth.authenticate(req("1.1.1.1"))).toBeNull();
   });
-
-  it("설정: TRUST_PROXY 값을 검사한다", () => {
-    const dirs = { dataDir: tempDir("cfg-data"), pluginsDir: tempDir("cfg-plugins") };
-    const cfg = (env: Record<string, string>) => makeConfig({ ...dirs, env });
-    expect(cfg({}).trustProxy).toBe(false);
-    expect(cfg({ TRUST_PROXY: "true" }).trustProxy).toBe(true);
-    expect(() => cfg({ TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
-    expect(cfg({ TRUST_PROXY: "0" }).trustProxy).toBe(false);
-    expect(cfg({ TRUST_PROXY: "10.0.0.1, 172.16.0.0/12" }).trustProxy).toEqual(["10.0.0.1", "172.16.0.0/12"]);
-    expect(() => cfg({ TRUST_PROXY: "proxy.local" })).toThrow(/TRUST_PROXY/);
-  });
 });
 
 describe("admin UI serving", () => {
+  const serve = async (uiDir: string) => {
+    const app = Fastify();
+    await app.register(async (ui) => registerAdminUi(ui, uiDir), { prefix: "/admin" });
+    return app;
+  };
+
   it("빌드된 index.html·assets를 CSP와 함께 서빙하고 SPA 경로는 index.html로 보낸다", async () => {
     const ui = tempDir("ui");
     mkdirSync(join(ui, "assets"));
     writeFileSync(join(ui, "index.html"), "<!doctype html><title>admin</title>");
     writeFileSync(join(ui, "assets", "app.js"), "console.log(1)");
-    process.env.ADMIN_UI_DIR = ui;
-    h = await buildHarness();
-    const index = await h.app.inject({ method: "GET", url: "/admin/" });
-    expect(index.statusCode).toBe(200);
-    expect(index.headers["content-security-policy"]).toContain("default-src 'self'");
-    expect(index.body).toContain("<title>admin</title>");
-    expect((await h.app.inject({ method: "GET", url: "/admin" })).statusCode).toBe(200);
-    const asset = await h.app.inject({ method: "GET", url: "/admin/assets/app.js" });
-    expect(asset.statusCode).toBe(200);
-    expect(asset.body).toBe("console.log(1)");
-    const spa = await h.app.inject({ method: "GET", url: "/admin/prompts", headers: { accept: "text/html" } });
-    expect(spa.body).toContain("<title>admin</title>");
-    expect((await h.app.inject({ method: "GET", url: "/admin/missing.js" })).statusCode).toBe(404);
+    const app = await serve(ui);
+    try {
+      const index = await app.inject({ method: "GET", url: "/admin/" });
+      expect(index.statusCode).toBe(200);
+      expect(index.headers["content-security-policy"]).toContain("default-src 'self'");
+      expect(index.body).toContain("<title>admin</title>");
+      expect((await app.inject({ method: "GET", url: "/admin" })).statusCode).toBe(200);
+      const asset = await app.inject({ method: "GET", url: "/admin/assets/app.js" });
+      expect(asset.statusCode).toBe(200);
+      expect(asset.body).toBe("console.log(1)");
+      const spa = await app.inject({ method: "GET", url: "/admin/prompts", headers: { accept: "text/html" } });
+      expect(spa.body).toContain("<title>admin</title>");
+      expect((await app.inject({ method: "GET", url: "/admin/missing.js" })).statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
   });
 
   it("UI가 빌드되지 않았으면 503 안내 페이지", async () => {
-    process.env.ADMIN_UI_DIR = tempDir("ui-empty");
-    h = await buildHarness();
-    const res = await h.app.inject({ method: "GET", url: "/admin/" });
-    expect(res.statusCode).toBe(503);
-    expect(res.body).toContain("빌드되지 않았습니다");
+    const app = await serve(tempDir("ui-empty"));
+    try {
+      const res = await app.inject({ method: "GET", url: "/admin/" });
+      expect(res.statusCode).toBe(503);
+      expect(res.body).toContain("빌드되지 않았습니다");
+    } finally {
+      await app.close();
+    }
   });
 });
 

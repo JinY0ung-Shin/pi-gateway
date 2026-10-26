@@ -4,8 +4,6 @@ import { loadConfig } from "./config.js";
 
 // gateway가 만드는 파일(DB, 세션 JSONL)은 소유자만 읽게 한다.
 process.umask(0o077);
-// pi가 모델 카탈로그·도구(rg, fd) 다운로드 같은 네트워크 접근을 하지 않게 한다.
-process.env.PI_OFFLINE ??= "1";
 
 const config = loadConfig();
 const log = pino({

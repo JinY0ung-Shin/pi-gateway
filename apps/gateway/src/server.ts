@@ -9,17 +9,15 @@ export interface ServerDeps {
   responses: ResponsesDeps;
   admin: AdminDeps;
   registerAdminRoutes: RegisterAdminRoutes;
-  /** 요청 본문 최대 크기 */
-  bodyLimit?: number;
   /** Fastify trustProxy (TRUST_PROXY). 프록시 뒤에서 req.ip·req.protocol이 클라이언트 기준이 된다. */
-  trustProxy?: boolean | string[];
+  trustProxy: false | string[];
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: deps.logger as unknown as FastifyBaseLogger,
-    bodyLimit: deps.bodyLimit ?? 16 * 1024 * 1024,
-    trustProxy: deps.trustProxy ?? false,
+    bodyLimit: 16 * 1024 * 1024,
+    trustProxy: deps.trustProxy,
   });
 
   app.setErrorHandler((error: FastifyError | ApiError, req, reply) => {
@@ -50,7 +48,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   app.get("/healthz", async () => ({ status: "ok" }));
-  app.get("/health", async () => ({ status: "ok" }));
 
   registerResponsesRoutes(app, deps.responses);
   await deps.registerAdminRoutes(app, deps.admin);

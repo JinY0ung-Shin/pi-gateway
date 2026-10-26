@@ -51,7 +51,7 @@ sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh
 **비밀값 파일 권한**
 - 디렉토리가 root 0700이라 호스트의 다른 사용자는 읽을 수 없다.
 - 파일은 그 비밀값을 쓰는 서비스의 uid만 읽을 수 있다(0400).
-- 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다. 예전 평면 구조(`secrets/*` 0444) 파일이 있으면 값을 옮기고 지운다.
+- 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다.
 
 스크립트 없이 직접 만들려면 다음을 실행한다. 같이 쓰는 값은 같은 값의 사본이어야 한다.
 
@@ -65,7 +65,6 @@ r() { openssl rand -base64 "$1" | tr -d '\n'; }
 v=$(r 48); put "$v" $S/gateway/sandboxd_jwt_secret 10001; put "$v" $S/sandboxd/sandboxd_jwt_secret 1000
 v=$(r 48); put "$v" $S/gateway/broker_jwt_secret 10001;   put "$v" $S/broker/broker_jwt_secret 0
 put "$(openssl rand -base64 32 | tr -d '\n')" $S/broker/broker_kek 0      # 정확히 32바이트(base64)
-put "$(r 48)" $S/gateway/admin_cookie_secret 10001
 put "$(r 32)" $S/gateway/admin_api_key 10001
 put "$(r 32)" $S/gateway/api_key 10001
 put "" $S/gateway/user_api_keys 10001
@@ -114,7 +113,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 | 설정 | 권장값 | 이유 |
 |---|---|---|
 | `GATEWAY_BIND_ADDR` | `127.0.0.1` (기본) | 같은 호스트의 reverse proxy(nginx 등)가 TLS를 맡고 이 포트로 넘긴다. LAN에서 gateway 포트에 바로 닿지 않는다 |
-| `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 제한(IP별 지연)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 쓴다.** hop 수는 받지 않는다. `true`는 아무 클라이언트나 IP를 속일 수 있게 하므로 쓰지 않는다. 직접 공개할 때는 `false` |
+| `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 잠금(IP별)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 받는다.** hop 수와 `true`(아무 클라이언트나 IP를 속일 수 있다)는 거부한다. 직접 공개할 때는 `false` |
 | `SANDBOX_EGRESS_ALLOW` | sandbox가 써야 하는 도메인·IP만 | 목록에 없는 목적지는 모두 막힌다. 호스트 주소나 넓은 CIDR을 넣으면 그 안의 모든 서비스가 열리므로 포트까지 적는다 ([§6](#6-네트워크-차단-규칙)) |
 | `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
@@ -127,7 +126,6 @@ docker network inspect pi-gateway_edge --format '{{(index .IPAM.Config 0).Gatewa
 
 - 이 주소는 네트워크를 다시 만들면 바뀔 수 있다. 고정하려면 `docker-compose.override.yml`에서 `networks.edge.ipam`으로 대역을 정한다.
 - dockerd를 `--userland-proxy=false`로 운영한다면 `127.0.0.1`도 함께 넣는다 (예: `TRUST_PROXY=172.18.0.1,127.0.0.1`).
-- `TRUST_PROXY=true`는 쓰지 않는다.
 
 nginx 예시 (같은 호스트, TLS 종료):
 
@@ -163,7 +161,6 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/api_key` | 10001 | gateway | 서비스 키 (`body.user`를 믿는다, BFF용). 빈 파일이면 끈다 |
 | `gateway/user_api_keys` | 10001 | gateway | `{"사용자":"키"}`. 키가 사용자를 정한다 |
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |
-| `gateway/admin_cookie_secret` | 10001 | gateway | 관리 화면 세션 쿠키 서명 키 |
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
@@ -380,7 +377,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 **sandboxd 재시작**
 - 실행 중인 sandbox는 그대로 둔다. 다시 시작할 때 label(`pi-gateway.instance`)로 찾아 채택한다.
 - 멈춘 sandbox는 지운다. 다음 요청 때 현재 설정으로 다시 만든다.
-- 스펙 버전 label(`pi-gateway.spec`)이 다른 sandbox(예: 네트워크가 붙어 있던 예전 버전의 sandbox)는 실행 중이어도 지우고 다시 만든다. 예전 버전이 만든 `pi-gateway-sandbox` 네트워크가 남아 있다면 `docker network rm pi-gateway-sandbox`로 지운다.
+- 스펙 버전 label(`pi-gateway.spec`)이 다른 sandbox는 실행 중이어도 지우고 다시 만든다.
 
 **문제 해결**
 

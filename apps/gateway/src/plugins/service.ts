@@ -4,9 +4,9 @@ import { chmod, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/pro
 import { dirname, join, relative } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
 import { findTemplateRefs, MCP_SERVER_ID_PATTERN, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
+import type { Logger } from "pino";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
-import type { PlatformLogger } from "../admin/logger.js";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources, SubagentDefinition } from "../contracts.js";
 import type { Db } from "../db.js";
@@ -121,7 +121,7 @@ export interface PluginView {
 
 export interface PluginServiceOptions {
   registry: McpRegistryService;
-  log: PlatformLogger;
+  log: Logger;
   /** 로컬 경로·file:// 저장소 허용 (테스트·개발용). 기본값은 PLUGIN_ALLOW_LOCAL_SOURCES=1일 때만. */
   allowLocalSources?: boolean;
   gitTimeoutMs?: number;
@@ -166,7 +166,7 @@ export function pluginDataDir(marketplace: string, plugin: string): string {
 export class PluginService implements PluginResources {
   readonly store: PluginStore;
   readonly #registry: McpRegistryService;
-  readonly #log: PlatformLogger;
+  readonly #log: Logger;
   readonly #pluginsDir: string;
   readonly #workDir: string;
   readonly #marketplacesDir: string;
@@ -454,7 +454,8 @@ export class PluginService implements PluginResources {
 
       const enabled = previous?.enabled ?? true;
       const description = str(manifest ?? {}, "description") ?? entry.description;
-      // MCP 매핑을 먼저 한다. broker가 필요한데 연결되지 않으면 아무것도 바꾸기 전에 503으로 끝낸다.
+      // MCP 매핑을 먼저 한다. MCP 서버를 등록하려면 broker가 있어야 하므로(id가 broker 서버와 겹치는지 본다),
+      // 연결되지 않으면 아무것도 바꾸기 전에 503으로 끝낸다.
       const mappedServers = await this.#mapServers(found.mcpServers, {
         id,
         pluginName: entry.name,
@@ -466,8 +467,7 @@ export class PluginService implements PluginResources {
         enabled,
         read: (rel) => readContainedFile(staging, rel, { optional: true }).catch(() => undefined),
       });
-      const needsBroker =
-        mappedServers.some((m) => m.mapped.config?.runIn === "broker") || (previous ? usesBroker(previous) : false);
+      const needsBroker = mappedServers.some((m) => m.mapped.config !== undefined) || (previous ? usesBroker(previous) : false);
       if (needsBroker) await this.#registry.assertBrokerReachable();
       await this.#swapInto(staging, pluginDir, versionDir);
       await pointCurrentAt(pluginDir, version);
@@ -613,9 +613,9 @@ export class PluginService implements PluginResources {
       // 지난번에 다른 id(충돌로 이름을 바꾼 id)를 썼으면 그 id를 이어서 쓴다.
       if (previous?.id && previous.id !== config.id && previous.status === "registered") config = { ...config, id: previous.id };
       // 다른 서버가 쓰는 id면 plugin 이름을 붙여 본다.
-      if (used.has(config.id) || (await this.#idTakenByOther(config.id, ctx.id, config.runIn))) {
+      if (used.has(config.id) || (await this.#idTakenByOther(config.id, ctx.id))) {
         const alt = sanitizeServerId(`${ctx.pluginName}-${name}`);
-        if (!alt || used.has(alt) || (await this.#idTakenByOther(alt, ctx.id, config.runIn))) {
+        if (!alt || used.has(alt) || (await this.#idTakenByOther(alt, ctx.id))) {
           records.push({ name, status: "error", reason: `MCP server id '${config.id}' is already in use`, requiredSecrets: mapped.requiredSecrets, warnings: mapped.warnings });
           continue;
         }
@@ -663,8 +663,8 @@ export class PluginService implements PluginResources {
     return { records, warnings };
   }
 
-  async #idTakenByOther(id: string, pluginId: string, runIn: "broker" | "sandbox"): Promise<boolean> {
-    const current = await this.#registry.currentConfig(id, { tolerateDown: runIn === "sandbox" });
+  async #idTakenByOther(id: string, pluginId: string): Promise<boolean> {
+    const current = await this.#registry.currentConfig(id);
     if (!current) return false;
     return !(current.source.kind === "plugin" && current.source.pluginId === pluginId);
   }

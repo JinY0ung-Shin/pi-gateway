@@ -1,9 +1,8 @@
 import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import {
-  ADMIN_PRINCIPAL,
   AUD_BROKER,
   bearerToken,
-  isValidPrincipal,
+  isValidUserId,
   MCP_SERVER_ID_PATTERN,
   verifyInternalToken,
   type VisibleServersResponse,
@@ -115,8 +114,7 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
     }
     try {
       const claims = await verifyInternalToken(config.jwtSecret, AUD_BROKER, token);
-      // gateway 관리 백엔드는 도구 카탈로그를 만들 때 "_admin"으로 부른다.
-      if (!isValidPrincipal(claims.sub) && claims.sub !== ADMIN_PRINCIPAL) throw new Error("invalid principal");
+      if (!isValidUserId(claims.sub)) throw new Error("invalid principal");
       const identity: Identity = { sub: claims.sub };
       if (claims.sid) identity.sid = claims.sid;
       if (claims.ctx) identity.ctx = claims.ctx;

@@ -284,8 +284,7 @@ function toPlugin(row: PluginRow): PluginRecord {
     enabled: row.enabled === 1,
     source: JSON.parse(row.source_json) as ResolvedSource,
     manifest: row.manifest_json === null ? null : (JSON.parse(row.manifest_json) as JsonObject),
-    // agents가 없던 버전에서 설치한 기록도 읽는다.
-    components: { agents: [], ...(JSON.parse(row.components_json) as Partial<StoredComponents>) } as StoredComponents,
+    components: JSON.parse(row.components_json) as StoredComponents,
     mcp: JSON.parse(row.mcp_json) as McpRecord[],
     installedAt: row.installed_at,
     updatedAt: row.updated_at,

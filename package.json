@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc -b && npm run build -w @pi-gateway/admin-ui",
-    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json && tsc -p apps/admin-ui/tsconfig.json",
     "test": "vitest run",
     "test:docker": "PI_GW_DOCKER_TESTS=1 vitest run",
     "dev:gateway": "tsx --conditions=pi-gateway-source apps/gateway/src/main.ts",

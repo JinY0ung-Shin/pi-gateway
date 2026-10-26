@@ -434,7 +434,8 @@ describe("plugin 업데이트·broker 장애", () => {
   it("업데이트: plugin이 바꾼 env는 반영하고 관리자가 넣은 값은 유지한다", async () => {
     const fixture = buildFixture(tempDir("fixture-update"));
     setMcp(fixture.mkt, "1.9.0", { LOG_FORMAT: "json" });
-    const harness = await buildHarness();
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
       await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
@@ -454,6 +455,7 @@ describe("plugin 업데이트·broker 장애", () => {
       expect(after.scope).toBe("per-session");
     } finally {
       await harness.close();
+      await broker.close();
     }
   });
 
@@ -525,30 +527,36 @@ describe("plugin 업데이트·broker 장애", () => {
     });
   }
 
-  it("broker가 안 돼도 sandbox 전용 plugin은 설치·끄기·켜기·업데이트·제거가 되고, 설치 뒤로는 broker에 묻지 않는다", async () => {
+  it("sandbox 전용 plugin: 설치·업데이트는 broker가 있어야 하고, 끄기·켜기·제거는 broker에 묻지 않는다", async () => {
     const broker = await startFakeBroker();
     const fixture = buildFixture(tempDir("fixture-sbx-down"));
     const harness = await buildHarness({ env: brokerEnv(broker.url) });
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
       broker.setDown(true);
-      // 새 id는 broker 서버와 겹치는지 묻고, 안 되면 기억한 broker id 목록으로 판단한다
+      // MCP 서버 id가 broker 서버와 겹치는지 확인할 수 없으므로 아무것도 바꾸지 않는다
+      await expect(harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t")).rejects.toMatchObject({ status: 503 });
+      expect(harness.plugins.listPlugins()).toEqual([]);
+      expect(harness.mcp.store.get("monsemi-frontend")).toBeUndefined();
+      broker.setDown(false);
       await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
-      expect(harness.mcp.store.get("monsemi-frontend")).toBeDefined();
+      broker.setDown(true);
       const asked = broker.refused.length;
-      expect(asked).toBeGreaterThan(0);
       await harness.plugins.setEnabled(ID, false, "t");
       expect(harness.mcp.sandboxServers().some((s) => s.id === "monsemi-frontend")).toBe(false);
       await harness.plugins.setEnabled(ID, true, "t");
+      expect(broker.refused.length).toBe(asked);
       const manifest = join(fixture.mkt, "plugins/defect-agent-frontend/.claude-plugin/plugin.json");
       writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, "utf8")), version: "1.9.1" }));
       commitAll(fixture.mkt);
       await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
-      expect((await harness.plugins.update(ID, {}, "t")).plugin.version).toBe("1.9.1");
+      await expect(harness.plugins.update(ID, {}, "t")).rejects.toMatchObject({ status: 503 });
+      expect(harness.plugins.getPlugin(ID).version).toBe("1.9.0");
       expect(harness.mcp.store.get("monsemi-frontend")?.enabled).toBe(true);
+      const afterUpdate = broker.refused.length;
       const removed = await harness.plugins.uninstall(ID, "t");
       expect(removed.removedMcpServers).toEqual(["monsemi-frontend"]);
-      expect(broker.refused.length).toBe(asked);
+      expect(broker.refused.length).toBe(afterUpdate);
     } finally {
       broker.setDown(false);
       await harness.close();
@@ -560,7 +568,8 @@ describe("plugin 업데이트·broker 장애", () => {
 describe("plugin 설치 권한 (gateway는 umask 077로 돈다)", () => {
   it("설치본과 상위 디렉토리는 sandbox(uid 1000)가 읽을 수 있다", async () => {
     const fixture = buildFixture(tempDir("fixture-umask"));
-    const harness = await buildHarness();
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
     const previous = process.umask(0o077);
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
@@ -589,6 +598,7 @@ describe("plugin 설치 권한 (gateway는 umask 077로 돈다)", () => {
     } finally {
       process.umask(previous);
       await harness.close();
+      await broker.close();
     }
   });
 });

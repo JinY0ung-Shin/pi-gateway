@@ -58,7 +58,7 @@ describe("sandbox tools", () => {
     expect(exec.body.argv).toEqual(["bash", "-c", "echo hi-from-sandbox"]);
     expect(exec.body.cwd).toBe("/workspace");
     // gateway의 환경변수는 하나도 넘기지 않는다
-    expect(exec.body.env).toEqual({});
+    expect(exec.body.env).toBeUndefined();
     expect(h.sandbox.authFailures).toEqual([]);
     // gateway 로컬 tmp에 pi-bash 출력 파일을 만들지 않는다
     const created = readdirSync(tmpdir()).filter((f) => !tmpBefore.has(f) && f.startsWith("pi-bash"));

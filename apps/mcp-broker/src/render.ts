@@ -1,9 +1,11 @@
 import {
+  atLeastScope,
   collectTemplateRefs,
   type McpScope,
   type McpServerConfig,
   type RequestContext,
   renderTemplate,
+  requiredScope,
   type TemplateValues,
 } from "@pi-gateway/shared";
 
@@ -26,8 +28,6 @@ export interface RenderResult {
   credentials: string[];
   /** 값이 없는 비밀키 자리표시자 이름 (있으면 연결하면 안 된다) */
   missingSecrets: string[];
-  /** 값이 없어 빈 문자열이 된 그 밖의 자리표시자 */
-  missingOptional: string[];
 }
 
 export class ConfigError extends Error {
@@ -41,18 +41,12 @@ export class MissingSessionError extends Error {
   }
 }
 
-const SCOPE_RANK: Record<McpScope, number> = { shared: 0, "per-user": 1, "per-session": 2 };
-
 /**
  * 실제로 적용할 scope. 설정값보다 템플릿이 요구하는 scope가 넓으면 그쪽을 쓴다.
  * (http 서버는 scope 검증 규칙이 없어서, 사용자별 헤더를 쓰면서 shared로 설정될 수 있다.)
  */
 export function effectiveScope(config: McpServerConfig): McpScope {
-  const { refs } = collectTemplateRefs(config);
-  let required: McpScope = "shared";
-  if (refs.some((r) => r.kind === "user" || r.kind === "header")) required = "per-user";
-  if (refs.some((r) => r.kind === "session" || r.kind === "metadata")) required = "per-session";
-  return SCOPE_RANK[required] > SCOPE_RANK[config.scope] ? required : config.scope;
+  return atLeastScope(config.scope, requiredScope(config));
 }
 
 export function scopeKey(scope: McpScope, identity: Identity): string {
@@ -70,7 +64,6 @@ export function scopeKey(scope: McpScope, identity: Identity): string {
 export function renderTransport(config: McpServerConfig, identity: Identity, secrets: Map<string, string>): RenderResult {
   const credentials = new Set<string>();
   const missingSecrets = new Set<string>();
-  const missingOptional = new Set<string>();
   const values: TemplateValues = {
     user: identity.sub,
     secret: (name) => {
@@ -89,14 +82,9 @@ export function renderTransport(config: McpServerConfig, identity: Identity, sec
       const value = identity.ctx?.headers?.[ref.name];
       if (value) credentials.add(value);
     }
-    if (ref.kind === "plugin_root") throw new ConfigError("{{plugin_root}} must be resolved when the plugin is installed");
   }
 
-  const render = (input: string): string => {
-    const out = renderTemplate(input, values);
-    for (const m of out.missing) if (!m.includes("secret:")) missingOptional.add(m);
-    return out.value;
-  };
+  const render = (input: string): string => renderTemplate(input, values).value;
 
   const t = config.transport;
   if (t.type !== "http") throw new ConfigError("broker servers must use the http transport");
@@ -106,6 +94,5 @@ export function renderTransport(config: McpServerConfig, identity: Identity, sec
     transport: { url: render(t.url), headers },
     credentials: [...credentials],
     missingSecrets: [...missingSecrets].sort(),
-    missingOptional: [...missingOptional],
   };
 }

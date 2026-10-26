@@ -10,8 +10,8 @@ const MAX_RETENTION_DAYS = 3650;
 
 /** 서버에 저장된 대화 기록 보기(읽기 전용)와 보관 기간. 보관 기간이 지난 세션은 SessionHub가 지운다. */
 export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): void {
-  const { sessions } = ctx.deps;
-  const summary = (r: SessionRecord) => ({ id: r.id, user: r.user, model: r.model, turn: r.turn, createdAt: r.createdAt, lastActiveAt: r.lastActiveAt });
+  const { sessions } = ctx;
+  const summary = (r: SessionRecord) => ({ id: r.id, user: r.principal, model: r.model, turn: r.turn, createdAt: r.createdAt, lastActiveAt: r.lastActiveAt });
 
   app.get("/history/retention", async () => sessions.retention());
 

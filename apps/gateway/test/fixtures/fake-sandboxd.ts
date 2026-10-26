@@ -123,9 +123,6 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
       calls.push({ route, user, sid, body });
 
       switch (route) {
-        case SANDBOXD_ROUTES.ensure:
-          dirs(user);
-          return sendJson(res, 200, { key: userKey(user), containerName: `fake-${userKey(user)}`, state: "running", created: false });
         case SANDBOXD_ROUTES.fsRead: {
           const host = toHost(user, String(body.path));
           const st = await stat(host).catch(() => null);

@@ -1,8 +1,9 @@
 import {
-  collectTemplateRefs,
+  atLeastScope,
   MCP_SERVER_ID_PATTERN,
   McpServerConfig,
   type McpScope,
+  requiredScope,
   requiredSecretNames,
   SANDBOX_WORKSPACE,
 } from "@pi-gateway/shared";
@@ -97,17 +98,6 @@ export function sanitizeServerId(name: string): string {
   return MCP_SERVER_ID_PATTERN.test(id) ? id : "";
 }
 
-const SCOPE_RANK: Record<McpScope, number> = { shared: 0, "per-user": 1, "per-session": 2 };
-
-/** stdio 서버는 env·args가 시작 시 고정되므로 템플릿에 맞는 최소 scope가 정해진다. */
-function requiredScope(config: Pick<McpServerConfig, "transport">): McpScope {
-  if (config.transport.type !== "stdio") return "shared";
-  const refs = collectTemplateRefs(config).refs;
-  if (refs.some((r) => r.kind === "session" || r.kind === "metadata")) return "per-session";
-  if (refs.some((r) => r.kind === "user" || r.kind === "header")) return "per-user";
-  return "shared";
-}
-
 function stringRecord(value: unknown): Record<string, string> {
   if (!isObject(value)) return {};
   const out: Record<string, string> = {};
@@ -149,10 +139,9 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     }
     const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env, ...(override.env ?? {}) };
     if (command.startsWith("npx") || command === "uvx") warnings.push(`'${command}' downloads packages at start-up; pre-install the server instead if possible`);
-    const requested: McpScope = override.scope ?? ctx.defaults.scope;
     const transport = { ...draft, env };
-    const minimum = requiredScope({ transport });
-    const scope = SCOPE_RANK[requested] >= SCOPE_RANK[minimum] ? requested : minimum;
+    // stdio 서버는 env·args가 시작 시 고정되므로 템플릿에 맞는 최소 scope가 정해진다.
+    const scope = atLeastScope(override.scope ?? ctx.defaults.scope, requiredScope({ transport }));
     const parsed = McpServerConfig.safeParse({
       id,
       displayName: `${name} (${ctx.pluginName})`,

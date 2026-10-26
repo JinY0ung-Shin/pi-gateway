@@ -13,7 +13,7 @@ import {
   FsReadRequest,
   FsStatRequest,
   FsWriteRequest,
-  isValidPrincipal,
+  isValidUserId,
   SANDBOXD_ROUTES,
   type VerifiedInternalClaims,
   verifyInternalToken,
@@ -59,7 +59,7 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
 
 /** 요청의 user가 토큰 subject와 같은지 확인한다. */
 function assertPrincipal(req: FastifyRequest, user: string): void {
-  if (!isValidPrincipal(user)) throw new SandboxError("invalid_request", "invalid user");
+  if (!isValidUserId(user)) throw new SandboxError("invalid_request", "invalid user");
   if (req.claims?.sub !== user) throw new SandboxError("forbidden", "token subject does not match user");
 }
 
@@ -257,7 +257,7 @@ function handleAttach(socket: WebSocket, req: FastifyRequest, runtime: SandboxRu
     } catch (err) {
       return fail("invalid_request", `invalid AttachStart: ${errorMessage(err).slice(0, 300)}`);
     }
-    if (!isValidPrincipal(start.user)) return fail("invalid_request", "invalid user");
+    if (!isValidUserId(start.user)) return fail("invalid_request", "invalid user");
     if (req.claims?.sub !== start.user) return fail("forbidden", "token subject does not match user");
     starting = true;
     clearTimeout(startTimer);

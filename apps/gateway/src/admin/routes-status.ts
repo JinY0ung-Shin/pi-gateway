@@ -3,9 +3,9 @@ import type { AdminContext } from "./context.js";
 
 export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): void {
   app.get("/status", async () => {
-    let sandboxes: { items: Awaited<ReturnType<AdminContext["deps"]["sandboxes"]>>; error?: string };
+    let sandboxes: { items: Awaited<ReturnType<AdminContext["sandboxes"]>>; error?: string };
     try {
-      sandboxes = { items: await ctx.deps.sandboxes() };
+      sandboxes = { items: await ctx.sandboxes() };
     } catch (error) {
       sandboxes = { items: [], error: error instanceof Error ? error.message : String(error) };
     }
@@ -13,7 +13,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
     const plugins = ctx.plugins.listPlugins();
     const live = ctx.prompts.live();
     return {
-      stats: ctx.deps.stats(),
+      stats: ctx.stats(),
       sandboxes,
       process: {
         rssBytes: memory.rss,

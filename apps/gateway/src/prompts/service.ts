@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
-import type { PromptRenderInput, PromptService, PromptSnapshot } from "../contracts.js";
+import type { PromptRenderInput, PromptService } from "../contracts.js";
 import { type Db, migrate } from "../db.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-prompt.js";
 import { analyzePrompt, buildPromptVars, PROMPT_VARIABLES, type PromptVariable, renderPrompt } from "./render.js";
@@ -177,18 +177,8 @@ export class PromptManager implements PromptService {
 
   // ── 세션용 ─────────────────────────────────────────────────────
 
-  snapshotForSession(input: PromptRenderInput): PromptSnapshot {
-    const live = this.#liveRow();
-    let template = DEFAULT_SYSTEM_PROMPT;
-    let ref: PromptSnapshot["ref"] = { name: null, version: null, revision: live.revision };
-    if (live.name !== null && live.version !== null) {
-      const row = this.#versionRow(live.name, live.version);
-      if (row) {
-        template = row.content;
-        ref = { name: live.name, version: live.version, revision: live.revision };
-      }
-    }
-    return { text: renderPrompt(template, buildPromptVars(input, this.#language, this.#timeZone)), ref };
+  snapshotForSession(input: PromptRenderInput): string {
+    return renderPrompt(this.live().content, buildPromptVars(input, this.#language, this.#timeZone));
   }
 
   // ── 조회 ───────────────────────────────────────────────────────
@@ -319,14 +309,7 @@ export class PromptManager implements PromptService {
       if (!row) throw notFound(`prompt '${req.name}' v${version} not found`);
       template = row.content;
     } else template = this.live().content;
-    const text = renderPrompt(
-      template,
-      buildPromptVars(
-        { principal: req.user, user: req.user, model: req.model ?? "model", sessionId: "preview", now: new Date() },
-        this.#language,
-        this.#timeZone,
-      ),
-    );
+    const text = renderPrompt(template, buildPromptVars({ user: req.user, model: req.model ?? "model", now: new Date() }, this.#language, this.#timeZone));
     const analysis = analyzePrompt(template);
     return { text, used: analysis.used, unknown: analysis.unknown, charCount: text.length };
   }

@@ -8,7 +8,7 @@
 // 의존성 없음 (Node 22 내장 모듈만). 운영 서버에서는 sandboxd 컨테이너 안에서 돌리는 것이 가장 쉽다:
 //   docker compose exec -T sandboxd node --input-type=module - < scripts/security-check/run.mjs > security-report.md
 // 호스트에서 직접:
-//   node scripts/security-check/run.mjs --url http://127.0.0.1:7070 --secret-file /srv/pi-gateway/secrets/sandboxd_jwt_secret --out report.md
+//   node scripts/security-check/run.mjs --url http://127.0.0.1:7070 --secret-file /srv/pi-gateway/secrets/sandboxd/sandboxd_jwt_secret --out report.md
 //
 // 옵션
 //   --url URL              sandboxd 주소 (기본 http://127.0.0.1:7070)

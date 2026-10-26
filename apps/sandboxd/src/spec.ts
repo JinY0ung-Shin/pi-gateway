@@ -5,7 +5,7 @@ import type { SandboxdConfig } from "./config.js";
 export const LABEL_SANDBOX = "pi-gateway.sandbox";
 export const LABEL_USER_KEY = "pi-gateway.user-key";
 export const LABEL_INSTANCE = "pi-gateway.instance";
-/** 컨테이너 스펙 버전. 다르면 다시 만든다 (예: 네트워크가 있던 예전 sandbox → network none). */
+/** 컨테이너 스펙 버전. 보안 옵션 등 스펙을 바꾸면 올린다. 다른 버전의 컨테이너는 실행 중이어도 다시 만든다. */
 export const LABEL_SPEC = "pi-gateway.spec";
 export const SPEC_VERSION = "2";
 
@@ -21,8 +21,7 @@ export function containerName(config: Pick<SandboxdConfig, "containerPrefix">, k
 }
 
 /**
- * sandbox 컨테이너 스펙. 보안 옵션은 전부 여기서 고정한다 (호출자가 바꿀 수 없다).
- * DESIGN §3의 표와 test/spec.test.ts가 이 함수를 기준으로 맞춰져 있다.
+ * sandbox 컨테이너 스펙. 보안 옵션은 전부 여기서 고정한다 (호출자가 바꿀 수 없다). test/spec.test.ts가 확인한다.
  * sandbox는 network_mode none이고, 바깥으로는 egress 프록시(unix socket)로만 나간다.
  */
 export function buildContainerSpec(config: SandboxdConfig, key: string): Docker.ContainerCreateOptions {

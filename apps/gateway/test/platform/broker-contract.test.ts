@@ -46,7 +46,7 @@ const docs = {
 /** 같은 순서로 요청하고 관찰 가능한 결과만 모은다 */
 async function scenario(b: TestBroker): Promise<unknown[]> {
   const out: unknown[] = [];
-  const token = await signInternalToken(jwtSecretBytes(BROKER_JWT_SECRET), AUD_BROKER, { sub: "_admin", sid: "catalog" }, 60);
+  const token = await signInternalToken(jwtSecretBytes(BROKER_JWT_SECRET), AUD_BROKER, { sub: "alice", sid: "s1" }, 60);
   const visible = async () => {
     const res = await fetch(`${b.dataUrl}/mcp/servers`, { headers: { authorization: `Bearer ${token}` } });
     const body = (await res.json()) as { servers?: { id: string }[] };
@@ -78,7 +78,7 @@ async function scenario(b: TestBroker): Promise<unknown[]> {
     ["literal credential", { ...docs, id: "lit", transport: { type: "http", url: "https://x.example.com/mcp", headers: { Authorization: "Bearer abc" } } }],
     ["stdio", { id: "stdiosrv", runIn: "broker", transport: { type: "stdio", command: "node", args: ["x.js"] } }],
     ["reserved id", { ...docs, id: "servers" }],
-    ["plugin_root", { ...docs, id: "pr", transport: { ...docs.transport, headers: { "X-Root": "{{plugin_root}}" } } }],
+    ["unknown placeholder", { ...docs, id: "pr", transport: { ...docs.transport, headers: { "X-Root": "{{plugin_root}}" } } }],
     ["sandbox", { id: "sb", runIn: "sandbox", scope: "per-user", transport: { type: "stdio", command: "node", args: ["x.js"] } }],
   ];
   for (const [label, body] of rejected) {
@@ -113,7 +113,7 @@ async function registryFlow(b: TestBroker): Promise<unknown[]> {
   await registry.setSecret("docs", "T", { value: "contract-secret-1" }, "contract");
   const entry = await registry.get("docs");
   out.push(["get", entry.missingSecrets, (entry.secrets ?? []).map((s) => s.name)]);
-  out.push(["visible", (await registry.brokerServersFor("_admin", "catalog")).map((s) => s.id)]);
+  out.push(["visible", (await registry.brokerServersFor("alice", "s1")).map((s) => s.id)]);
   out.push(["literal rejected before broker", await registry.upsert({ ...docs, id: "lit", transport: { type: "http", url: "https://x.example.com/mcp", headers: { Authorization: "Bearer abc" } } }, "c").then(() => "ok", (e: { status: number }) => e.status)]);
   await registry.remove("docs", "contract");
   out.push(["removed", await registry.get("docs").then(() => "found", (e: { status: number }) => e.status)]);
@@ -150,7 +150,7 @@ describe("broker contract (fake vs real createBroker)", () => {
       ["literal credential", 400, "invalid_request"],
       ["stdio", 400, "invalid_request"],
       ["reserved id", 400, "invalid_request"],
-      ["plugin_root", 400, "invalid_request"],
+      ["unknown placeholder", 400, "invalid_request"],
       ["sandbox", 400, "invalid_request"],
       ["id mismatch", 400],
       ["secret for missing server", 404],

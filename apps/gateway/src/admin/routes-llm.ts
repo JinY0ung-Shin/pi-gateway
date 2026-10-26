@@ -9,7 +9,7 @@ import { PlatformError } from "./errors.js";
  * API 키는 돌려주지 않는다. PUT에서 apiKey를 빼면 지금 키를 그대로 쓰고, ""이면 키를 지운다.
  */
 export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void {
-  const { llm } = ctx.deps;
+  const { llm } = ctx;
 
   const view = (record: LlmSettingsRecord | null) => {
     if (!record) return { configured: false, settings: null, apiKeySet: false, updatedAt: null, updatedBy: null };

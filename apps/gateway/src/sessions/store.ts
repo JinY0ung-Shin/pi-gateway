@@ -8,16 +8,10 @@ export interface PendingToolCall {
   arguments: unknown;
 }
 
-export interface PromptRef {
-  name: string | null;
-  version: number | null;
-  revision: string;
-}
-
 export interface SessionRecord {
   id: string;
+  /** 사용자 id */
   principal: string;
-  user: string;
   model: string;
   thinkingLevel: string;
   /** commit된 마지막 turn 번호 (0 = 아직 없음) */
@@ -27,7 +21,6 @@ export interface SessionRecord {
   /** commit 시점의 pi leaf entry id. 되살릴 때 이 지점으로 맞춘다 (실패한 턴을 버리기 위해). */
   leafId: string | null;
   promptText: string;
-  promptRef: PromptRef;
   /** pi addendum: 첫 턴 instructions + `Current user:` */
   appendPrompt: string;
   /** 세션을 만들 때의 skill 이름 목록 (이후 설치된 skill은 새 세션부터) */
@@ -41,14 +34,12 @@ export interface SessionRecord {
 interface Row {
   id: string;
   principal: string;
-  user: string;
   model: string;
   thinking_level: string;
   turn: number;
   session_file: string | null;
   leaf_id: string | null;
   prompt_text: string;
-  prompt_ref: string;
   append_prompt: string;
   skill_names: string;
   pending_tool_call: string | null;
@@ -84,6 +75,9 @@ const MIGRATIONS = [
      updated_at TEXT NOT NULL,
      updated_by TEXT NOT NULL
    )`,
+  // user는 principal과 늘 같았고, prompt_ref는 읽는 곳이 없었다.
+  `ALTER TABLE sessions DROP COLUMN user;
+   ALTER TABLE sessions DROP COLUMN prompt_ref`,
 ];
 
 /** 대화 기록 보관 기간. 마지막 활동 뒤 days일이 지나면 지운다 (0 = 지우지 않는다). */
@@ -97,14 +91,12 @@ function fromRow(row: Row): SessionRecord {
   return {
     id: row.id,
     principal: row.principal,
-    user: row.user,
     model: row.model,
     thinkingLevel: row.thinking_level,
     turn: row.turn,
     sessionFile: row.session_file,
     leafId: row.leaf_id,
     promptText: row.prompt_text,
-    promptRef: JSON.parse(row.prompt_ref) as PromptRef,
     appendPrompt: row.append_prompt,
     skillNames: JSON.parse(row.skill_names) as string[],
     pendingToolCall: row.pending_tool_call ? (JSON.parse(row.pending_tool_call) as PendingToolCall) : null,
@@ -127,22 +119,20 @@ export class SessionStore {
   insert(record: SessionRecord): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, principal, user, model, thinking_level, turn, session_file, leaf_id, prompt_text, prompt_ref,
+        `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
            append_prompt, skill_names, pending_tool_call, created_at, updated_at, last_active_at)
-         VALUES (@id, @principal, @user, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text, @prompt_ref,
+         VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
            @append_prompt, @skill_names, @pending_tool_call, @created_at, @updated_at, @last_active_at)`,
       )
       .run({
         id: record.id,
         principal: record.principal,
-        user: record.user,
         model: record.model,
         thinking_level: record.thinkingLevel,
         turn: record.turn,
         session_file: record.sessionFile,
         leaf_id: record.leafId,
         prompt_text: record.promptText,
-        prompt_ref: JSON.stringify(record.promptRef),
         append_prompt: record.appendPrompt,
         skill_names: JSON.stringify(record.skillNames),
         pending_tool_call: record.pendingToolCall ? JSON.stringify(record.pendingToolCall) : null,

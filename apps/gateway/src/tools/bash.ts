@@ -18,14 +18,9 @@ import type { SandboxHandle } from "../sandbox/client.js";
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const UPDATE_THROTTLE_MS = 100;
 
-export interface SandboxBashOptions {
-  /** sandbox 명령에 넘길 추가 env (allowlist된 값만) */
-  env?: () => Record<string, string>;
-}
-
 const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
 
-export function createSandboxBashTool(sandbox: SandboxHandle, options: SandboxBashOptions = {}): ToolDefinition {
+export function createSandboxBashTool(sandbox: SandboxHandle): ToolDefinition {
   const base = createBashToolDefinition(SANDBOX_WORKSPACE, { exposeSessionEnvironment: false });
   const definition: typeof base = {
     ...base,
@@ -69,7 +64,6 @@ export function createSandboxBashTool(sandbox: SandboxHandle, options: SandboxBa
           {
             argv: ["bash", "-c", command],
             cwd,
-            env: options.env?.() ?? {},
             ...(timeout && timeout > 0 ? { timeoutSec: Math.ceil(timeout) } : {}),
           },
           { onStdout: onData, onStderr: onData, signal },

@@ -1,4 +1,4 @@
-// 관리 API 응답 형태 (gateway platform 레인과 맞춘다)
+// 관리 API 응답 형태 (gateway의 src/admin, src/prompts, src/plugins, src/mcp-registry와 맞춘다)
 
 export interface LivePrompt {
   name: string | null;
@@ -92,7 +92,7 @@ export interface McpServerEntry {
   requiredSecrets: string[];
   secrets?: SecretInfo[];
   missingSecrets?: string[];
-  status?: { processes: number; lastError?: string; lastErrorAt?: string };
+  status?: { lastError?: string; lastErrorAt?: string };
 }
 
 export interface McpServerList {

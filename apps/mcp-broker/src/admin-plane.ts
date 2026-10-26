@@ -1,7 +1,6 @@
 import {
   AUD_BROKER_ADMIN,
   bearerToken,
-  collectTemplateRefs,
   findLiteralCredentials,
   McpServerConfig,
   PutSecretRequest,
@@ -116,9 +115,6 @@ export function buildAdminPlane(deps: {
       return reply.code(400).send(errorBody("invalid_request", "only runIn=broker servers are stored in the broker"));
     }
     const problems = findLiteralCredentials(cfg);
-    if (collectTemplateRefs(cfg).refs.some((r) => r.kind === "plugin_root")) {
-      problems.push("{{plugin_root}} must be resolved when the plugin is installed");
-    }
     if (problems.length > 0) return reply.code(400).send(errorBody("invalid_request", problems.join("; ")));
 
     const { server, created, clearedSecrets } = store.upsertServer(cfg);

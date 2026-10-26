@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
-import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
+import type { SandboxHandle } from "../sandbox/client.js";
 
 /**
  * 도구 확장 단위. 새 도구는 provider를 하나 만들어 src/tools/registry.ts의 목록에 추가한다.
@@ -18,11 +18,8 @@ import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
 export interface ToolSessionContext {
   /** 사용자 id */
   principal: string;
-  user: string;
   sessionId: string;
-  model: string;
-  sandboxClient: SandboxClient;
-  /** sandboxClient.for(principal, sessionId) — 이 세션 전용 sandbox 핸들 */
+  /** 이 세션 전용 sandbox 핸들 */
   sandbox: SandboxHandle;
   /** 현재 요청의 전달 헤더·metadata (allowlist를 거친 값). 턴마다 바뀔 수 있어 함수로 준다. */
   requestContext: () => RequestContext;

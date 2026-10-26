@@ -11,7 +11,7 @@ If it grows heavy again, it has lost its reason to exist.
 1. **Build only what was requested or what fixes a confirmed defect.** Never build something because it "might be needed later".
 2. **No speculative alternatives.** Don't add modes, options, config knobs or fallbacks in advance. Once a choice is made, delete the alternatives.
 3. **Look for deletions before additions.** When changing something, remove any code, config, docs or scripts that the change makes unnecessary.
-4. **Keep verification proportional.** Run the existing checks (`npx tsc -b`, `npx vitest run`) and add only the tests the change needs. Extra harnesses, tooling, review rounds or agents only when asked.
+4. **Keep verification proportional.** Run the existing checks (`npm run typecheck`, `npx vitest run`) and add only the tests the change needs. Extra harnesses, tooling, review rounds or agents only when asked.
 5. **Keep explanations short.** Lead with the purpose. If more work seems worthwhile, propose it in one line; don't build it.
 
 ## When a request conflicts with the principle

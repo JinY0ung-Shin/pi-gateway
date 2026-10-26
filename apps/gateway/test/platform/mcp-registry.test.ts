@@ -79,7 +79,17 @@ describe("MCP registry", () => {
     res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/other", headers: { ...adminHeaders, ...json }, payload: sandboxServer });
     expect(res.statusCode).toBe(400);
     res = await h.app.inject({ method: "POST", url: "/admin/api/mcp/validate", headers: { ...adminHeaders, ...json }, payload: { config: brokerServer } });
-    expect(res.json()).toEqual({ ok: true, errors: [], requiredSecrets: ["GITHUB_TOKEN"] });
+    expect(res.json()).toEqual({ ok: true, errors: [], requiredSecrets: ["GITHUB_TOKEN"], clearsSecrets: [] });
+  });
+
+  it("검증: 저장하면 broker가 지울 비밀키를 알려준다 (실행 대상이 바뀌거나 sandbox로 옮길 때)", async () => {
+    h = await buildHarness({ env: brokerEnv(broker.url) });
+    await h.mcp.upsert(brokerServer, "t");
+    await h.mcp.setSecret("github", "GITHUB_TOKEN", { value: SECRET }, "t");
+    const clears = async (config: object) => (await h.mcp.validate(config)).clearsSecrets;
+    expect(await clears({ ...brokerServer, displayName: "GitHub" })).toEqual([]);
+    expect(await clears({ ...brokerServer, transport: { ...brokerServer.transport, url: "https://evil.example.com/mcp" } })).toEqual(["GITHUB_TOKEN"]);
+    expect(await clears({ ...sandboxServer, id: "github" })).toEqual(["GITHUB_TOKEN"]);
   });
 
   it("비밀값은 broker로만 전달되고 gateway DB·로그·응답에는 남지 않는다", async () => {
@@ -187,6 +197,7 @@ describe("MCP registry", () => {
   it("broker가 안 될 때 broker를 확인해야 하는 변경은 503으로 실패하고 아무것도 바꾸지 않는다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     await h.mcp.upsert(brokerServer, "t");
+    await h.mcp.upsert({ ...sandboxServer, id: "new-one" }, "t");
     broker.setDown(true);
     try {
       // sandbox로 옮기기: broker에 같은 id가 있는지 확인할 수 없으므로 만들지 않는다
@@ -195,10 +206,10 @@ describe("MCP registry", () => {
       await expect(h.mcp.remove("github", "t")).rejects.toMatchObject({ status: 503 });
       await expect(h.mcp.setPluginServersEnabled("p@m", false, "t")).rejects.toMatchObject({ status: 503 });
       await expect(h.mcp.removePluginServers("p@m", "t")).rejects.toMatchObject({ status: 503 });
-      // broker에 없던 새 id의 sandbox 서버는 broker 없이 만들 수 있다
-      let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/new-one", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "new-one" } });
-      expect(res.statusCode).toBe(200);
-      expect(h.mcp.store.get("new-one")).toBeDefined();
+      // 새 id의 sandbox 서버도 broker에 같은 id가 있는지 확인해야 하므로 만들지 않는다
+      let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/brand-new", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "brand-new" } });
+      expect(res.statusCode).toBe(503);
+      expect(h.mcp.store.get("brand-new")).toBeUndefined();
       // 이미 sandbox에 있는 서버를 고칠 때는 broker에 묻지 않는다
       const asked = broker.refused.length;
       res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/new-one", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "new-one", description: "edited" } });

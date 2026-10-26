@@ -56,8 +56,8 @@ describe("data plane authentication", () => {
     expect((await get(token)).statusCode).toBe(401);
   });
 
-  it("gateway 관리 카탈로그용 _admin subject는 받는다", async () => {
-    expect((await get(await tb.token({ sub: "_admin", sid: "catalog" }))).statusCode).toBe(200);
+  it("관리용 _admin subject는 데이터 평면에서 거부한다", async () => {
+    expect((await get(await tb.token({ sub: "_admin", sid: "catalog" }))).statusCode).toBe(401);
   });
 
   it("principal 형식이 아닌 subject는 거부한다", async () => {

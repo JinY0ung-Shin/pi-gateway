@@ -96,10 +96,7 @@ export async function buildAgentSession(
 
   const { customTools } = await deps.tools.createSessionTools({
     principal: record.principal,
-    user: record.user,
     sessionId: record.id,
-    model: record.model,
-    sandboxClient: deps.sandboxClient,
     sandbox,
     requestContext,
     log: deps.log.child({ session: record.id }),

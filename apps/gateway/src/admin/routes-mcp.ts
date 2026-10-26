@@ -13,10 +13,7 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: AdminContext): void
 
   app.get<IdParams>("/mcp/servers/:id", async (req) => mcp.get(req.params.id));
 
-  app.post<{ Body: { config?: unknown } }>("/mcp/validate", async (req) => {
-    const result = mcp.validate(req.body?.config ?? req.body);
-    return { ok: result.ok, errors: result.errors, requiredSecrets: result.requiredSecrets };
-  });
+  app.post<{ Body: { config?: unknown } }>("/mcp/validate", async (req) => mcp.validate(req.body?.config ?? req.body));
 
   app.put<IdParams & { Body: { config?: unknown } }>("/mcp/servers/:id", async (req) => {
     const raw = (req.body?.config ?? req.body) as Record<string, unknown> | undefined;

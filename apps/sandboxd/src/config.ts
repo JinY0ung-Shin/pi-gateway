@@ -9,8 +9,8 @@ export interface SandboxdConfig {
   dockerSocket: string;
   image: string;
   /**
-   * egress 프록시의 unix socket이 있는 Docker 볼륨. sandbox는 network_mode none이고,
-   * 이 볼륨을 /run/pi-proxy에 읽기 전용으로 mount해서 프록시로만 나간다.
+   * egress 프록시의 unix socket이 있는 Docker 볼륨 (docker-compose.yml의 proxy-sock과 같은 이름).
+   * sandbox는 network_mode none이고, 이 볼륨을 /run/pi-proxy에 읽기 전용으로 mount해서 프록시로만 나간다.
    */
   proxyVolume: string;
   /** 비우면 Docker 기본(runc). gVisor면 "runsc". */
@@ -28,8 +28,8 @@ export interface SandboxdConfig {
   shmSizeBytes: number;
   idleSeconds: number;
   reapIntervalMs: number;
+  /** 컨테이너 이름 접두사와 label 값. 테스트는 다른 값을 써서 운영 컨테이너를 건드리지 않는다. */
   containerPrefix: string;
-  /** 같은 Docker 호스트에서 여러 sandboxd를 구분하는 label 값 (정리 범위) */
   instance: string;
   /** fs 도우미 한 번의 최대 실행 시간 */
   fsTimeoutSeconds: number;
@@ -72,12 +72,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
   if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 64) throw new Error("SANDBOX_CPUS must be between 0 and 64");
 
   const idleSeconds = int(env, "SANDBOX_IDLE_SECONDS", 900, 10);
-  const prefix = env.SANDBOX_CONTAINER_PREFIX ?? "pi-sbx-";
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,30}$/.test(prefix)) throw new Error("SANDBOX_CONTAINER_PREFIX is invalid");
-  const instance = env.SANDBOX_INSTANCE ?? "default";
-  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(instance)) throw new Error("SANDBOX_INSTANCE is invalid");
-  const proxyVolume = env.SANDBOX_PROXY_VOLUME || "pi-gateway-proxy-sock";
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(proxyVolume)) throw new Error("SANDBOX_PROXY_VOLUME is invalid");
 
   return {
     host: env.HOST ?? "0.0.0.0",
@@ -86,7 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
     jwtSecret: jwtSecretBytes(secret),
     dockerSocket: env.DOCKER_SOCKET ?? "/var/run/docker.sock",
     image: env.SANDBOX_IMAGE ?? "pi-gateway/sandbox:latest",
-    proxyVolume,
+    proxyVolume: "pi-gateway-proxy-sock",
     runtime: env.SANDBOX_RUNTIME || undefined,
     workspacesDir,
     workspacesHostDir,
@@ -97,9 +91,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
     tmpSize: env.SANDBOX_TMP_SIZE ?? "256m",
     shmSizeBytes: parseBytes("SANDBOX_SHM_SIZE", env.SANDBOX_SHM_SIZE ?? "64m"),
     idleSeconds,
-    reapIntervalMs: int(env, "SANDBOX_REAP_INTERVAL_SECONDS", Math.min(60, Math.max(5, Math.floor(idleSeconds / 4))), 1) * 1000,
-    containerPrefix: prefix,
-    instance,
+    reapIntervalMs: Math.min(60, Math.max(5, Math.floor(idleSeconds / 4))) * 1000,
+    containerPrefix: "pi-sbx-",
+    instance: "default",
     fsTimeoutSeconds: int(env, "SANDBOX_FS_TIMEOUT_SECONDS", 60, 1),
   };
 }

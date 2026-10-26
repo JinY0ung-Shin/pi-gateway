@@ -1,5 +1,4 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { fastifyCookie } from "@fastify/cookie";
 import { bearerToken } from "@pi-gateway/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { GatewayConfig } from "../config.js";
@@ -36,10 +35,7 @@ export function safeEqual(a: string, b: string): boolean {
 
 export const isMutating = (method: string) => !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 
-/**
- * 쿠키 직렬화·파싱. @fastify/cookie의 serialize/parse는 plugin을 등록해야 동작하고,
- * gateway의 다른 레인이 같은 plugin을 등록하면 충돌하므로 여기서 직접 처리한다 (서명은 @fastify/cookie의 sign/unsign).
- */
+/** 쿠키 직렬화·파싱. 관리 화면 세션 쿠키 하나만 다루므로 직접 처리한다. */
 function serializeCookie(name: string, value: string, options: { maxAgeSeconds: number; secure: boolean }): string {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
@@ -74,7 +70,8 @@ interface FailureRecord {
 
 /**
  * 관리 화면 인증.
- * - 로그인: ADMIN_API_KEY → 서버에 저장되는 세션(12시간). 쿠키에는 서명된 무작위 토큰만 들어간다.
+ * - 로그인: ADMIN_API_KEY → 서버에 저장되는 세션(12시간). 쿠키에는 무작위 토큰(256비트)만 들어가고,
+ *   DB에는 그 해시만 둔다. 토큰을 추측할 수 없으므로 쿠키를 따로 서명하지 않는다.
  * - 스크립트: `Authorization: Bearer <ADMIN_API_KEY>`
  * - 쿠키로 들어온 상태 변경 요청은 `X-Admin-Request: 1` 헤더가 있어야 한다 (CSRF 방어).
  * - 로그인과 Bearer 실패는 주소별로 센다. 5번을 넘게 실패하면 15분 동안 잠그고 429와 Retry-After를 준다.
@@ -84,18 +81,16 @@ interface FailureRecord {
 export class AdminAuth {
   readonly #db: Db;
   readonly #apiKey: string | undefined;
-  readonly #cookieSecret: string;
   /** 주소 → 실패 기록. Map의 삽입 순서를 LRU 순서로 쓴다 (최근 실패가 뒤). */
   readonly #failures = new Map<string, FailureRecord>();
-  constructor(db: Db, config: Pick<GatewayConfig, "auth" | "admin">) {
+  constructor(db: Db, config: Pick<GatewayConfig, "auth">) {
     this.#db = db;
     this.#apiKey = config.auth.adminApiKey;
-    this.#cookieSecret = config.admin.cookieSecret || config.auth.adminApiKey || "";
     migrate(db, "admin", MIGRATIONS);
   }
 
   get enabled(): boolean {
-    return Boolean(this.#apiKey) && this.#cookieSecret.length > 0;
+    return Boolean(this.#apiKey);
   }
 
   requireEnabled(): void {
@@ -140,10 +135,7 @@ export class AdminAuth {
       .run(sha256(token).toString("hex"), new Date(now).toISOString(), expiresAt);
     reply.header(
       "set-cookie",
-      serializeCookie(ADMIN_COOKIE, fastifyCookie.sign(token, this.#cookieSecret), {
-        maxAgeSeconds: SESSION_TTL_MS / 1000,
-        secure: req.protocol === "https",
-      }),
+      serializeCookie(ADMIN_COOKIE, token, { maxAgeSeconds: SESSION_TTL_MS / 1000, secure: req.protocol === "https" }),
     );
     return { expiresAt };
   }
@@ -181,10 +173,7 @@ export class AdminAuth {
   }
 
   #cookieToken(req: FastifyRequest): string | null {
-    const raw = readCookie(req.headers.cookie, ADMIN_COOKIE);
-    if (!raw) return null;
-    const result = fastifyCookie.unsign(raw, this.#cookieSecret);
-    return result.valid && result.value ? result.value : null;
+    return readCookie(req.headers.cookie, ADMIN_COOKIE) || null;
   }
 
   #session(req: FastifyRequest): { expiresAt: string } | null {

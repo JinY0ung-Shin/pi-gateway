@@ -8,15 +8,15 @@ import {
   AUD_BROKER,
   AUD_BROKER_ADMIN,
   bearerToken,
-  collectTemplateRefs,
   findLiteralCredentials,
   jwtSecretBytes,
   McpServerConfig,
   requiredSecretNames,
+  transportTarget,
   verifyInternalToken,
 } from "@pi-gateway/shared";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
-import type { PlatformLogger } from "../../src/admin/logger.js";
+import { type Logger, pino } from "pino";
 import { registerAdminRoutes } from "../../src/admin/index.js";
 import { type GatewayConfig, loadConfig } from "../../src/config.js";
 import type { AdminDeps } from "../../src/contracts.js";
@@ -60,10 +60,10 @@ export function makeConfig(options: { dataDir: string; pluginsDir: string; env?:
 }
 
 /** 로그를 문자열로 모아 두는 logger (비밀값이 로그에 없는지 확인용) */
-export function captureLogger(): { logger: PlatformLogger; lines: string[] } {
+export function captureLogger(): { logger: Logger; lines: string[] } {
   const lines: string[] = [];
-  const push = (level: string) => (obj: object, msg?: string) => lines.push(JSON.stringify({ level, msg, ...obj }));
-  return { lines, logger: { debug: push("debug"), info: push("info"), warn: push("warn"), error: push("error") } };
+  const logger = pino({ level: "debug" }, { write: (line: string) => void lines.push(line) });
+  return { lines, logger };
 }
 
 export interface Harness {
@@ -109,6 +109,7 @@ export async function buildHarness(options: {
   const deps: AdminDeps = {
     config,
     db,
+    log: captured.logger,
     prompts,
     plugins,
     mcp,
@@ -200,7 +201,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       config,
       secrets: [...set.keys()].map((name) => ({ name, setAt: "2026-10-16T00:00:00.000Z", fingerprint: `fp-${name.length}` })),
       missingSecrets: required.filter((n) => !set.has(n)),
-      status: { processes: 0 },
     };
   };
 
@@ -237,7 +237,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     if (config.id === "servers") return bad(reply, "id 'servers' is reserved");
     const literals = findLiteralCredentials(config);
     if (literals.length > 0) return bad(reply, literals.join("; "));
-    if (JSON.stringify(config.transport).includes("{{plugin_root}}")) return bad(reply, "unresolved {{plugin_root}}");
     const previous = servers.get(config.id);
     if (previous && transportTarget(previous) !== transportTarget(config)) secrets.delete(config.id);
     servers.set(config.id, config);
@@ -305,24 +304,6 @@ export function brokerEnv(url: string): Record<string, string> {
   };
 }
 
-/** 실제 broker(store.ts transportTarget)와 같은 기준: 이 값이 바뀌면 저장된 비밀키를 지운다. */
-function transportTarget(config: McpServerConfig): string {
-  const t = config.transport;
-  if (t.type !== "http") return JSON.stringify(t);
-  let origin: string;
-  try {
-    origin = /\{\{/.test(t.url.split("/").slice(0, 3).join("/")) ? t.url : new URL(t.url).origin;
-  } catch {
-    origin = t.url;
-  }
-  const headers = Object.entries(t.headers)
-    .map(([name, value]) => [name.toLowerCase(), value] as const)
-    .sort(([a], [b]) => a.localeCompare(b));
-  const urlSecrets = collectTemplateRefs({ transport: { ...t, headers: {} } })
-    .refs.flatMap((r) => (r.kind === "secret" ? [r.name] : []))
-    .sort();
-  return JSON.stringify({ type: "http", origin, headers, urlSecrets });
-}
 
 /** gateway가 붙는 broker. 가짜(startFakeBroker)와 실제(startRealBroker)를 같은 모양으로 쓴다. */
 export interface TestBroker {

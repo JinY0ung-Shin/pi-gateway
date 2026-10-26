@@ -100,13 +100,9 @@ export class BrokerService {
       config: server.config,
       secrets: this.#store.listSecretMeta(server.config.id).map(({ name, setAt, fingerprint }) => ({ name, setAt, fingerprint })),
       missingSecrets: this.#store.missingSecrets(server),
-      status: { processes: this.#pool.count(server.config.id) },
     };
     const last = this.#lastErrors.get(server.config.id);
-    if (last && view.status) {
-      view.status.lastError = last.message;
-      view.status.lastErrorAt = last.at;
-    }
+    if (last) view.status = { lastError: last.message, lastErrorAt: last.at };
     return view;
   }
 

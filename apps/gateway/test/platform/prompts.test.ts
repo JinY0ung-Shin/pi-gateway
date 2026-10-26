@@ -3,13 +3,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "../../src/prompts/default-prompt.js";
 import { analyzePrompt, buildPromptVars, renderPrompt } from "../../src/prompts/render.js";
 import { adminHeaders, buildHarness, cleanupTempDirs, type Harness, loginCookie } from "./helpers.js";
 
-const input = (user = "alice") => ({
-  principal: user,
-  user,
-  model: "test-model",
-  sessionId: "s1",
-  now: new Date("2026-10-16T03:04:05Z"),
-});
+const input = (user = "alice") => ({ user, model: "test-model", now: new Date("2026-10-16T03:04:05Z") });
 
 let h: Harness;
 afterEach(async () => {
@@ -38,14 +32,11 @@ describe("prompt rendering", () => {
 describe("PromptManager", () => {
   it("배포본이 없으면 기본 프롬프트 스냅샷을 준다", async () => {
     h = await buildHarness();
-    const snap = h.prompts.snapshotForSession(input());
-    expect(snap.ref.name).toBeNull();
-    expect(snap.ref.version).toBeNull();
-    expect(snap.ref.revision).toMatch(/^[0-9a-f]{16}$/);
-    expect(snap.text).toContain("/workspace");
-    expect(snap.text).toContain("Reply in Korean");
-    expect(snap.text).not.toContain("{{");
-    expect(snap.text).toMatch(/Files you create there are kept between conversations with this user/);
+    const text = h.prompts.snapshotForSession(input());
+    expect(text).toContain("/workspace");
+    expect(text).toContain("Reply in Korean");
+    expect(text).not.toContain("{{");
+    expect(text).toMatch(/Files you create there are kept between conversations with this user/);
   });
 
   it("버전 관리: 같은 내용 422, append-only", async () => {
@@ -73,11 +64,11 @@ describe("PromptManager", () => {
     const d2 = h.prompts.deploy("ops", { version: 2 }, "jin");
     expect(d2.deployment?.action).toBe("deploy");
     expect(d2.live.version).toBe(2);
-    expect(h.prompts.snapshotForSession(input("bob"))).toMatchObject({ text: "v2 for bob", ref: { name: "ops", version: 2 } });
+    expect(h.prompts.snapshotForSession(input("bob"))).toBe("v2 for bob");
 
     const d1 = h.prompts.deploy("ops", { version: 1, note: "되돌림" });
     expect(d1.deployment?.action).toBe("rollback");
-    expect(h.prompts.snapshotForSession(input("bob")).text).toBe("v1 for bob {{UNKNOWN}}");
+    expect(h.prompts.snapshotForSession(input("bob"))).toBe("v1 for bob {{UNKNOWN}}");
 
     // 이미 배포된 버전을 다시 배포하면 아무것도 바꾸지 않는다
     expect(h.prompts.deploy("ops", { version: 1 }).deployment).toBeNull();

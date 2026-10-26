@@ -1,7 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
-import { clearsSecrets, literalCredentials } from "../mcp-rules";
 import type { McpScope, McpServerConfig, McpServerEntry, McpServerList, ToolSummary } from "../types";
 
 export function McpPage(props: { focus?: string | undefined }) {
@@ -205,27 +204,28 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const source = props.entry?.config.source ?? { kind: "manual" as const };
 
+  /** 서버 검증. clearsSecrets는 이대로 저장하면 broker가 지울 비밀키다. */
   const validate = async () => {
-    const result = await api<{ ok: boolean; errors: string[]; requiredSecrets: string[] }>("POST", "/mcp/validate", { config: fromForm(form, source) });
+    const result = await api<{ ok: boolean; errors: string[]; requiredSecrets: string[]; clearsSecrets: string[] }>("POST", "/mcp/validate", {
+      config: fromForm(form, source),
+    });
     setErrors(result.errors);
     setRequired(result.requiredSecrets);
-    return result.ok;
+    return result;
   };
 
   const save = () =>
     action.run(
       async () => {
-        if (!(await validate())) throw new Error("설정을 고쳐 주세요");
+        const { ok, clearsSecrets: cleared } = await validate();
+        if (!ok) throw new Error("설정을 고쳐 주세요");
         const config = fromForm(form, source);
-        const stored = props.entry?.store === "broker" ? (props.entry.secrets ?? []).map((s) => s.name) : [];
-        let cleared: string[] = [];
-        if (props.entry && stored.length > 0 && clearsSecrets(props.entry.config, config)) {
-          const ok = confirm(
-            `이 변경은 서버의 실행 대상(URL 주소, 헤더, 또는 command·args·cwd·env)을 바꿉니다.\n` +
-              `저장하면 broker가 저장된 비밀키 ${stored.join(", ")}를 지우므로, 저장한 뒤 다시 입력해야 합니다.\n계속할까요?`,
+        if (cleared.length > 0) {
+          const yes = confirm(
+            `이 변경은 서버의 실행 대상(URL 주소·헤더)이나 실행 위치를 바꿉니다.\n` +
+              `저장하면 broker가 저장된 비밀키 ${cleared.join(", ")}를 지우므로, 저장한 뒤 다시 입력해야 합니다.\n계속할까요?`,
           );
-          if (!ok) return { cancelled: true, cleared };
-          cleared = stored;
+          if (!yes) return { cancelled: true, cleared: [] as string[] };
         }
         await api("PUT", `/mcp/servers/${enc(config.id)}`, { config });
         await props.onSaved(config.id);
@@ -349,21 +349,6 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
           </label>
         </div>
       )}
-      {(() => {
-        const found = literalCredentials(fromForm(form, source));
-        if (found.length === 0) return null;
-        return form.runIn === "sandbox" ? (
-          <Notice tone="error">
-            자격증명으로 보이는 값이 있습니다: <span class="mono">{found.join(", ")}</span>. sandbox 서버의 env는 agent에게 보이므로 저장할 수 없습니다 —
-            자격증명이 필요한 서버는 HTTP로 띄워 broker에 등록하고 <span class="mono">{"{{secret:NAME}}"}</span>을 쓰세요.
-          </Notice>
-        ) : (
-          <Notice tone="warn">
-            자격증명 자리에 값이 그대로 들어 있습니다: <span class="mono">{found.join(", ")}</span>. <span class="mono">{"{{secret:NAME}}"}</span>으로 바꾸고 값은
-            비밀키 칸에 넣으세요 (broker가 리터럴 값을 거절합니다).
-          </Notice>
-        );
-      })()}
       <div class="grid-2">
         <label class="field">
           <span>허용할 도구 (쉼표, 비우면 전체)</span>
@@ -391,7 +376,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
         </Notice>
       )}
       <div class="row">
-        <button onClick={() => action.run(validate, (ok) => (ok ? "설정이 올바릅니다" : "설정에 오류가 있습니다"))}>검증</button>
+        <button onClick={() => action.run(async () => (await validate()).ok, (ok) => (ok ? "설정이 올바릅니다" : "설정에 오류가 있습니다"))}>검증</button>
         <button class="primary" disabled={action.busy} onClick={save}>
           저장
         </button>

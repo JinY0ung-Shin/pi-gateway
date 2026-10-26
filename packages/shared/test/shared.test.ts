@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   AUD_BROKER,
   AUD_SANDBOXD,
-  isValidPrincipal,
+  isValidUserId,
   jwtSecretBytes,
   McpServerConfig,
   mcpToolName,
   renderTemplate,
   requiredSecretNames,
   signInternalToken,
+  transportTarget,
   userKey,
   verifyInternalToken,
 } from "@pi-gateway/shared";
@@ -18,8 +19,9 @@ const otherSecret = jwtSecretBytes("y".repeat(32));
 
 describe("principal / userKey", () => {
   it("principal은 사용자 id 형식만 허용한다", () => {
-    expect(isValidPrincipal("alice@example.com")).toBe(true);
-    expect(isValidPrincipal("../etc")).toBe(false);
+    expect(isValidUserId("alice@example.com")).toBe(true);
+    expect(isValidUserId("../etc")).toBe(false);
+    expect(isValidUserId("_admin")).toBe(false);
   });
 
   it("userKey는 결정적이고 원래 id를 드러내지 않는다", () => {
@@ -106,5 +108,16 @@ describe("MCP server config", () => {
     expect(mcpToolName("github", "create_issue")).toBe("mcp__github__create_issue");
     expect(mcpToolName("srv", "a.b/c")).toBe("mcp__srv__a_b_c");
     expect(mcpToolName("srv", "x".repeat(100)).length).toBeLessThanOrEqual(64);
+  });
+
+  it("실행 대상(transportTarget)은 url origin·헤더·url 안의 비밀키 이름으로 정한다", () => {
+    const http = (url: string, headers: Record<string, string> = {}) =>
+      McpServerConfig.parse({ id: "h", runIn: "broker", transport: { type: "http", url, headers } });
+    const docs = http("https://docs.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}" });
+    const same = (other: McpServerConfig) => transportTarget(docs) === transportTarget(other);
+    expect(same(http("https://docs.example.com/other?b={{secret:B}}&a={{secret:A}}", { authorization: "Bearer {{secret:T}}" }))).toBe(true);
+    expect(same(http("https://docs.example.com/mcp?a={{secret:A}}", { Authorization: "Bearer {{secret:T}}" }))).toBe(false);
+    expect(same(http("https://evil.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}" }))).toBe(false);
+    expect(same(http("https://docs.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}", "X-Extra": "1" }))).toBe(false);
   });
 });

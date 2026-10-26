@@ -83,7 +83,7 @@ COPY --from=build-gateway /app/packages/shared/dist packages/shared/dist
 COPY --from=build-gateway /app/apps/gateway/package.json apps/gateway/
 COPY --from=build-gateway /app/apps/gateway/dist apps/gateway/dist
 COPY --from=build-gateway /app/apps/gateway/public apps/gateway/public
-ENV DATA_DIR=/data PLUGINS_DIR=/opt/plugins PI_OFFLINE=1 HOME=/tmp
+ENV DATA_DIR=/data PLUGINS_DIR=/opt/plugins HOME=/tmp
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \

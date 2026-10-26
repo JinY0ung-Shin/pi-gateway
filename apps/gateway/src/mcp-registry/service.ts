@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
+  atLeastScope,
   type AuditEvent,
-  collectTemplateRefs,
   findLiteralCredentials,
   McpServerConfig,
-  type McpScope,
   PutSecretRequest,
+  requiredScope,
   requiredSecretNames,
   SecretName,
   type McpServerStatus,
@@ -14,15 +14,16 @@ import {
   type SecretInfo,
   type TestServerResponse,
   type ToolSummary,
+  transportTarget,
   type VisibleServer,
 } from "@pi-gateway/shared";
+import type { Logger } from "pino";
 import type { z } from "zod";
 import { badRequest, notFound, PlatformError } from "../admin/errors.js";
-import type { PlatformLogger } from "../admin/logger.js";
 import type { GatewayConfig } from "../config.js";
 import type { McpRegistry } from "../contracts.js";
 import type { Db } from "../db.js";
-import { BrokerClient, BrokerError, type FetchLike } from "./broker-client.js";
+import { BrokerClient } from "./broker-client.js";
 import { SandboxServerStore } from "./store.js";
 
 export type McpStore = "sandbox" | "broker";
@@ -44,10 +45,6 @@ export interface McpServerList {
   broker: { available: boolean; error?: string };
 }
 
-export interface McpRegistryOptions {
-  fetch?: FetchLike;
-}
-
 const SANDBOX_CREDENTIAL_HINT =
   "sandbox 서버의 env는 agent에게 보이므로 자격증명을 넣을 수 없습니다. 자격증명이 필요한 서버는 HTTP로 띄워 runIn=broker로 등록하고 {{secret:NAME}}을 쓰세요";
 
@@ -59,12 +56,6 @@ function issuesMessage(error: z.ZodError): string {
 export function policyProblems(config: McpServerConfig): string[] {
   const problems = findLiteralCredentials(config).map((p) => (config.runIn === "sandbox" ? `${p} — ${SANDBOX_CREDENTIAL_HINT}` : p));
   if (config.runIn === "broker" && config.id === "servers") problems.push("id 'servers' is reserved by the broker");
-  for (const value of [...(config.transport.type === "stdio" ? [config.transport.command, ...config.transport.args, ...Object.values(config.transport.env)] : [config.transport.url, ...Object.values(config.transport.headers)])]) {
-    if (/\{\{\s*plugin_root\s*\}\}/.test(value)) {
-      problems.push("{{plugin_root}} must be resolved to the installed plugin path");
-      break;
-    }
-  }
   return problems;
 }
 
@@ -88,12 +79,12 @@ function toEntry(view: McpServerView): McpServerEntry {
 export class McpRegistryService implements McpRegistry {
   readonly store: SandboxServerStore;
   readonly #broker: BrokerClient;
-  readonly #log: PlatformLogger;
+  readonly #log: Logger;
   readonly #pluginsDir: string;
 
-  constructor(db: Db, config: Pick<GatewayConfig, "broker" | "pluginsDir">, log: PlatformLogger, options: McpRegistryOptions = {}) {
+  constructor(db: Db, config: Pick<GatewayConfig, "broker" | "pluginsDir">, log: Logger) {
     this.store = new SandboxServerStore(db, log);
-    this.#broker = new BrokerClient(config.broker, options.fetch);
+    this.#broker = new BrokerClient(config.broker);
     this.#log = log;
     this.#pluginsDir = config.pluginsDir;
   }
@@ -125,7 +116,6 @@ export class McpRegistryService implements McpRegistry {
     const broker: McpServerList["broker"] = { available: false };
     try {
       const views = await this.#broker.listServers();
-      this.store.replaceBrokerIds(views.map((v) => v.config.id));
       servers.push(...views.map(toEntry));
       broker.available = true;
     } catch (error) {
@@ -143,13 +133,22 @@ export class McpRegistryService implements McpRegistry {
     throw notFound(`MCP server '${id}' not found`);
   }
 
-  validate(input: unknown): { ok: boolean; errors: string[]; config?: McpServerConfig; requiredSecrets: string[] } {
+  /**
+   * 저장하기 전 검사. clearsSecrets는 이 설정으로 저장하면 broker가 지울 비밀키 이름이다
+   * (같은 id의 broker 서버가 실행 대상(url origin·헤더)을 바꾸거나 sandbox로 옮길 때).
+   */
+  async validate(input: unknown): Promise<{ ok: boolean; errors: string[]; requiredSecrets: string[]; clearsSecrets: string[] }> {
     const result = McpServerConfig.safeParse(input);
     if (!result.success) {
-      return { ok: false, errors: result.error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`), requiredSecrets: [] };
+      return { ok: false, errors: result.error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`), requiredSecrets: [], clearsSecrets: [] };
     }
-    const errors = policyProblems(result.data);
-    return { ok: errors.length === 0, errors, config: result.data, requiredSecrets: requiredSecretNames(result.data) };
+    const config = result.data;
+    const errors = policyProblems(config);
+    // broker가 안 되면 알 수 없다. 저장도 503으로 실패하므로 검사는 막지 않는다.
+    const current = this.store.get(config.id) ? undefined : await this.#brokerEntry(config.id).catch(() => undefined);
+    const moved = current !== undefined && (config.runIn !== "broker" || transportTarget(current.config) !== transportTarget(config));
+    const clearsSecrets = moved ? (current.secrets ?? []).map((s) => s.name) : [];
+    return { ok: errors.length === 0, errors, requiredSecrets: requiredSecretNames(config), clearsSecrets };
   }
 
   /** 만들거나 바꾼다. runIn이 바뀌면 다른 저장소로 옮긴다. */
@@ -160,29 +159,22 @@ export class McpRegistryService implements McpRegistry {
     const problems = policyProblems(config);
     if (problems.length > 0) throw badRequest(problems.join("; "), problems);
     if (config.runIn === "sandbox") {
-      // broker에 같은 id가 있으면 옮기는 것이므로 broker 쪽을 지워야 한다. 이미 sandbox 서버이고 broker id로
-      // 본 적이 없으면 묻지 않는다 (id는 한 저장소에만 둔다). broker가 안 될 때는
-      // 마지막으로 본 broker id 목록에 없을 때만 진행한다 (있으면 503: 두 저장소에 같은 id가 생긴다).
-      const askBroker = !this.store.get(config.id) || this.store.knownBrokerId(config.id);
-      const remote = askBroker ? await this.#brokerEntry(config.id, { tolerateDown: true }) : undefined;
+      // 새 id면 broker에 같은 id가 있는지 본다 (있으면 옮기는 것이라 broker 쪽을 지운다). 이미 sandbox 서버면 묻지 않는다
+      // (id는 한 저장소에만 둔다). broker가 안 되면 503이다.
+      const remote = this.store.get(config.id) ? undefined : await this.#brokerEntry(config.id);
       this.store.upsert(config, actor);
-      if (remote) await this.#deleteFromBroker(config.id, actor);
+      if (remote) await this.#broker.deleteServer(config.id, actor);
       return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
     }
     const view = await this.#broker.putServer(config, actor);
-    this.store.rememberBrokerId(config.id);
     this.store.delete(config.id);
     return toEntry(view);
   }
 
   async remove(id: string, actor: string): Promise<void> {
-    const removedLocal = this.store.delete(id);
-    if (removedLocal) {
-      // 같은 id가 broker에도 남아 있으면 지운다. broker가 안 되면 로컬 삭제만으로 끝낸다 (id는 하나만 쓰인다).
-      if (this.store.knownBrokerId(id)) await this.#deleteFromBroker(id, actor).catch(() => false);
-      return;
-    }
-    if (!(await this.#deleteFromBroker(id, actor))) throw notFound(`MCP server '${id}' not found`);
+    // sandbox 서버의 id는 broker에 없다 (upsert가 한 저장소에만 둔다).
+    if (this.store.delete(id)) return;
+    if (!(await this.#broker.deleteServer(id, actor))) throw notFound(`MCP server '${id}' not found`);
   }
 
   async setSecret(id: string, name: unknown, body: unknown, actor: string): Promise<void> {
@@ -223,15 +215,12 @@ export class McpRegistryService implements McpRegistry {
 
   /** broker에 연결되는지 확인한다. 안 되면 503. */
   async assertBrokerReachable(): Promise<void> {
-    await this.#listBroker();
+    await this.#broker.listServers();
   }
 
-  /**
-   * id를 쓰는 서버의 현재 설정. broker가 안 되면 503이다.
-   * tolerateDown이면 마지막으로 본 broker id 목록에 없는 id는 broker에 없는 것으로 본다.
-   */
-  async currentConfig(id: string, options: { tolerateDown?: boolean } = {}): Promise<McpServerConfig | undefined> {
-    return this.store.get(id) ?? (await this.#brokerEntry(id, options))?.config;
+  /** id를 쓰는 서버의 현재 설정. broker가 안 되면 503이다. */
+  async currentConfig(id: string): Promise<McpServerConfig | undefined> {
+    return this.store.get(id) ?? (await this.#brokerEntry(id))?.config;
   }
 
   /**
@@ -239,7 +228,7 @@ export class McpRegistryService implements McpRegistry {
    * 관리자가 실제로 바꾼 값만 유지한다 (mergeWithBaseline).
    */
   async upsertPluginServer(mapped: McpServerConfig, actor: string, baseline: McpServerConfig | null): Promise<McpServerEntry> {
-    const existing = await this.currentConfig(mapped.id, { tolerateDown: mapped.runIn === "sandbox" });
+    const existing = await this.currentConfig(mapped.id);
     let next = mapped;
     if (existing) {
       const sameOwner =
@@ -262,13 +251,8 @@ export class McpRegistryService implements McpRegistry {
       config,
       requiredSecrets: requiredSecretNames(config),
     }));
-    const remote = options.broker !== false ? (await this.#listBroker()).filter((v) => owned(v.config)).map(toEntry) : [];
+    const remote = options.broker !== false ? (await this.#broker.listServers()).filter((v) => owned(v.config)).map(toEntry) : [];
     return [...local, ...remote];
-  }
-
-  /** id가 다른 서버에 쓰이고 있는지 (broker가 안 되면 503, tolerateDown이면 기억한 broker id로 판단) */
-  async isIdTaken(id: string, options: { tolerateDown?: boolean } = {}): Promise<boolean> {
-    return (await this.currentConfig(id, options)) !== undefined;
   }
 
   async setPluginServersEnabled(pluginId: string, enabled: boolean, actor: string, options: { broker?: boolean } = {}): Promise<void> {
@@ -285,9 +269,9 @@ export class McpRegistryService implements McpRegistry {
   async removePluginServers(pluginId: string, actor: string, options: { broker?: boolean } = {}): Promise<string[]> {
     const removed: string[] = [];
     if (options.broker !== false) {
-      for (const view of await this.#listBroker()) {
+      for (const view of await this.#broker.listServers()) {
         if (view.config.source.kind === "plugin" && view.config.source.pluginId === pluginId) {
-          await this.#deleteFromBroker(view.config.id, actor);
+          await this.#broker.deleteServer(view.config.id, actor);
           removed.push(view.config.id);
         }
       }
@@ -301,35 +285,10 @@ export class McpRegistryService implements McpRegistry {
 
   // ── 내부 ───────────────────────────────────────────────────────
 
-  /**
-   * broker의 서버 하나 (없으면 undefined). broker가 안 되면 503.
-   * tolerateDown이면 마지막으로 본 broker id 목록에 없는 id는 없는 것으로 보고, 있으면 503을 그대로 던진다.
-   */
-  async #brokerEntry(id: string, options: { tolerateDown?: boolean } = {}): Promise<McpServerEntry | undefined> {
-    try {
-      const view = await this.#broker.getServer(id);
-      if (view) this.store.rememberBrokerId(id);
-      else this.store.forgetBrokerId(id);
-      return view ? toEntry(view) : undefined;
-    } catch (error) {
-      if (options.tolerateDown && error instanceof BrokerError && error.code === "broker_unavailable" && !this.store.knownBrokerId(id)) {
-        this.#log.warn({ id }, "broker unavailable; id is not a known broker server, continuing with the sandbox change");
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-  async #listBroker(): Promise<McpServerView[]> {
-    const views = await this.#broker.listServers();
-    this.store.replaceBrokerIds(views.map((v) => v.config.id));
-    return views;
-  }
-
-  async #deleteFromBroker(id: string, actor: string): Promise<boolean> {
-    const removed = await this.#broker.deleteServer(id, actor);
-    this.store.forgetBrokerId(id);
-    return removed;
+  /** broker의 서버 하나 (없으면 undefined). broker가 안 되면 503. */
+  async #brokerEntry(id: string): Promise<McpServerEntry | undefined> {
+    const view = await this.#broker.getServer(id);
+    return view ? toEntry(view) : undefined;
   }
 
   /** sandbox 서버는 세션에서 처음 쓸 때 시작되므로, 여기서는 설정과 plugin 파일만 확인한다. */
@@ -349,8 +308,6 @@ export class McpRegistryService implements McpRegistry {
 }
 
 // ── plugin 서버 병합 ────────────────────────────────────────────────
-
-const SCOPE_RANK: Record<McpScope, number> = { shared: 0, "per-user": 1, "per-session": 2 };
 
 const eq = (a: unknown, b: unknown) => isDeepStrictEqual(a, b);
 
@@ -410,15 +367,7 @@ export function mergeWithBaseline(base: McpServerConfig, current: McpServerConfi
     merged.transport = { ...merged.transport, headers: mergeMap(current.transport.headers, baseHeaders, mapped.transport.headers, () => false) };
   }
   // 템플릿이 요구하는 최소 scope보다 낮으면 올린다 (예: 관리자가 shared로 둔 서버에 plugin이 {{metadata}}를 추가).
-  const refs = collectTemplateRefs(merged).refs;
-  if (merged.transport.type === "stdio") {
-    const min: McpScope = refs.some((r) => r.kind === "session" || r.kind === "metadata")
-      ? "per-session"
-      : refs.some((r) => r.kind === "user" || r.kind === "header")
-        ? "per-user"
-        : "shared";
-    if (SCOPE_RANK[merged.scope] < SCOPE_RANK[min]) merged.scope = min;
-  }
+  if (merged.transport.type === "stdio") merged.scope = atLeastScope(merged.scope, requiredScope(merged));
   return merged;
 }
 

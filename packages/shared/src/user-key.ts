@@ -7,10 +7,6 @@ export function isValidUserId(id: string): boolean {
   return USER_ID_PATTERN.test(id);
 }
 
-export function isValidPrincipal(principal: string): boolean {
-  return isValidUserId(principal);
-}
-
 /**
  * principal → 컨테이너 이름과 디렉토리 이름에 쓰는 키.
  * 원래 사용자 id를 호스트 경로나 `docker ps`에 드러내지 않는다.

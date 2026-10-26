@@ -8,13 +8,13 @@ const base = {
 };
 
 describe("gateway config", () => {
-  it("TRUST_PROXY accepts false/true/IP lists and rejects hop counts (Fastify ignores them)", () => {
+  it("TRUST_PROXY accepts false and IP lists, and rejects true and hop counts", () => {
     expect(loadConfig({ ...base }).trustProxy).toBe(false);
     expect(loadConfig({ ...base, TRUST_PROXY: "0" }).trustProxy).toBe(false);
-    expect(loadConfig({ ...base, TRUST_PROXY: "true" }).trustProxy).toBe(true);
     expect(loadConfig({ ...base, TRUST_PROXY: "10.0.0.0/8, 172.18.0.5" }).trustProxy).toEqual(["10.0.0.0/8", "172.18.0.5"]);
-    expect(() => loadConfig({ ...base, TRUST_PROXY: "1" })).toThrow(/hop counts are not supported/);
-    expect(() => loadConfig({ ...base, TRUST_PROXY: "2" })).toThrow(/hop counts are not supported/);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: "true" })).toThrow(/TRUST_PROXY must be false or/);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: "1" })).toThrow(/TRUST_PROXY must be false or/);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: "2" })).toThrow(/TRUST_PROXY must be false or/);
   });
 
   it("uses the compose broker addresses by default and requires the broker JWT secret", () => {

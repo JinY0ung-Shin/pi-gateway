@@ -1,42 +1,35 @@
 import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
 import type { McpServerConfig, SandboxInfo, VisibleServer } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Logger } from "pino";
 import type { GatewayModels } from "./agent/runtime.js";
 import type { GatewayConfig } from "./config.js";
 import type { Db } from "./db.js";
+import type { McpRegistryService } from "./mcp-registry/service.js";
+import type { PluginService } from "./plugins/service.js";
+import type { PromptManager } from "./prompts/service.js";
 import type { SessionStore } from "./sessions/store.js";
 
 /**
- * gateway 안의 레인 간 계약.
- *
- * - core 레인(src/agent, src/api, src/tools, src/sessions, src/sandbox, src/server.ts, src/main.ts)은
- *   아래 인터페이스를 *사용*한다.
- * - platform 레인(src/prompts, src/plugins, src/mcp-registry, src/admin, apps/admin-ui)은
- *   아래 인터페이스를 *구현*한다. 각 디렉토리의 index.ts가 factory를 export한다.
- * 시그니처를 바꿔야 하면 상대 레인과 먼저 합의한다.
+ * 세션(src/agent, src/api, src/tools, src/sessions)이 쓰는 프롬프트·plugin·MCP 인터페이스와 관리 화면 의존성.
+ * 세션 쪽은 좁은 인터페이스만 써서 테스트가 가짜로 바꿔 끼울 수 있다. 관리 화면은 실제 구현을 받는다.
  */
 
 // ── 시스템 프롬프트 (구현: src/prompts) ─────────────────────────────
 
 export interface PromptRenderInput {
   /** 사용자 id */
-  principal: string;
   user: string;
   model: string;
-  sessionId: string;
   now: Date;
 }
 
-export interface PromptSnapshot {
-  /** 렌더링이 끝난 시스템 프롬프트 (pi 기본 preamble을 대체한다) */
-  text: string;
-  /** 어떤 배포본에서 왔는지. 기본 프롬프트면 name/version이 null이다. */
-  ref: { name: string | null; version: number | null; revision: string };
-}
-
 export interface PromptService {
-  /** 세션을 만들 때 한 번 호출한다. 결과는 세션 메타에 저장되고 세션을 되살릴 때 다시 쓴다. */
-  snapshotForSession(input: PromptRenderInput): PromptSnapshot;
+  /**
+   * 세션을 만들 때 한 번 호출해 시스템 프롬프트를 렌더링한다 (pi 기본 preamble을 대체한다).
+   * 결과는 세션 메타에 저장되고 세션을 되살릴 때 다시 쓴다.
+   */
+  snapshotForSession(input: PromptRenderInput): string;
 }
 
 // ── plugin 리소스 (구현: src/plugins) ──────────────────────────────
@@ -85,10 +78,11 @@ export interface SessionStats {
 export interface AdminDeps {
   config: GatewayConfig;
   db: Db;
-  prompts: PromptService;
-  plugins: PluginResources;
-  mcp: McpRegistry;
-  /** core가 제공하는 실시간 통계 */
+  log: Logger;
+  prompts: PromptManager;
+  plugins: PluginService;
+  mcp: McpRegistryService;
+  /** 세션 실시간 통계 */
   stats: () => SessionStats;
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
@@ -105,5 +99,5 @@ export interface AdminDeps {
   sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;
 }
 
-/** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. core의 server.ts가 한 번 호출한다. */
+/** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. server.ts가 한 번 호출한다. */
 export type RegisterAdminRoutes = (app: FastifyInstance, deps: AdminDeps) => Promise<void>;

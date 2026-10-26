@@ -21,7 +21,6 @@ import { PlatformError } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 
 export type BrokerConfig = GatewayConfig["broker"];
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const ADMIN_TIMEOUT_MS = 15_000;
 const TEST_TIMEOUT_MS = 60_000;
@@ -36,11 +35,9 @@ export class BrokerError extends PlatformError {}
  */
 export class BrokerClient {
   readonly #config: BrokerConfig;
-  readonly #fetch: FetchLike;
 
-  constructor(config: BrokerConfig, fetchImpl: FetchLike = fetch) {
+  constructor(config: BrokerConfig) {
     this.#config = config;
-    this.#fetch = fetchImpl;
   }
 
   // ── 관리 평면 ──────────────────────────────────────────────────
@@ -146,7 +143,7 @@ export class BrokerClient {
   ): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.#fetch(url, {
+      response = await fetch(url, {
         method: init.method,
         headers: init.headers,
         ...(init.body === undefined ? {} : { body: init.body }),

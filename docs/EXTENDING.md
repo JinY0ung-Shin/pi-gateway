@@ -97,7 +97,7 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 관리 화면의 **plugin** 페이지에서 Claude Code marketplace를 추가하고 plugin을 설치해요.
 
 - skill(`skills/*/SKILL.md`)은 pi skill로 그대로 쓰여요. 시스템 프롬프트에 이름·설명·경로만 들어가고, 모델이 필요할 때 `read`로 `SKILL.md`를 읽어요.
-- plugin 파일은 `/opt/plugins/...`에 설치되고 gateway·sandbox·broker에서 같은 경로로 보여요. skill에 딸린 스크립트는 sandbox 안에서 `bash`로 실행돼요.
+- plugin 파일은 `/opt/plugins/...`에 설치되고 gateway와 sandbox에서 같은 경로로 보여요. skill에 딸린 스크립트는 sandbox 안에서 `bash`로 실행돼요.
 - agent(`agents/*.md`)는 `Agent` 도구로 실행돼요. 하위 세션이 부모와 같은 sandbox·도구로 일하고 최종 답과 `agent_id`를 돌려줘요. `SendMessage`로 같은 agent에 이어서 말할 수 있어요. frontmatter는 `name`·`description`·`tools`만 써요.
 - plugin의 `.mcp.json`은 MCP 서버로 등록돼요. 비밀키 자리표시자가 있으면 broker 서버가 되고, 관리자가 키를 넣어야 활성화돼요.
 - 직접 만든 skill도 같은 방식이에요: `.claude-plugin/marketplace.json`이 있는 git 저장소를 marketplace로 추가해요.
@@ -143,10 +143,7 @@ interface ToolProvider {
 
 interface ToolSessionContext {
   principal: string;          // 사용자 id
-  user: string;
   sessionId: string;
-  model: string;
-  sandboxClient: SandboxClient;
   sandbox: SandboxHandle;     // 이 세션 전용 sandbox 핸들 (exec, readFile, writeFile, stat, list, glob, attach)
   requestContext: () => RequestContext; // 전달 헤더·metadata (턴마다 바뀔 수 있다)
   log: Logger;

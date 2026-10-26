@@ -53,7 +53,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 
 ```bash
 npm install
-npx tsc -b && npx vitest run          # 타입 검사와 테스트
+npm run typecheck && npx vitest run   # 타입 검사(관리 화면·테스트 포함)와 테스트
 PI_GW_DOCKER_TESTS=1 npx vitest run   # Docker가 필요한 테스트 포함
 ```
 

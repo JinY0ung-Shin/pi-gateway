@@ -1,12 +1,6 @@
 import { findLiteralCredentials, McpServerConfig } from "@pi-gateway/shared";
 import { describe, expect, it } from "vitest";
-import {
-  ConfigError,
-  effectiveScope,
-  MissingSessionError,
-  renderTransport,
-  scopeKey,
-} from "../src/render.js";
+import { effectiveScope, MissingSessionError, renderTransport, scopeKey } from "../src/render.js";
 
 const http = (headers: Record<string, string>, extra: Record<string, unknown> = {}) =>
   McpServerConfig.parse({ id: "h", runIn: "broker", transport: { type: "http", url: "https://example.com/mcp", headers }, ...extra });
@@ -53,20 +47,10 @@ describe("renderTransport", () => {
     expect(out.missingSecrets).toEqual([]);
   });
 
-  it("없는 비밀키와 없는 선택 값을 구분해 알려준다", () => {
+  it("값이 없는 비밀키를 알려준다", () => {
     const config = http({ Authorization: "Bearer {{secret:TOKEN}}", "X-Opt": "{{ctx.header:x-missing}}" });
     const out = renderTransport(config, { sub: "a" }, new Map());
     expect(out.missingSecrets).toEqual(["TOKEN"]);
-    expect(out.missingOptional).toEqual(["{{ctx.header:x-missing}}"]);
-  });
-
-  it("{{plugin_root}}가 남아 있으면 거부한다", () => {
-    const config = McpServerConfig.parse({
-      id: "p",
-      runIn: "broker",
-      transport: { type: "http", url: "https://example.com/mcp", headers: { "X-Root": "{{plugin_root}}" } },
-    });
-    expect(() => renderTransport(config, { sub: "a" }, new Map())).toThrow(ConfigError);
   });
 });
 

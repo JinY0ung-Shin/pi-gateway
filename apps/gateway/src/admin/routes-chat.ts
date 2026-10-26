@@ -3,7 +3,7 @@ import type { AdminContext } from "./context.js";
 
 /** 관리 화면 채팅. 본문은 `/v1/responses`와 같고, 관리자 로그인이 API 키를 대신한다. */
 export function registerChatRoutes(app: FastifyInstance, ctx: AdminContext): void {
-  const { config, llm } = ctx.deps;
+  const { config, llm, chat } = ctx;
   /** 채팅 화면이 고를 수 있는 값 */
   app.get("/chat/options", async () => ({
     models: llm.list().map((m) => ({ id: m.id, name: m.name ?? m.id, reasoning: m.reasoning, image: m.input.includes("image") })),
@@ -13,7 +13,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AdminContext): voi
     /** MCP 템플릿 {{metadata:KEY}}로 넘어가는 metadata 키 */
     metadataKeys: config.mcp.metadataKeys,
   }));
-  app.post("/chat", async (req, reply) => ctx.deps.chat.respond(req, reply));
-  app.post("/chat/:id/cancel", async (req, reply) => ctx.deps.chat.cancel(req, reply));
-  app.post("/chat/preview", async (req, reply) => ctx.deps.chat.preview(req, reply));
+  app.post("/chat", async (req, reply) => chat.respond(req, reply));
+  app.post("/chat/:id/cancel", async (req, reply) => chat.cancel(req, reply));
+  app.post("/chat/preview", async (req, reply) => chat.preview(req, reply));
 }

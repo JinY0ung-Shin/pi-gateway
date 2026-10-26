@@ -189,10 +189,8 @@ export class SessionHub {
     this.reaper.unref?.();
   }
 
-  stats(): { liveSessions: number; activeTurns: number } {
-    let activeTurns = 0;
-    for (const l of this.live.values()) if (l.activeTurn) activeTurns++;
-    return { liveSessions: this.live.size, activeTurns };
+  stats(): { liveSessions: number } {
+    return { liveSessions: this.live.size };
   }
 
   get isShuttingDown(): boolean {

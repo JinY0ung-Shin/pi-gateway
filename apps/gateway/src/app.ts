@@ -10,10 +10,10 @@ import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes }
 import { type Db, openDatabase } from "./db.js";
 import { cancelResponse, createResponse, previewSession, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
-import { createMcpRegistry } from "./mcp-registry/index.js";
 import { McpToolCache } from "./mcp-client/connections.js";
-import { createPluginResources } from "./plugins/index.js";
-import { createPromptService } from "./prompts/index.js";
+import { McpRegistryService } from "./mcp-registry/service.js";
+import { PluginService } from "./plugins/service.js";
+import { PromptManager } from "./prompts/service.js";
 import { SandboxClient } from "./sandbox/client.js";
 import { buildServer } from "./server.js";
 import { SessionHub } from "./sessions/hub.js";
@@ -23,12 +23,13 @@ import type { ToolProvider } from "./tools/provider.js";
 import { createDefaultToolProviders, ToolRegistry } from "./tools/registry.js";
 
 /**
- * gateway 조립: 설정 → DB → platform 서비스 → pi runtime → 도구 → 세션 → HTTP 서버.
+ * gateway 조립: 설정 → DB → 프롬프트·plugin·MCP 서비스 → pi runtime → 도구 → 세션 → HTTP 서버.
  * main.ts와 테스트가 같은 조립을 쓴다. 테스트는 일부 의존성을 바꿔 끼울 수 있다.
  */
 
 export interface GatewayOverrides {
   db?: Db;
+  /** 세션이 쓰는 프롬프트·plugin·MCP (관리 화면은 DB의 실제 서비스를 그대로 쓴다) */
   prompts?: PromptService;
   plugins?: PluginResources;
   mcpRegistry?: McpRegistry;
@@ -56,9 +57,12 @@ export interface Gateway {
 export async function createGateway(config: GatewayConfig, logger: Logger, overrides: GatewayOverrides = {}): Promise<Gateway> {
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
   const db = overrides.db ?? openDatabase(join(config.dataDir, "gateway.db"));
-  const prompts = overrides.prompts ?? createPromptService(db, config);
-  const plugins = overrides.plugins ?? createPluginResources(db, config);
-  const mcpRegistry = overrides.mcpRegistry ?? createMcpRegistry(db, config);
+  const promptManager = new PromptManager(db, config);
+  const mcpService = new McpRegistryService(db, config, logger.child({ component: "mcp-registry" }));
+  const pluginService = new PluginService(db, config, { registry: mcpService, log: logger.child({ component: "plugins" }) });
+  const prompts = overrides.prompts ?? promptManager;
+  const plugins = overrides.plugins ?? pluginService;
+  const mcpRegistry = overrides.mcpRegistry ?? mcpService;
 
   const models = await createModelRuntime(db);
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
@@ -112,13 +116,13 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     admin: {
       config,
       db,
-      prompts,
-      plugins,
-      mcp: mcpRegistry,
+      log: logger.child({ component: "admin" }),
+      prompts: promptManager,
+      plugins: pluginService,
+      mcp: mcpService,
       stats: () => {
-        const h = hub.stats();
         const l = limiter.stats();
-        return { liveSessions: h.liveSessions, activeTurns: l.active, queuedTurns: l.queued };
+        return { liveSessions: hub.stats().liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
       sandboxes: () => sandboxClient.list(),
       llm: models,

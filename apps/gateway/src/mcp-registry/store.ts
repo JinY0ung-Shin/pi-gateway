@@ -1,5 +1,5 @@
 import { McpServerConfig } from "@pi-gateway/shared";
-import type { PlatformLogger } from "../admin/logger.js";
+import type { Logger } from "pino";
 import { type Db, migrate } from "../db.js";
 
 const MIGRATIONS = [
@@ -17,6 +17,8 @@ const MIGRATIONS = [
      id TEXT PRIMARY KEY,
      seen_at TEXT NOT NULL
    );`,
+  // broker가 필수가 되어 broker id를 기억할 필요가 없다 (broker가 안 되면 sandbox 서버 생성도 503).
+  `DROP TABLE mcp_broker_ids`,
 ] as const;
 
 interface Row {
@@ -27,9 +29,9 @@ interface Row {
 /** gateway DB에 저장되는 sandbox 실행 MCP 서버 (비밀값이 없는 설정만 들어온다). */
 export class SandboxServerStore {
   readonly #db: Db;
-  readonly #log: PlatformLogger;
+  readonly #log: Logger;
 
-  constructor(db: Db, log: PlatformLogger) {
+  constructor(db: Db, log: Logger) {
     this.#db = db;
     this.#log = log;
     migrate(db, "mcp-registry", MIGRATIONS);
@@ -72,29 +74,6 @@ export class SandboxServerStore {
 
   delete(id: string): boolean {
     return this.#db.prepare("DELETE FROM mcp_sandbox_servers WHERE id = ?").run(id).changes > 0;
-  }
-
-  // ── broker id 기억 ──
-
-  replaceBrokerIds(ids: readonly string[]): void {
-    const at = new Date().toISOString();
-    this.#db.transaction(() => {
-      this.#db.prepare("DELETE FROM mcp_broker_ids").run();
-      const insert = this.#db.prepare("INSERT OR REPLACE INTO mcp_broker_ids (id, seen_at) VALUES (?, ?)");
-      for (const id of ids) insert.run(id, at);
-    })();
-  }
-
-  rememberBrokerId(id: string): void {
-    this.#db.prepare("INSERT OR REPLACE INTO mcp_broker_ids (id, seen_at) VALUES (?, ?)").run(id, new Date().toISOString());
-  }
-
-  forgetBrokerId(id: string): void {
-    this.#db.prepare("DELETE FROM mcp_broker_ids WHERE id = ?").run(id);
-  }
-
-  knownBrokerId(id: string): boolean {
-    return Boolean(this.#db.prepare("SELECT 1 FROM mcp_broker_ids WHERE id = ?").get(id));
   }
 
   #parse(row: Row): McpServerConfig | undefined {

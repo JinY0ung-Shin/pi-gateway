@@ -59,8 +59,8 @@ function requestContext(headers: IncomingHttpHeaders, metadata: Record<string, s
 interface TurnPlan {
   sessionId: string;
   isNew: boolean;
+  /** 사용자 id */
   principal: string;
-  user: string;
   prev: string | null;
   prevTurn: number;
   body: ResponseCreateRequest;
@@ -118,7 +118,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
   if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
   const input = parseInput(body);
 
-  const user = userOf(auth, body.user);
+  const principal = userOf(auth, body.user);
 
   const prev = body.previous_response_id ?? null;
   let sessionId: string;
@@ -140,7 +140,6 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     if (input.kind === "answer") throw badRequest("function_call_output requires previous_response_id");
     sessionId = randomUUID();
   }
-  const principal = user;
 
   // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
   if (prev) {
@@ -156,7 +155,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
   if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
   const thinkingLevel = thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning);
 
-  const plan: TurnPlan = { sessionId, isNew: !prev, principal, user, prev, prevTurn, body, input, model, thinkingLevel };
+  const plan: TurnPlan = { sessionId, isNew: !prev, principal, prev, prevTurn, body, input, model, thinkingLevel };
 
   // 클라이언트가 연결을 끊으면 실행을 멈춘다.
   const abort = new AbortController();
@@ -201,34 +200,26 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
   const id = typeof model === "string" && model ? model : deps.models.defaultModel();
   if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
-  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, user, model: id, thinkingLevel: undefined }, null));
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined }, null));
 }
 
-function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal" | "user" | "model" | "thinkingLevel">, instructions: string | null): SessionRecord {
+function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal" | "model" | "thinkingLevel">, instructions: string | null): SessionRecord {
   const now = new Date();
-  const snapshot = deps.prompts.snapshotForSession({
-    principal: plan.principal,
-    user: plan.user,
-    model: plan.model,
-    sessionId: plan.sessionId,
-    now,
-  });
+  const promptText = deps.prompts.snapshotForSession({ user: plan.principal, model: plan.model, now });
   const append: string[] = [];
   if (instructions?.trim()) append.push(instructions.trim());
-  append.push(`Current user: ${plan.user}`);
+  append.push(`Current user: ${plan.principal}`);
   const reasoning = deps.models.config(plan.model)?.reasoning ?? false;
   const iso = now.toISOString();
   return {
     id: plan.sessionId,
     principal: plan.principal,
-    user: plan.user,
     model: plan.model,
     thinkingLevel: plan.thinkingLevel ?? (reasoning ? "medium" : "off"),
     turn: 0,
     sessionFile: null,
     leafId: null,
-    promptText: snapshot.text,
-    promptRef: snapshot.ref,
+    promptText,
     appendPrompt: append.join("\n\n"),
     skillNames: deps.plugins.skills().map((s) => s.name),
     pendingToolCall: null,

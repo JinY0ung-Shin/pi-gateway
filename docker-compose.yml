@@ -85,8 +85,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-pi-gateway/sandbox:latest}
-      # 아래 volumes의 proxy-sock과 같은 이름이어야 한다
-      SANDBOX_PROXY_VOLUME: ${SANDBOX_PROXY_VOLUME:-pi-gateway-proxy-sock}
       SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-}
       WORKSPACES_DIR: /srv/workspaces
       WORKSPACES_HOST_DIR: ${PI_GATEWAY_HOME:?PI_GATEWAY_HOME is required}/workspaces
@@ -98,8 +96,6 @@ services:
       SANDBOX_SHM_SIZE: ${SANDBOX_SHM_SIZE:-64m}
       SANDBOX_IDLE_SECONDS: ${SANDBOX_IDLE_SECONDS:-900}
       SANDBOX_FS_TIMEOUT_SECONDS: ${SANDBOX_FS_TIMEOUT_SECONDS:-60}
-      SANDBOX_INSTANCE: ${SANDBOX_INSTANCE:-default}
-      SANDBOX_CONTAINER_PREFIX: ${SANDBOX_CONTAINER_PREFIX:-pi-sbx-}
     secrets:
       - source: sbx_sandboxd_jwt_secret
         target: sandboxd_jwt_secret
@@ -172,12 +168,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATA_DIR: /data
       PLUGINS_DIR: /opt/plugins
-      PI_OFFLINE: "1"
       # 인증
       API_KEY_FILE: /run/secrets/api_key
       USER_API_KEYS_FILE: /run/secrets/user_api_keys
       ADMIN_API_KEY_FILE: /run/secrets/admin_api_key
-      ADMIN_COOKIE_SECRET_FILE: /run/secrets/admin_cookie_secret
       AUTH_DISABLED: ${AUTH_DISABLED:-0}
       # 내부 서비스
       SANDBOXD_URL: http://sandboxd:7070
@@ -206,8 +200,6 @@ services:
         target: user_api_keys
       - source: gw_admin_api_key
         target: admin_api_key
-      - source: gw_admin_cookie_secret
-        target: admin_cookie_secret
       - source: gw_sandboxd_jwt_secret
         target: sandboxd_jwt_secret
       - source: gw_broker_jwt_secret
@@ -239,9 +231,10 @@ networks:
 volumes:
   gateway-data: {}
   broker-data: {}
-  # egress-proxy의 unix socket. sandboxd가 만드는 sandbox 컨테이너가 이 이름으로 mount하므로 이름을 고정한다.
+  # egress-proxy의 unix socket. sandboxd가 만드는 sandbox 컨테이너가 이 이름으로 mount하므로 이름을 고정한다
+  # (apps/sandboxd/src/config.ts의 proxyVolume).
   proxy-sock:
-    name: ${SANDBOX_PROXY_VOLUME:-pi-gateway-proxy-sock}
+    name: pi-gateway-proxy-sock
 
 # 비밀 파일은 쓰는 서비스마다 사본이 있고, 그 서비스 uid 소유의 0400이다 (scripts/setup-host.sh).
 # compose의 파일 secret은 호스트 파일의 소유자·권한 그대로 /run/secrets/<target>에 mount된다.
@@ -253,8 +246,6 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/user_api_keys
   gw_admin_api_key:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_api_key
-  gw_admin_cookie_secret:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_cookie_secret
   gw_sandboxd_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/sandboxd_jwt_secret
   gw_broker_jwt_secret:

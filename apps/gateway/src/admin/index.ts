@@ -14,13 +14,8 @@ import { registerStatusRoutes } from "./routes-status.js";
 import { registerToolRoutes } from "./routes-tools.js";
 import { registerAdminUi } from "./ui.js";
 
-export { PlatformError } from "./errors.js";
-
-/** 빌드된 관리 화면 위치. `ADMIN_UI_DIR`로 바꿀 수 있다 (src·dist 모두 apps/gateway/public/admin을 가리킨다). */
-export function adminUiDir(): string {
-  // 빈 값은 설정하지 않은 것으로 본다 ("" 를 경로로 쓰지 않는다).
-  return process.env.ADMIN_UI_DIR || fileURLToPath(new URL("../../public/admin", import.meta.url));
-}
+/** 빌드된 관리 화면 위치 (src·dist 모두 apps/gateway/public/admin을 가리킨다) */
+const UI_DIR = fileURLToPath(new URL("../../public/admin", import.meta.url));
 
 /**
  * `/admin`(웹 UI)과 `/admin/api/*`(관리 API)를 등록한다.
@@ -28,7 +23,6 @@ export function adminUiDir(): string {
  */
 export const registerAdminRoutes: RegisterAdminRoutes = async (app, deps) => {
   const ctx = createAdminContext(deps);
-  const uiDir = adminUiDir();
   await app.register(async (admin) => {
     admin.addHook("onSend", async (_req, reply, payload) => {
       reply.header("x-content-type-options", "nosniff");
@@ -37,7 +31,7 @@ export const registerAdminRoutes: RegisterAdminRoutes = async (app, deps) => {
       return payload;
     });
     await admin.register(async (api) => registerApi(api, ctx), { prefix: "/admin/api" });
-    await admin.register(async (ui) => registerAdminUi(ui, uiDir), { prefix: "/admin" });
+    await admin.register(async (ui) => registerAdminUi(ui, UI_DIR), { prefix: "/admin" });
   });
 };
 

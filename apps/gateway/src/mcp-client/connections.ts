@@ -23,7 +23,8 @@ import { AttachedStdioTransport } from "./attached-transport.js";
  *   비밀키는 broker에만 있고 gateway는 모른다.
  * - sandbox 서버: sandboxd attach로 사용자 컨테이너 안에 stdio 프로세스를 띄운다.
  *   비밀키가 없는 서버만 여기서 돈다 (shared mcp-config 검증 규칙).
- * 도구 목록은 프로세스 전역 캐시를 쓰고, 연결은 처음 필요할 때 만든다.
+ * sandbox 서버의 도구 목록은 프로세스 전역 캐시를 쓰고(목록을 보려고 프로세스를 띄우지 않게), 연결은 처음 필요할 때 만든다.
+ * broker 서버의 도구 목록은 broker가 캐시한다 (설정이 바뀌면 broker가 바로 버린다).
  */
 
 const CLIENT_INFO = { name: "pi-gateway", version: "0.1.0" };
@@ -226,25 +227,21 @@ export class McpConnectionSet {
   }
 
   /**
-   * 도구 목록 캐시 키. 사용자 사이에 목록을 절대 공유하지 않는다:
-   * - broker 서버: 사용자마다 자격 증명이 달라 보이는 도구가 다를 수 있다 → principal별.
-   * - sandbox 서버: 목록이 그 사용자의 sandbox에서 만들어지므로(그 사용자가 영향을 줄 수 있다)
-   *   principal별, per-session이면 세션별까지.
+   * sandbox 서버의 도구 목록 캐시 키. 목록이 그 사용자의 sandbox에서 만들어지므로(그 사용자가 영향을 줄 수 있다)
+   * 사용자 사이에 절대 공유하지 않는다: principal별, per-session이면 세션별까지.
    */
   private cacheKey(server: McpServerHandle): string {
-    const principal = this.deps.principal;
-    if (server.kind === "broker") return `broker:${server.id}:${principal}`;
-    const base = `sandbox:${server.id}:${configHash(server.config!)}:${principal}`;
+    const base = `${server.id}:${configHash(server.config!)}:${this.deps.principal}`;
     return server.config!.scope === "per-session" ? `${base}:${this.deps.sessionId}` : base;
   }
 
   private async listTools(server: McpServerHandle, signal?: AbortSignal): Promise<Tool[]> {
-    const key = this.cacheKey(server);
-    const cached = this.deps.cache.get(key);
+    const key = server.kind === "sandbox" ? this.cacheKey(server) : undefined;
+    const cached = key ? this.deps.cache.get(key) : undefined;
     if (cached) return cached;
     const client = await this.client(server, signal);
     const tools = await client.listTools({ timeoutMs: requestTimeoutMs(server), ...(signal ? { signal } : {}) });
-    this.deps.cache.set(key, tools);
+    if (key) this.deps.cache.set(key, tools);
     return tools;
   }
 

@@ -111,7 +111,7 @@ export class SandboxManager {
     try {
       const info = await existing.inspect();
       exists = true;
-      // 예전 스펙(네트워크가 붙어 있던 sandbox 등)은 실행 중이어도 쓰지 않는다
+      // 스펙 버전이 다른 컨테이너는 실행 중이어도 쓰지 않는다
       running = info.State?.Running === true && info.State?.Paused !== true && info.Config?.Labels?.[LABEL_SPEC] === SPEC_VERSION;
     } catch (err) {
       if (dockerStatus(err) !== 404) throw unavailable("inspect", err);

@@ -1,4 +1,4 @@
-import { collectTemplateRefs, McpServerConfig, requiredSecretNames } from "@pi-gateway/shared";
+import { McpServerConfig, requiredSecretNames, transportTarget } from "@pi-gateway/shared";
 import { SecretCipher } from "./crypto.js";
 import { type Db, migrate } from "./db.js";
 
@@ -245,27 +245,3 @@ export class BrokerStore {
   }
 }
 
-/**
- * 비밀값이 어디로 가는지를 나타내는 정규화된 문자열. 이 값이 바뀌면 저장된 비밀값을 지운다.
- * url의 origin, 헤더 전체, url 안에서 쓰는 비밀키 이름으로 정한다.
- */
-export function transportTarget(config: Pick<McpServerConfig, "transport">): string {
-  const t = config.transport;
-  // broker 서버는 http만 쓴다 (스키마가 검사한다)
-  if (t.type !== "http") return JSON.stringify(t);
-  let origin: string;
-  try {
-    // 자리표시자가 host에 들어 있으면 그 자체가 행선지를 바꿀 수 있으므로 문자 그대로 비교한다.
-    origin = /\{\{/.test(t.url.split("/").slice(0, 3).join("/")) ? t.url : new URL(t.url).origin;
-  } catch {
-    origin = t.url;
-  }
-  const headers = Object.entries(t.headers)
-    .map(([name, value]) => [name.toLowerCase(), value] as const)
-    .sort(([a], [b]) => a.localeCompare(b));
-  const urlSecrets = collectTemplateRefs({ transport: { ...t, headers: {} } })
-    .refs.filter((r) => r.kind === "secret")
-    .map((r) => (r.kind === "secret" ? r.name : ""))
-    .sort();
-  return JSON.stringify({ type: "http", origin, headers, urlSecrets });
-}

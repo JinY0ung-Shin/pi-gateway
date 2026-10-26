@@ -46,9 +46,6 @@ put() {
   rm -f "$tmp"
 }
 
-# 예전(평면 구조, 0444) 파일이 있으면 그 값을 이어서 쓰고 지운다
-legacy() { [ -f "$SECRETS/$1" ] && cat "$SECRETS/$1" || true; }
-
 # secret <name> <generator-cmd> <dest:uid>... — 이미 있는 사본의 값을 쓰고, 없으면 새로 만든다.
 # 사본끼리 값이 다르면 멈춘다.
 secret() {
@@ -66,7 +63,6 @@ secret() {
       value="$current"
     fi
   done
-  if [ -z "$value" ]; then value="$(legacy "$name")"; fi
   if [ -z "$value" ] && [ "$gen" != "empty" ]; then value="$($gen)"; fi
   for dest in "$@"; do
     path="${dest%%:*}"; owner="${dest##*:}"
@@ -78,7 +74,6 @@ secret() {
       echo "create $path"
     fi
   done
-  rm -f "$SECRETS/$name"
 }
 gen48() { rand 48; }
 gen32() { rand 32; }
@@ -88,7 +83,6 @@ G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
 secret sandboxd_jwt_secret gen48 "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
 secret broker_jwt_secret   gen48 "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
 secret broker_kek          kek   "$B/broker_kek:0"
-secret admin_cookie_secret gen48 "$G/admin_cookie_secret:$GW_UID"
 secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
 secret api_key             gen32 "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)

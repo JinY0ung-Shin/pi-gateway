@@ -2,10 +2,7 @@ import { isIP } from "node:net";
 import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 import { z } from "zod";
 
-/**
- * gateway 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원).
- * 이 파일은 여러 작업 레인이 함께 쓰므로, 필드를 추가할 때는 기존 필드의 의미를 바꾸지 않는다.
- */
+/** gateway 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원). */
 
 export interface GatewayConfig {
   host: string;
@@ -13,7 +10,7 @@ export interface GatewayConfig {
   logLevel: string;
   /** 세션 JSONL, gateway.db */
   dataDir: string;
-  /** 설치된 plugin 루트. gateway·sandbox·broker에서 같은 경로다. */
+  /** 설치된 plugin 루트. gateway와 sandbox에서 같은 경로다. */
   pluginsDir: string;
   auth: {
     /** 서비스 키. 이 키로 들어온 요청은 body.user를 그대로 믿는다. */
@@ -52,18 +49,14 @@ export interface GatewayConfig {
   prompts: {
     language: string;
   };
-  admin: {
-    /** 관리 화면 세션 쿠키 서명 키 */
-    cookieSecret: string;
-  };
   sse: {
     keepaliveSeconds: number;
   };
   /**
    * Fastify `trustProxy` (TRUST_PROXY). 프록시 뒤에서 req.ip·req.protocol을 클라이언트 기준으로 보려면 설정한다.
-   * false(기본) · true · 앞단 프록시 hop 수 · 신뢰할 프록시 주소/CIDR 목록.
+   * false(기본) 또는 신뢰할 프록시 주소/CIDR 목록.
    */
-  trustProxy: boolean | string[];
+  trustProxy: false | string[];
 }
 
 /** "10.0.0.0/8", "192.168.1.5", "fd00::/8" 형식을 읽는다. 잘못되면 null. */
@@ -81,22 +74,19 @@ function parseCidr(value: string): { address: string; prefix: number; family: "i
   return { address, prefix, family: version === 4 ? "ipv4" : "ipv6" };
 }
 
-function parseTrustProxy(raw: string | undefined): boolean | string[] {
+function parseTrustProxy(raw: string | undefined): false | string[] {
   const value = (raw ?? "").trim();
   if (value === "" || value === "false" || value === "0") return false;
-  if (value === "true") return true;
-  // Fastify 5는 hop 수(숫자)를 받으면 일부러 아무 프록시도 믿지 않는다 (fail closed). 조용히 무시되지 않게 거부한다.
-  if (/^\d+$/.test(value)) {
-    throw new Error(
-      `TRUST_PROXY hop counts are not supported ('${value}'): Fastify ignores them. Use "true" (trust any proxy) or the proxy addresses as a comma list of IPs/CIDRs, e.g. "10.0.0.0/8,172.16.0.0/12".`,
-    );
+  // true는 아무 클라이언트나 X-Forwarded-For로 IP를 속이게 한다. hop 수는 Fastify 5가 일부러 무시한다 (조용히 무시되지 않게 거부한다).
+  if (value === "true" || /^\d+$/.test(value)) {
+    throw new Error(`TRUST_PROXY must be false or the proxy addresses as a comma list of IPs/CIDRs, e.g. "172.18.0.1" (got '${value}')`);
   }
   const entries = value
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   for (const entry of entries) {
-    if (!parseCidr(entry)) throw new Error(`TRUST_PROXY has an invalid entry '${entry}' (use true, or proxy IPs/CIDRs)`);
+    if (!parseCidr(entry)) throw new Error(`TRUST_PROXY has an invalid entry '${entry}' (use proxy IPs/CIDRs)`);
   }
   return entries;
 }
@@ -179,9 +169,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       metadataKeys: list(env.MCP_METADATA_KEYS),
     },
     prompts: { language: env.PROMPT_LANGUAGE || "Korean" },
-    admin: {
-      cookieSecret: readSecret(env, "ADMIN_COOKIE_SECRET") ?? adminApiKey ?? "",
-    },
     sse: { keepaliveSeconds: int("SSE_KEEPALIVE_SECONDS", 15, env) },
     trustProxy,
   };
