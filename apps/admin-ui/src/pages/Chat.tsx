@@ -486,6 +486,9 @@ export function ChatPage() {
 /** 메시지 하나 (채팅 테스트와 대화 기록이 같이 쓴다). waiting이면 답을 기다리는 중이다. */
 export function TurnView(props: { turn: Turn; waiting?: boolean }) {
   const { turn } = props;
+  // 도구 호출은 한 줄로 접어 둔다 (쌓이면 메시지가 길어진다). 요약에는 실행 중인 도구와 오류 수만 보인다.
+  const running = props.waiting ? turn.tools.filter((t) => t.result === undefined && t.name !== "AskUserQuestion").at(-1) : undefined;
+  const errors = turn.tools.filter((t) => t.isError).length;
   return (
     <div class={`msg msg-${turn.role}`}>
       {turn.reasoning && (
@@ -494,26 +497,37 @@ export function TurnView(props: { turn: Turn; waiting?: boolean }) {
           <div class="code-block">{turn.reasoning}</div>
         </details>
       )}
-      {turn.tools.map((t) => (
-        <details key={t.id} class="tool">
+      {turn.tools.length > 0 && (
+        <details class="tool">
           <summary>
-            <span class="mono">{t.name}</span>{" "}
-            {t.name === "AskUserQuestion" ? (
-              <Badge tone="violet">질문</Badge>
-            ) : t.result === undefined ? (
-              <Badge tone="blue">{t.progress ? `실행 중 · ${t.progress}` : "실행 중"}</Badge>
-            ) : t.isError ? (
-              <Badge tone="red">오류</Badge>
-            ) : (
-              <Badge tone="green">완료</Badge>
-            )}
+            도구 호출 {turn.tools.length}개{" "}
+            {running && <Badge tone="blue">{`실행 중 · ${running.name}${running.progress ? ` · ${running.progress}` : ""}`}</Badge>}{" "}
+            {errors > 0 && <Badge tone="red">오류 {errors}</Badge>}
           </summary>
-          {t.input !== undefined && <div class="code-block mono">{JSON.stringify(t.input, null, 2)}</div>}
-          {t.result !== undefined && (
-            <div class="code-block mono">{t.result.length > RESULT_LIMIT ? `${t.result.slice(0, RESULT_LIMIT)}\n… (${t.result.length}자)` : t.result}</div>
-          )}
+          <div class="tool-group">
+            {turn.tools.map((t) => (
+              <details key={t.id} class="tool">
+                <summary>
+                  <span class="mono">{t.name}</span>{" "}
+                  {t.name === "AskUserQuestion" ? (
+                    <Badge tone="violet">질문</Badge>
+                  ) : t.result === undefined ? (
+                    <Badge tone="blue">{t.progress ? `실행 중 · ${t.progress}` : "실행 중"}</Badge>
+                  ) : t.isError ? (
+                    <Badge tone="red">오류</Badge>
+                  ) : (
+                    <Badge tone="green">완료</Badge>
+                  )}
+                </summary>
+                {t.input !== undefined && <div class="code-block mono">{JSON.stringify(t.input, null, 2)}</div>}
+                {t.result !== undefined && (
+                  <div class="code-block mono">{t.result.length > RESULT_LIMIT ? `${t.result.slice(0, RESULT_LIMIT)}\n… (${t.result.length}자)` : t.result}</div>
+                )}
+              </details>
+            ))}
+          </div>
         </details>
-      ))}
+      )}
       {turn.images && (
         <div class="row wrap">
           {turn.images.map((src, k) => (

@@ -972,6 +972,10 @@ a:focus-visible {
   margin-bottom: 0.35rem;
 }
 
+.tool-group {
+  margin: 0.35rem 0 0 0.9rem;
+}
+
 .question {
   padding: 0.85rem 1rem;
   border-color: var(--accent);
