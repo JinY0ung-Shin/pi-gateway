@@ -269,8 +269,9 @@ docker compose up -d egress-proxy
 일반 컨테이너(runc)는 호스트 커널을 공유한다. gVisor(`runsc`)를 쓰면 sandbox의 시스템 콜을 호스트 커널 대신 sandbox마다 붙는 gVisor 커널이 처리한다. 커널 공격 표면이 줄고, sandbox에서 호스트 커널 버전과 CPU·메모리 총량도 보이지 않는다. 코드는 그대로이고 Docker 런타임 설정만 바꾼다.
 
 ```bash
-# 1) 설치: 사내 apt 미러 (Ubuntu는 universe, Debian은 기본 저장소에 runsc 패키지가 있다)
+# 1) 설치: 사내 apt 미러
 sudo apt-get update && sudo apt-get install -y runsc
+runsc --version
 # 2) Docker 런타임 등록: /etc/docker/daemon.json의 runtimes에 runsc만 더한다 (다른 설정은 그대로 둔다)
 sudo runsc install -- --host-uds=open --oci-seccomp
 # 설정만 다시 읽는다 (컨테이너는 재시작되지 않는다). reload는 신호만 보내고 끝나므로 잠깐 기다린다
@@ -288,7 +289,6 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
 - `SANDBOX_PIDS_LIMIT`: gVisor 커널의 호스트 스레드와 stub 프로세스도 이 제한에 들어간다. 256이면 fd·rg처럼 스레드를 많이 쓰는 도구에서 sandbox가 통째로 죽는다 (`WaitPID ... failed: EOF`). 4096에서 시작해 운영에서 `pids.peak`를 보고 맞춘다 (cgroup v2, systemd 드라이버):
   `cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <sandbox 컨테이너>).scope/pids.peak`
 - 파일 조작이 한 번에 약 60ms 느려지고, sandbox마다 메모리가 약 17MB 더 든다 ([§9](#9-용량-참고값)).
-- 배포판 패키지는 오래된 판이다 (Ubuntu 24.04: 2023-08, Debian 13: 2024-07). 최신판이 필요하면 gVisor 공식 apt 저장소(`https://storage.googleapis.com/gvisor/releases`, `release main`, 키 `https://gvisor.dev/archive.key`)를 사내 미러에 더한다.
 - 기본 platform(systrap)이 `failed to create a syscall thread`로 죽는 커널(예: WSL2 개발 머신)에서는 개발용으로만 runtimeArgs에 `--platform=ptrace`를 더한다 (느리다).
 - 되돌리기: `.env`의 `SANDBOX_RUNTIME`을 비우고, `docker compose up -d sandboxd`와 위의 `docker rm -f` 명령을 실행한다.
 

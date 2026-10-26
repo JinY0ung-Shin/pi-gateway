@@ -491,7 +491,8 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500));
   const ctl7 = (await sh(A, tcp("127.0.0.1", 8765))).stdout.includes("OPEN");
   const sib = (await sh(B, tcp("127.0.0.1", 8765))).stdout.includes("OPEN");
-  const ifs = (await sh(B, "ls /sys/class/net")).stdout.split(/\s+/).filter(Boolean);
+  // /sys/class/net은 gVisor에 없으므로 /proc/net/dev로 본다
+  const ifs = (await sh(B, "tail -n +3 /proc/net/dev | cut -d: -f1")).stdout.split(/\s+/).filter(Boolean);
   const others = ifs.filter((i) => i !== "lo");
   record(
     "network",
@@ -561,10 +562,10 @@ async function main() {
     "echo kernel=$(uname -r); echo cpus=$(nproc); echo mem=$(awk '/MemTotal/ {print $2\" kB\"}' /proc/meminfo); echo memory.max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null); echo pids.max=$(cat /sys/fs/cgroup/pids.max 2>/dev/null); echo cpu.max=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null); df -h /workspace /tmp | tail -2",
   );
   detail("자원 제한과 커널 정보 (sandbox B)", info.stdout);
-  record("info", "자원 제한 (cgroup)", "INFO", short(info.stdout.split("\n").filter((l) => /^(memory|pids|cpu)\.max=/.test(l)).join(" ")));
+  record("info", "자원 제한 (cgroup. gVisor에서는 sandbox 안에 보이지 않는다)", "INFO", short(info.stdout.split("\n").filter((l) => /^(memory|pids|cpu)\.max=/.test(l)).join(" ")));
   record(
     "info",
-    "호스트 커널 버전·CPU·메모리 총량은 보인다 (컨테이너가 커널을 공유하므로). 숨기려면 SANDBOX_RUNTIME=runsc (gVisor)",
+    "커널 버전·CPU·메모리 총량 (runc면 호스트 값이 보인다. SANDBOX_RUNTIME=runsc(gVisor)면 gVisor 값이 보인다)",
     "INFO",
     short(info.stdout.split("\n").filter((l) => /^(kernel|cpus|mem)=/.test(l)).join(" ")),
   );
