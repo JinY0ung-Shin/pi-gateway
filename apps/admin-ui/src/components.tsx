@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 
 /** 메뉴·로그인 화면 상단의 이름 */
 export function Brand() {
@@ -67,6 +67,29 @@ export function Section(props: { title: string; actions?: ComponentChildren; chi
       </header>
       {props.children}
     </section>
+  );
+}
+
+/** 목록 위에 뜨는 편집·상세 창. ×나 Esc로 닫으면 onClose가 불린다. 머리는 두고 본문만 스크롤한다. */
+export function Modal(props: { title: string; actions?: ComponentChildren; onClose: () => void; children: ComponentChildren }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  // 그리기 전에 열어야 key가 바뀌어 다시 만들어질 때 깜빡이지 않는다
+  useLayoutEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  return (
+    <dialog ref={ref} class="modal" onClose={props.onClose}>
+      <header class="section-head">
+        <h2>{props.title}</h2>
+        <div class="row">
+          {props.actions}
+          <button class="modal-close" onClick={() => ref.current?.close()} aria-label="닫기" title="닫기 (Esc)">
+            ×
+          </button>
+        </div>
+      </header>
+      <div class="modal-body">{props.children}</div>
+    </dialog>
   );
 }
 

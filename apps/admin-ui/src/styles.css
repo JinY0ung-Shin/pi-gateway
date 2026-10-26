@@ -586,14 +586,57 @@ a:focus-visible {
   z-index: 1;
 }
 
-.picker {
-  background: var(--surface-2);
-  padding: 0.85rem 1rem;
-  margin: 0.75rem 0;
+/* ── 창 (목록 위에 뜨는 편집·상세) ── */
+
+.modal {
+  width: min(900px, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
 }
 
-.picker .table {
-  margin: 0.5rem 0;
+.modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal::backdrop {
+  background: rgba(8, 12, 16, 0.5);
+}
+
+.modal > .section-head {
+  margin: 0;
+  padding: 0.9rem 1.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 1.35rem 1.25rem;
+}
+
+/* 창 안에서는 본문이 스크롤하므로 코드 블록 높이를 따로 막지 않는다 */
+.modal .code-block {
+  max-height: none;
+}
+
+button.modal-close {
+  border: none;
+  background: none;
+  padding: 0 0.2rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+button.modal-close:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
 }
 
 /* ── 표 ── */
@@ -665,13 +708,8 @@ a:focus-visible {
   cursor: pointer;
 }
 
-.table tr.clickable:hover,
-.table tr.selected {
+.table tr.clickable:hover {
   background: var(--surface-2);
-}
-
-.table tr.selected > td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .table td.actions {

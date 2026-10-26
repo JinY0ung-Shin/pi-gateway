@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, Notice, Section, useAction } from "../components";
+import { Badge, Modal, Notice, Section, useAction } from "../components";
 import type { PromptDeployment, PromptDetail, PromptList, SessionPreview } from "../types";
 
 type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" } | { kind: "full" };
@@ -126,10 +126,9 @@ function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void>
       </p>
       <pre class="code-block">{props.list.defaultContent}</pre>
       {preview !== null && (
-        <>
-          <h3>렌더링 결과</h3>
+        <Modal title="기본 프롬프트 렌더링 결과" onClose={() => setPreview(null)}>
           <pre class="code-block">{preview}</pre>
-        </>
+        </Modal>
       )}
     </Section>
   );
@@ -334,8 +333,8 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
               <td>{v.author}</td>
               <td>{formatTime(v.createdAt)}</td>
               <td class="actions">
-                <button class="small" onClick={() => setShown(shown === v.version ? null : v.version)}>
-                  {shown === v.version ? "닫기" : "보기"}
+                <button class="small" onClick={() => setShown(v.version)}>
+                  보기
                 </button>
                 <button class="small" disabled={detail.liveVersion === v.version || action.busy} onClick={() => deploy(v.version)}>
                   {live.name === props.name && live.version !== null && v.version < live.version ? "롤백" : "배포"}
@@ -345,7 +344,11 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
           ))}
         </tbody>
       </table>
-      {shownVersion && <pre class="code-block">{shownVersion.content}</pre>}
+      {shownVersion && (
+        <Modal title={`${props.name} v${shownVersion.version}`} onClose={() => setShown(null)}>
+          <pre class="code-block">{shownVersion.content}</pre>
+        </Modal>
+      )}
     </Section>
   );
 }

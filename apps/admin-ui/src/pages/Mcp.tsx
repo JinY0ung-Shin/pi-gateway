@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
+import { Badge, linesToRecord, Modal, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
 import type { McpScope, McpServerConfig, McpServerEntry, McpServerList, ToolSummary } from "../types";
 
 /** 연결 확인 결과. broker 서버는 실제로 연결해 도구 목록을 받고, sandbox 서버는 설정과 파일만 본다. */
@@ -144,29 +144,36 @@ export function McpPage(props: { focus?: string | undefined }) {
           }}
         />
       )}
-      <Section title="템플릿 자리표시자">
-        <table class="table compact">
-          <tbody>
-            <tr>
-              <td class="mono">{"{{secret:NAME}}"}</td>
-              <td>broker 비밀 저장소 값 (broker 서버만)</td>
-            </tr>
-            <tr>
-              <td class="mono">{"{{ctx.header:NAME}}"}</td>
-              <td>클라이언트 요청 헤더 (MCP_FORWARD_HEADERS 허용분, broker 서버만)</td>
-            </tr>
-            <tr>
-              <td class="mono">{"{{user}}"}</td>
-              <td>사용자 id (sandbox 서버는 per-user 이상)</td>
-            </tr>
-            <tr>
-              <td class="mono">{"{{session}} · {{metadata:KEY}}"}</td>
-              <td>세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, sandbox 서버는 per-session)</td>
-            </tr>
-          </tbody>
-        </table>
-      </Section>
     </>
+  );
+}
+
+/** 편집 창에서 env·args·url·headers에 쓰는 자리표시자 */
+function Placeholders() {
+  return (
+    <details>
+      <summary class="muted small-text">템플릿 자리표시자</summary>
+      <table class="table compact">
+        <tbody>
+          <tr>
+            <td class="mono">{"{{secret:NAME}}"}</td>
+            <td>broker 비밀 저장소 값 (broker 서버만)</td>
+          </tr>
+          <tr>
+            <td class="mono">{"{{ctx.header:NAME}}"}</td>
+            <td>클라이언트 요청 헤더 (MCP_FORWARD_HEADERS 허용분, broker 서버만)</td>
+          </tr>
+          <tr>
+            <td class="mono">{"{{user}}"}</td>
+            <td>사용자 id (sandbox 서버는 per-user 이상)</td>
+          </tr>
+          <tr>
+            <td class="mono">{"{{session}} · {{metadata:KEY}}"}</td>
+            <td>세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, sandbox 서버는 per-session)</td>
+          </tr>
+        </tbody>
+      </table>
+    </details>
   );
 }
 
@@ -335,8 +342,9 @@ function ServerEditor(props: {
   });
 
   return (
-    <Section
+    <Modal
       title={isNew ? "MCP 서버 추가" : `MCP 서버 ${props.entry!.config.id}`}
+      onClose={props.onClose}
       actions={
         <>
           {!isNew && (
@@ -368,7 +376,6 @@ function ServerEditor(props: {
               삭제
             </button>
           )}
-          <button onClick={props.onClose}>닫기</button>
         </>
       }
     >
@@ -443,6 +450,7 @@ function ServerEditor(props: {
           </label>
         </div>
       )}
+      <Placeholders />
       <div class="grid-2">
         <label class="field">
           <span>허용할 도구 (쉼표, 비우면 전체)</span>
@@ -477,7 +485,7 @@ function ServerEditor(props: {
       </div>
       {!isNew && props.entry!.store === "broker" && <Secrets entry={props.entry!} required={required} onChanged={() => props.onSaved(props.entry!.config.id)} />}
       {!isNew && props.entry!.store === "broker" && <ToolsList id={props.entry!.config.id} />}
-    </Section>
+    </Modal>
   );
 }
 

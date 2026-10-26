@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, enc, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Notice, recordToLines, Section, Toggle, useAction } from "../components";
+import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpScope, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
@@ -52,15 +52,15 @@ export function PluginsPage() {
   return (
     <>
       {error && <Notice tone="error">{error}</Notice>}
-      <Marketplaces marketplaces={marketplaces} selected={selected} onSelect={setSelected} onChanged={reload} />
-      {selected && <Catalog key={selected} name={selected} onInstalled={reload} />}
+      <Marketplaces marketplaces={marketplaces} onSelect={setSelected} onChanged={reload} />
+      {selected && <Catalog key={selected} name={selected} onInstalled={reload} onClose={() => setSelected(null)} />}
       <Installed plugins={plugins} onChanged={reload} />
       <McpDefaults />
     </>
   );
 }
 
-function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string | null; onSelect: (name: string | null) => void; onChanged: () => Promise<void> }) {
+function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name: string) => void; onChanged: () => Promise<void> }) {
   const action = useAction();
   const [url, setUrl] = useState("");
   const [ref, setRef] = useState("");
@@ -126,9 +126,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
             </tr>
           )}
           {props.marketplaces.map((m) => [
-            <tr key={m.name} class={props.selected === m.name ? "selected" : ""}>
+            <tr key={m.name}>
               <td>
-                <button class="link" onClick={() => props.onSelect(props.selected === m.name ? null : m.name)}>
+                <button class="link" onClick={() => props.onSelect(m.name)}>
                   {m.name}
                 </button>
                 {m.owner && <div class="muted small-text">{m.owner}</div>}
@@ -153,7 +153,6 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
                     confirm(`marketplace ${m.name}을(를) 지울까요?`) &&
                     action.run(async () => {
                       await api("DELETE", `/marketplaces/${enc(m.name)}`);
-                      if (props.selected === m.name) props.onSelect(null);
                       await props.onChanged();
                     })
                   }
@@ -213,7 +212,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
   );
 }
 
-function Catalog(props: { name: string; onInstalled: () => Promise<void> }) {
+function Catalog(props: { name: string; onInstalled: () => Promise<void>; onClose: () => void }) {
   const [entries, setEntries] = useState<CatalogEntry[] | null>(null);
   const action = useAction();
   const load = async () => setEntries((await api<{ plugins: CatalogEntry[] }>("GET", `/marketplaces/${enc(props.name)}`)).plugins);
@@ -240,7 +239,7 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void> }) {
     }, `${id}을(를) 업데이트했습니다 (v${version})`);
 
   return (
-    <Section title={`${props.name}의 plugin`}>
+    <Modal title={`${props.name}의 plugin`} onClose={props.onClose}>
       {action.view}
       {entries === null ? (
         <p class="muted">불러오는 중…</p>
@@ -288,7 +287,7 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void> }) {
           </tbody>
         </table>
       )}
-    </Section>
+    </Modal>
   );
 }
 

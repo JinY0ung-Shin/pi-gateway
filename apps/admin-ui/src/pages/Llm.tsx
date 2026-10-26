@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Notice, recordToLines, Section, useAction } from "../components";
+import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction } from "../components";
 
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
@@ -334,8 +334,8 @@ function ServerCard(props: {
           <button disabled={!canConnect || checking} onClick={() => void props.onProbe()}>
             {checking ? "확인 중…" : "연결 확인"}
           </button>
-          <button disabled={!canConnect || checking} onClick={() => (picking ? setPicking(false) : void fetchModels())}>
-            {picking ? "목록 닫기" : "모델 가져오기"}
+          <button disabled={!canConnect || checking} onClick={() => void fetchModels()}>
+            모델 가져오기
           </button>
           <button class="danger" onClick={props.onRemove}>
             서버 빼기
@@ -524,10 +524,9 @@ function ModelPicker(props: {
         }),
     );
   return (
-    <div class="card picker">
-      <strong>서버에 있는 모델 {props.available.length}개</strong>
+    <Modal title={`서버에 있는 모델 ${props.available.length}개`} onClose={props.onClose}>
       {props.available.length === 0 ? (
-        <p class="muted small-text">서버가 모델 목록을 주지 않았습니다. 아래에서 직접 추가하세요.</p>
+        <p class="muted small-text">서버가 모델 목록을 주지 않았습니다. 모델 표의 '+ 직접 추가'로 넣으세요.</p>
       ) : (
         <table class="table compact">
           <thead>
@@ -567,12 +566,9 @@ function ModelPicker(props: {
         <button class="primary small" disabled={picked.length === 0} onClick={add}>
           {`선택한 ${picked.length}개 추가`}
         </button>
-        <button class="small" onClick={props.onClose}>
-          닫기
-        </button>
         <span class="muted small-text">reasoning·이미지 여부는 서버가 알려 주지 않으니 추가한 뒤 표시하세요.</span>
       </div>
-    </div>
+    </Modal>
   );
 }
 
