@@ -21,6 +21,7 @@ import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
 import type { SessionRecord } from "../sessions/store.js";
 import { installAskUserTurnGuard } from "../tools/ask-user.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolSettings } from "../tools/settings.js";
 import type { GatewayModels } from "./runtime.js";
 import { createSubagentTools } from "./subagents.js";
 
@@ -30,7 +31,7 @@ import { createSubagentTools } from "./subagents.js";
  * - 디스크 탐색 없음: 직접 만든 ResourceLoader (~/.pi, 프로젝트 .pi, AGENTS.md/CLAUDE.md를 읽지 않는다)
  * - project trust 끔, cache warming 끔, 설치 텔레메트리 끔
  * - 도구는 ToolRegistry가 만든 것과 Agent·SendMessage(plugin agent가 있을 때)만 쓴다
- *   (내장 로컬 도구는 같은 이름의 원격 도구로 대체된다)
+ *   (내장 로컬 도구는 같은 이름의 원격 도구로 대체된다). 관리 화면에서 끈 기본 도구는 뺀다.
  */
 
 /** 세션 메타는 있는데 JSONL이 없어진 경우 (지워졌거나 볼륨이 바뀜). 만료된 세션으로 다룬다. */
@@ -47,6 +48,7 @@ export interface AgentFactoryDeps {
   sandboxClient: SandboxClient;
   plugins: PluginResources;
   tools: ToolRegistry;
+  toolSettings: Pick<ToolSettings, "disabled" | "revision">;
   log: Logger;
   /** 테스트용 pi settings 덮어쓰기 (예: retry 끄기) */
   settingsOverrides?: Record<string, unknown>;
@@ -94,7 +96,10 @@ export async function buildAgentSession(
   if (record.sessionFile && record.turn > 0 && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
   const sandbox = deps.sandboxClient.for(record.principal, record.id);
 
-  const { customTools } = await deps.tools.createSessionTools({
+  // 관리 화면에서 끈 기본 도구는 이 세션과 하위 agent 모두에서 뺀다.
+  const disabled = deps.toolSettings.disabled();
+  const enabled = (t: ToolDefinition) => !disabled.has(t.name);
+  const { customTools: created } = await deps.tools.createSessionTools({
     principal: record.principal,
     sessionId: record.id,
     sandbox,
@@ -102,6 +107,7 @@ export async function buildAgentSession(
     log: deps.log.child({ session: record.id }),
     signal,
   });
+  const customTools = created.filter(enabled);
 
   const skillNames = new Set(record.skillNames);
   const skills = deps.plugins.skills().filter((s) => skillNames.has(s.name));
@@ -138,7 +144,7 @@ export async function buildAgentSession(
         tools,
         sessionManager,
       }),
-  });
+  }).filter(enabled);
 
   const session = await createPiSession(deps, {
     model,

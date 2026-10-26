@@ -25,6 +25,7 @@ import { McpRegistryService } from "../../src/mcp-registry/service.js";
 import { PluginService } from "../../src/plugins/service.js";
 import { PromptManager } from "../../src/prompts/service.js";
 import { SessionStore } from "../../src/sessions/store.js";
+import { ToolSettings } from "../../src/tools/settings.js";
 
 export const ADMIN_KEY = "admin-key-for-tests-0123456789";
 export const BROKER_JWT_SECRET = "b".repeat(40);
@@ -118,6 +119,7 @@ export async function buildHarness(options: {
     chat: { respond: async () => ({}), cancel: async () => ({}), preview: async () => ({}) },
     llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },
     sessions: new SessionStore(db),
+    toolSettings: new ToolSettings(db),
   };
   await registerAdminRoutes(app, deps);
   await app.ready();

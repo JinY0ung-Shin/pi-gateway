@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText } from "../api";
-import { Badge, Notice, RunsInBadge } from "../components";
+import { Badge, Notice, RunsInBadge, Toggle, useAction } from "../components";
 import type { AgentToolset, PluginView, ToolInfo } from "../types";
 
 // 도구·skill·agent 탭: 왼쪽 목록, 오른쪽 정의. 선택은 주소(#/<탭>/<이름>)에 남겨 plugin 탭에서 바로 연결한다.
@@ -61,17 +61,30 @@ function PluginLine(props: { plugin: PluginView }) {
 export function ToolsPage(props: { focus?: string | undefined }) {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  const action = useAction();
+  const load = () =>
     api<{ tools: ToolInfo[] }>("GET", "/tools").then(
       (r) => setTools(r.tools),
       (e) => setError(errorText(e)),
     );
+  useEffect(() => {
+    void load();
   }, []);
   return (
     <Explorer
       page="tools"
       title="기본 도구"
-      items={tools && tools.map((t) => ({ name: t.name, badge: <RunsInBadge value={t.runsIn} /> }))}
+      items={
+        tools &&
+        tools.map((t) => ({
+          name: t.name,
+          badge: (
+            <>
+              <RunsInBadge value={t.runsIn} /> {!t.enabled && <Badge tone="amber">꺼짐</Badge>}
+            </>
+          ),
+        }))
+      }
       error={error}
       selected={props.focus}
       empty="도구가 없습니다."
@@ -80,12 +93,28 @@ export function ToolsPage(props: { focus?: string | undefined }) {
         const t = tools!.find((x) => x.name === name)!;
         return (
           <section class="section">
-            <h2 class="mono">
-              {t.name} <RunsInBadge value={t.runsIn} />
-            </h2>
+            <div class="row space">
+              <h2 class="mono">
+                {t.name} <RunsInBadge value={t.runsIn} />
+              </h2>
+              <Toggle
+                checked={t.enabled}
+                label={`${t.name} 사용`}
+                disabled={action.busy}
+                onChange={(next) =>
+                  action.run(async () => {
+                    await api("POST", `/tools/${enc(t.name)}/${next ? "enable" : "disable"}`);
+                    await load();
+                  })
+                }
+              />
+            </div>
+            {action.view}
             <p class="small-text muted">
-              {t.runsIn === "sandbox" ? "사용자 sandbox 컨테이너 안에서 실행됩니다." : "gateway 안에서 실행됩니다 (파일·명령을 직접 다루지 않습니다)."}
+              {t.runsIn === "sandbox" ? "사용자 sandbox 컨테이너 안에서 실행됩니다." : "gateway 안에서 실행됩니다 (파일·명령을 직접 다루지 않습니다)."}{" "}
+              끄면 새 대화와 대화 중인 세션의 다음 턴부터 모델(plugin agent 포함)에게 이 도구를 주지 않습니다.
             </p>
+            {t.name === "read" && <p class="small-text warn-text">read를 끄면 모델이 skill 파일(SKILL.md)을 읽지 못합니다.</p>}
             <h3>설명</h3>
             <pre class="code-block">{t.description}</pre>
             {t.promptGuidelines && (

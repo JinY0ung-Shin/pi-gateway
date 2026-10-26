@@ -20,8 +20,8 @@ export interface LiveSession {
   requestContext: RequestContext;
   lastActive: number;
   activeTurn: AbortController | null;
-  /** 이 세션을 만들 때의 LLM 설정 revision. 설정이 바뀌면 다음 턴에 다시 연다. */
-  llmRevision: number;
+  /** 이 세션을 만들 때의 설정 revision (LLM 연결·기본 도구). 설정이 바뀌면 다음 턴에 다시 연다. */
+  revision: string;
 }
 
 /** 세션을 열면 모델이 받는 것: pi가 조립한 시스템 프롬프트와 요청에 실리는 도구 선언 */
@@ -66,8 +66,8 @@ export class SessionHub {
    */
   async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext = {}): Promise<LiveSession> {
     let existing = this.live.get(record.id);
-    if (existing && existing.llmRevision !== this.deps.factory.models.revision()) {
-      // LLM 설정(주소·키·모델)이 바뀌었다. 기록은 JSONL에 있으므로 새 설정으로 다시 연다.
+    if (existing && existing.revision !== this.settingsRevision()) {
+      // LLM 설정(주소·키·모델)이나 기본 도구 설정이 바뀌었다. 기록은 JSONL에 있으므로 새 설정으로 다시 연다.
       await this.teardown(existing);
       existing = undefined;
     }
@@ -79,9 +79,9 @@ export class SessionHub {
     }
     // 도구를 만드는 동안(예: sandbox MCP 서버 목록 조회)에도 이번 요청의 컨텍스트가 보이게 한다.
     const holder: { live?: LiveSession; ctx: RequestContext } = { ctx: requestContext };
-    const llmRevision = this.deps.factory.models.revision();
+    const revision = this.settingsRevision();
     const agent = await buildAgentSession(this.deps.factory, record, () => holder.live?.requestContext ?? holder.ctx, signal);
-    const live: LiveSession = { id: record.id, record, agent, requestContext, lastActive: Date.now(), activeTurn: null, llmRevision };
+    const live: LiveSession = { id: record.id, record, agent, requestContext, lastActive: Date.now(), activeTurn: null, revision };
     holder.live = live;
     this.live.set(record.id, live);
     return live;
@@ -99,8 +99,12 @@ export class SessionHub {
         tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
       };
     } finally {
-      await this.teardown({ id: record.id, record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, llmRevision: 0 });
+      await this.teardown({ id: record.id, record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, revision: "" });
     }
+  }
+
+  private settingsRevision(): string {
+    return `${this.deps.factory.models.revision()}:${this.deps.factory.toolSettings.revision()}`;
   }
 
   get(id: string): LiveSession | undefined {

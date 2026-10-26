@@ -196,6 +196,7 @@ export interface SessionPreview {
 export interface ToolInfo {
   name: string;
   runsIn: "sandbox" | "gateway";
+  enabled: boolean;
   description: string;
   promptGuidelines?: string[];
   parameters: unknown;
