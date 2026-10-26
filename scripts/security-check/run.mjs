@@ -375,15 +375,16 @@ async function main() {
   );
 
   // ── 5. 권한 ──────────────────────────────────────────────────────
+  // no_new_privs는 prctl(PR_GET_NO_NEW_PRIVS=39)로 본다. 옛 gVisor(20260810 등)는 /proc/self/status에 NoNewPrivs 줄이 없다
   const priv = await sh(
     B,
-    "echo uid=$(id -u) gid=$(id -g); grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp):' /proc/self/status; echo setuid=$(find / -xdev -perm /6000 -type f 2>/dev/null | wc -l); (su -c id root </dev/null >/dev/null 2>&1 && echo SU=OK) || echo SU=DENIED; (sudo -n id >/dev/null 2>&1 && echo SUDO=OK) || echo SUDO=DENIED; (unshare -Ur true >/dev/null 2>&1 && echo USERNS=OK) || echo USERNS=DENIED; (mount -t tmpfs none /mnt >/dev/null 2>&1 && echo MOUNT=OK) || echo MOUNT=DENIED",
+    "echo uid=$(id -u) gid=$(id -g); grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|Seccomp):' /proc/self/status; echo no_new_privs=$(python3 -c 'import ctypes; print(ctypes.CDLL(None).prctl(39, 0, 0, 0, 0))'); echo setuid=$(find / -xdev -perm /6000 -type f 2>/dev/null | wc -l); (su -c id root </dev/null >/dev/null 2>&1 && echo SU=OK) || echo SU=DENIED; (sudo -n id >/dev/null 2>&1 && echo SUDO=OK) || echo SUDO=DENIED; (unshare -Ur true >/dev/null 2>&1 && echo USERNS=OK) || echo USERNS=DENIED; (mount -t tmpfs none /mnt >/dev/null 2>&1 && echo MOUNT=OK) || echo MOUNT=DENIED",
   );
   detail("권한 상태 (sandbox B)", priv.stdout);
   const capZero = ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"].every((c) => new RegExp(`^${c}:\\s*0+$`, "m").test(priv.stdout));
   record("privilege", "root가 아니다 (uid/gid 1000)", /uid=1000 gid=1000/.test(priv.stdout) ? "PASS" : "FAIL", short(priv.stdout.split("\n")[0] ?? ""));
   record("privilege", "capability가 하나도 없다 (Inh/Prm/Eff/Bnd/Amb 모두 0)", capZero ? "PASS" : "FAIL", short(priv.stdout.split("\n").filter((l) => l.startsWith("Cap")).join(" ")));
-  record("privilege", "no_new_privs가 켜져 있다", /NoNewPrivs:\s*1/.test(priv.stdout) ? "PASS" : "FAIL", short(priv.stdout.match(/NoNewPrivs:.*/)?.[0] ?? ""));
+  record("privilege", "no_new_privs가 켜져 있다", /^no_new_privs=1$/m.test(priv.stdout) ? "PASS" : "FAIL", short(priv.stdout.match(/^no_new_privs=.*/m)?.[0] ?? ""));
   record("privilege", "setuid/setgid 실행 파일이 없다", /setuid=0\b/.test(priv.stdout) ? "PASS" : "FAIL", short(priv.stdout.match(/setuid=\d+/)?.[0] ?? ""));
   record(
     "privilege",
