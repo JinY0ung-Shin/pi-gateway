@@ -130,6 +130,11 @@ input.mono {
   color: var(--warn-text);
 }
 
+.err-text {
+  color: var(--err-text);
+  overflow-wrap: anywhere;
+}
+
 .center {
   text-align: center;
   margin-top: 20vh;
@@ -227,9 +232,12 @@ textarea:disabled {
   color: var(--muted);
 }
 
+/* 입력칸 padding이 붙으면 누를 때 체크박스가 커져 둘레가 밀린다 */
 input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--accent);
+  padding: 0;
+  border: 0;
 }
 
 textarea {
@@ -540,7 +548,8 @@ a:focus-visible {
   margin-bottom: 0.75rem;
 }
 
-.field > span {
+.field > span,
+.field > .field-label {
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
@@ -557,6 +566,34 @@ a:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 0 1.1rem;
+}
+
+.field > small {
+  font-size: 11.5px;
+}
+
+.save-bar {
+  margin-top: 1rem;
+  padding: 0.75rem 0 1rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+/* 저장하지 않은 변경이 있으면 저장 버튼 줄이 화면 아래에 붙어 있다 */
+.save-bar.dirty {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+
+.picker {
+  background: var(--surface-2);
+  padding: 0.85rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.picker .table {
+  margin: 0.5rem 0;
 }
 
 /* ── 표 ── */
@@ -611,10 +648,13 @@ a:focus-visible {
   padding-bottom: 0.4rem;
 }
 
-.table td input:not([type="checkbox"]):not([type="radio"]),
-.table td select {
+.table td :where(input:not([type="checkbox"], [type="radio"], [type="number"]), select) {
   width: 100%;
   min-width: 7rem;
+}
+
+.table td input[type="number"] {
+  width: 6.5rem;
 }
 
 .table td input.mono {

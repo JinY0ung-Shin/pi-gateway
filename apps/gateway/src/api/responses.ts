@@ -78,7 +78,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
     deps.auth.authenticate(req.headers.authorization);
     return {
       object: "list",
-      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: deps.models.providerId })),
+      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: m.server })),
     };
   });
 

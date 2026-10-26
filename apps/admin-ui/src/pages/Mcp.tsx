@@ -3,10 +3,38 @@ import { api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
 import type { McpScope, McpServerConfig, McpServerEntry, McpServerList, ToolSummary } from "../types";
 
+/** 연결 확인 결과. broker 서버는 실제로 연결해 도구 목록을 받고, sandbox 서버는 설정과 파일만 본다. */
+interface TestResult {
+  ok: boolean;
+  error?: string;
+  note?: string;
+  tools?: ToolSummary[];
+  durationMs: number;
+}
+
+async function testServer(id: string): Promise<TestResult> {
+  try {
+    return await api<TestResult>("POST", `/mcp/servers/${enc(id)}/test`, {});
+  } catch (error) {
+    return { ok: false, error: errorText(error), durationMs: 0 };
+  }
+}
+
+/** items를 limit개씩 동시에 처리한다 */
+async function eachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 export function McpPage(props: { focus?: string | undefined }) {
   const [list, setList] = useState<McpServerList | null>(null);
   const [editing, setEditing] = useState<McpServerEntry | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [checks, setChecks] = useState<Record<string, TestResult | "checking">>({});
+  const [checkingAll, setCheckingAll] = useState(false);
 
   const reload = async () => {
     try {
@@ -29,18 +57,37 @@ export function McpPage(props: { focus?: string | undefined }) {
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!list) return <p class="muted">불러오는 중…</p>;
 
+  const setCheck = (id: string, result: TestResult | "checking" | null) =>
+    setChecks(({ [id]: _, ...rest }) => (result ? { ...rest, [id]: result } : rest));
+
+  const checkAll = async () => {
+    const targets = list.servers.filter((s) => s.config.enabled);
+    setCheckingAll(true);
+    setChecks(Object.fromEntries(targets.map((s) => [s.config.id, "checking" as const])));
+    await eachLimit(targets, 4, async (s) => setCheck(s.config.id, await testServer(s.config.id)));
+    setCheckingAll(false);
+  };
+
   return (
     <>
       <Section
         title="MCP 서버"
         actions={
-          <button class="primary" onClick={() => setEditing("new")}>
-            + 서버 추가
-          </button>
+          <>
+            <button disabled={checkingAll || !list.servers.some((s) => s.config.enabled)} onClick={() => void checkAll()}>
+              {checkingAll ? "확인 중…" : "전체 연결 확인"}
+            </button>
+            <button class="primary" onClick={() => setEditing("new")}>
+              + 서버 추가
+            </button>
+          </>
         }
       >
         <p class="muted">
           <RunsInBadge value="sandbox" /> 비밀키 없이 사용자 sandbox 안에서 실행 · <RunsInBadge value="broker" /> 비밀키를 가진 격리된 broker가 원격 HTTP 서버로 프록시
+        </p>
+        <p class="muted small-text">
+          전체 연결 확인은 켜진 서버를 모두 확인합니다. broker 서버는 실제로 연결해 도구 목록을 받고, sandbox 서버는 세션에서 처음 쓸 때 시작하므로 설정과 파일만 확인합니다.
         </p>
         {!list.broker.available && <Notice tone="error">broker에 연결할 수 없습니다: {list.broker.error}</Notice>}
         <table class="table">
@@ -48,7 +95,7 @@ export function McpPage(props: { focus?: string | undefined }) {
             <tr>
               <th>id</th>
               <th>실행</th>
-              <th>연결</th>
+              <th>대상</th>
               <th>범위</th>
               <th>출처</th>
               <th>상태</th>
@@ -75,9 +122,7 @@ export function McpPage(props: { focus?: string | undefined }) {
                 <td>{s.config.scope}</td>
                 <td>{s.config.source.kind === "plugin" ? <Badge tone="blue">{s.config.source.pluginId}</Badge> : <span class="muted">직접 등록</span>}</td>
                 <td>
-                  {!s.config.enabled && <Badge>꺼짐</Badge>}
-                  {(s.missingSecrets?.length ?? 0) > 0 && <Badge tone="amber">비밀키 {s.missingSecrets!.length}개 없음</Badge>}
-                  {s.config.enabled && (s.missingSecrets?.length ?? 0) === 0 && <Badge tone="green">사용 가능</Badge>}
+                  <ServerState entry={s} check={checks[s.config.id]} />
                 </td>
               </tr>
             ))}
@@ -89,7 +134,10 @@ export function McpPage(props: { focus?: string | undefined }) {
           key={editing === "new" ? "new" : editing.config.id}
           entry={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
+          onTested={(result) => editing !== "new" && setCheck(editing.config.id, result)}
           onSaved={async (id) => {
+            // 설정이 바뀌었으니 이전 확인 결과는 버린다
+            if (id) setCheck(id, null);
             const next = await reload();
             const fresh = next?.servers.find((s) => s.config.id === id);
             setEditing(fresh ?? null);
@@ -121,6 +169,42 @@ export function McpPage(props: { focus?: string | undefined }) {
     </>
   );
 }
+
+/** 목록의 상태 칸: 설정 문제, 연결 확인 결과, broker가 기억하는 최근 오류 */
+function ServerState(props: { entry: McpServerEntry; check: TestResult | "checking" | undefined }) {
+  const { entry, check } = props;
+  const missing = entry.missingSecrets?.length ?? 0;
+  const lastError = entry.status?.lastError;
+  return (
+    <>
+      {!entry.config.enabled && <Badge>꺼짐</Badge>}
+      {missing > 0 && <Badge tone="amber">비밀키 {missing}개 없음</Badge>}
+      {check === "checking" && <Badge>확인 중…</Badge>}
+      {check && check !== "checking" && check.ok && entry.store === "broker" && (
+        <Badge tone="green">{`연결됨 · 도구 ${check.tools?.length ?? 0}개 · ${check.durationMs}ms`}</Badge>
+      )}
+      {check && check !== "checking" && check.ok && entry.store === "sandbox" && (
+        <Badge tone="blue" title={check.note}>
+          설정 확인됨
+        </Badge>
+      )}
+      {check && check !== "checking" && !check.ok && (
+        <>
+          <Badge tone="red">{entry.store === "sandbox" ? "설정 오류" : "연결 실패"}</Badge>
+          <div class="small-text err-text">{clip(check.error ?? "")}</div>
+        </>
+      )}
+      {!check && entry.config.enabled && missing === 0 && <span class="muted small-text">확인 전</span>}
+      {lastError && (
+        <div class="small-text err-text" title={lastError}>
+          최근 오류 {formatTime(entry.status?.lastErrorAt)}: {clip(lastError)}
+        </div>
+      )}
+    </>
+  );
+}
+
+const clip = (text: string) => (text.length > 160 ? `${text.slice(0, 160)}…` : text);
 
 interface FormState {
   id: string;
@@ -194,11 +278,16 @@ function fromForm(f: FormState, source: McpServerConfig["source"]): McpServerCon
   };
 }
 
-function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void; onSaved: (id: string) => Promise<void> }) {
+function ServerEditor(props: {
+  entry: McpServerEntry | null;
+  onClose: () => void;
+  onTested: (result: TestResult) => void;
+  onSaved: (id: string) => Promise<void>;
+}) {
   const [form, setForm] = useState<FormState>(() => toForm(props.entry?.config ?? null));
   const [errors, setErrors] = useState<string[]>([]);
   const [required, setRequired] = useState<string[]>(props.entry?.requiredSecrets ?? []);
-  const [test, setTest] = useState<{ ok: boolean; error?: string; note?: string; tools?: ToolSummary[]; durationMs: number } | null>(null);
+  const [test, setTest] = useState<TestResult | null>(null);
   const action = useAction();
   const isNew = props.entry === null;
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
@@ -252,8 +341,13 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
         <>
           {!isNew && (
             <button
+              disabled={action.busy}
               onClick={() =>
-                action.run(async () => setTest(await api("POST", `/mcp/servers/${enc(props.entry!.config.id)}/test`, {})))
+                action.run(async () => {
+                  const result = await testServer(props.entry!.config.id);
+                  setTest(result);
+                  props.onTested(result);
+                })
               }
             >
               연결 테스트

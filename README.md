@@ -38,7 +38,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **취소:** `POST /v1/responses/{id}/cancel`(서비스 키면 `?user=`)은 진행 중인 턴을 멈춘다.
   - 스트림은 `response.incomplete`(`user_cancelled`)로 끝나고, 그 id로 다음 턴을 이어갈 수 있다.
   - 이미 끝난 응답이면 409 `response_not_cancellable`, 다른 사용자의 응답이거나 없는 응답이면 404다.
-- **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모델을 돌려준다. LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
+- **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id). LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
 - **관리 화면 채팅 테스트:** `/admin`의 "채팅 테스트"는 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (`POST /admin/api/chat`, 중지는 `POST /admin/api/chat/{id}/cancel?user=`). 입력한 user의 workspace·MCP·skill로 실행된다.
 - **이미지 입력:** `input_image`는 base64 `data:` URL만 받는다 (25MP·20MB 제한). LLM 설정에서 이미지를 켜지 않은 모델이면 400이다.
 - **SSE 이벤트:**

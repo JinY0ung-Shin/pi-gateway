@@ -100,7 +100,7 @@ export interface CatalogEntry {
   source: string;
   sourceType: string;
   supported: boolean;
-  installed: { id: string; version: string; enabled: boolean } | null;
+  installed: { id: string; version: string; enabled: boolean; update?: { version: string } } | null;
 }
 
 export interface PluginView {
@@ -117,6 +117,8 @@ export interface PluginView {
   installedBy: string;
   components: PluginRecord["components"];
   mcp: McpRecord[];
+  /** marketplace의 지금 내용으로 다시 설치하면 받는 버전 (설치본과 다를 때만) */
+  update?: { version: string };
 }
 
 export interface PluginServiceOptions {
@@ -286,7 +288,7 @@ export class PluginService implements PluginResources {
           source: describeSource(entry.source),
           sourceType: entry.source.type === "unsupported" ? entry.source.kind : entry.source.type,
           supported: entry.source.type !== "unsupported",
-          installed: plugin ? { id: plugin.id, version: plugin.version, enabled: plugin.enabled } : null,
+          installed: plugin ? { id: plugin.id, version: plugin.version, enabled: plugin.enabled, ...updateOf(plugin, record) } : null,
         };
       }),
     };
@@ -359,13 +361,14 @@ export class PluginService implements PluginResources {
   // ── plugin ─────────────────────────────────────────────────────
 
   listPlugins(): PluginView[] {
-    return this.store.listPlugins().map(toPluginView);
+    const marketplaces = new Map(this.store.listMarketplaces().map((m) => [m.name, m]));
+    return this.store.listPlugins().map((p) => toPluginView(p, marketplaces.get(p.marketplace)));
   }
 
   getPlugin(id: string): PluginView {
     const record = this.store.getPlugin(id);
     if (!record) throw notFound(`plugin '${id}' not found`);
-    return toPluginView(record);
+    return toPluginView(record, this.store.getMarketplace(record.marketplace));
   }
 
   /** 설치된 skill의 SKILL.md 본문 (관리 화면 조회용) */
@@ -552,7 +555,7 @@ export class PluginService implements PluginResources {
       token: auth.token,
       username: auth.tokenUsername,
     });
-    const pins = { ...(source.ref ? { ref: source.ref } : {}), ...(source.sha ? { sha: source.sha } : {}) };
+    const pins = { ...(source.ref ? { ref: source.ref } : {}), ...(source.sha ? { sha: source.sha } : {}), listedVersion: entry.version ?? null };
     if (source.type === "git-subdir") {
       const dir = await resolveInside(dest, source.path.replace(/^\.\//, ""), "git-subdir path");
       return { dir, resolved: { type: "git-subdir", display, url, path: source.path, commit, ...pins } };
@@ -783,7 +786,26 @@ function toMarketplaceView(record: MarketplaceRecord): MarketplaceView {
   };
 }
 
-function toPluginView(record: PluginRecord): PluginView {
+/**
+ * marketplace의 지금 내용으로 다시 설치하면 받는 버전이 설치본과 다른지.
+ * relative는 marketplace 사본의 plugin.json으로 설치할 때와 같이 계산한다. git source는 원격을 받아 보기 전에는
+ * 모르므로 marketplace 항목의 sha나 버전이 설치할 때와 달라졌을 때만 안다.
+ */
+function updateOf(record: PluginRecord, marketplace: MarketplaceRecord | undefined): { update?: { version: string } } {
+  const entry = marketplace?.manifest.plugins.find((p) => p.name === record.name);
+  if (!marketplace || !entry || entry.source.type === "unsupported") return {};
+  if (entry.source.type === "relative") {
+    if (entry.pluginVersion === undefined) return {};
+    const version = safeVersion(entry.pluginVersion ?? entry.version ?? marketplace.commitSha.slice(0, 12));
+    return version === record.version ? {} : { update: { version } };
+  }
+  const { sha } = entry.source;
+  const listed = record.source.listedVersion;
+  const moved = (sha !== undefined && sha !== record.source.commit) || (listed !== undefined && (entry.version ?? null) !== listed);
+  return moved ? { update: { version: safeVersion(entry.version ?? sha?.slice(0, 12) ?? "latest") } } : {};
+}
+
+function toPluginView(record: PluginRecord, marketplace: MarketplaceRecord | undefined): PluginView {
   const manifest: JsonObject = record.manifest ?? {};
   const description = str(manifest, "description");
   return {
@@ -801,6 +823,7 @@ function toPluginView(record: PluginRecord): PluginView {
     components: record.components,
     // baseline은 내부 병합용이라 응답에 넣지 않는다.
     mcp: record.mcp.map(({ baseline: _baseline, ...rest }) => rest),
+    ...updateOf(record, marketplace),
   };
 }
 

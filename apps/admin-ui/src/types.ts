@@ -128,7 +128,7 @@ export interface CatalogEntry {
   source: string;
   sourceType: string;
   supported: boolean;
-  installed: { id: string; version: string; enabled: boolean } | null;
+  installed: { id: string; version: string; enabled: boolean; update?: { version: string } } | null;
 }
 
 export interface McpRecord {
@@ -162,10 +162,24 @@ export interface PluginView {
     copySkipped: { path: string; reason: string }[];
   };
   mcp: McpRecord[];
+  /** marketplace의 지금 내용으로 다시 설치하면 받는 버전 (설치본과 다를 때만) */
+  update?: { version: string };
+}
+
+export interface ServiceCheck {
+  ok: boolean;
+  durationMs: number;
+  error?: string;
 }
 
 export interface StatusView {
   stats: { liveSessions: number; activeTurns: number; queuedTurns: number };
+  services: {
+    /** missingModels: 설정했지만 서버의 모델 목록에 없는 모델 */
+    llm: (ServiceCheck & { id: string; models: number; missingModels: string[] })[];
+    broker: ServiceCheck;
+    sandboxd: ServiceCheck;
+  };
   sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string; memoryBytes?: number }[]; error?: string };
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
   plugins: { installed: number; enabled: number };

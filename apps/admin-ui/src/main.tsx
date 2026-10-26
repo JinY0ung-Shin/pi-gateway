@@ -24,7 +24,7 @@ const PAGES = [
   { id: "skills", group: "도구", label: "skill", desc: "plugin이 설치한 skill과 SKILL.md" },
   { id: "agents", group: "도구", label: "agent", desc: "plugin agent와 실행될 때 받는 도구" },
   { id: "plugins", group: "설치", label: "plugin", desc: "marketplace에서 plugin을 설치하고 켜고 끕니다" },
-  { id: "status", group: "운영", label: "상태", desc: "세션·sandbox·메모리 현황 (10초마다 갱신)" },
+  { id: "status", group: "운영", label: "상태", desc: "LLM·broker·sandboxd 연결과 세션·sandbox·메모리 현황 (10초마다 갱신)" },
   { id: "chat", group: "운영", label: "채팅 테스트", desc: "운영과 같은 도구·MCP·skill 구성으로 대화해 봅니다" },
   { id: "history", group: "운영", label: "대화 기록", desc: "서버에 저장된 세션의 대화·시스템 프롬프트와 보관 기간" },
 ] as const;

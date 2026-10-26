@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { badRequest } from "../admin/errors.js";
-import { isObject, type JsonObject, parseJsonLenient, safeName, str } from "./manifest.js";
+import { isObject, type JsonObject, parseJsonLenient, readPluginManifest, safeName, str } from "./manifest.js";
 import { isInside, readContainedFile } from "./safe-copy.js";
 
 /** 설치에 쓸 수 있는 source. npm·archive·command는 v1에서 지원하지 않는다. */
@@ -16,6 +16,11 @@ export interface MarketplaceEntry {
   name: string;
   description?: string;
   version?: string;
+  /**
+   * relative plugin의 plugin.json 버전 (null = 버전 없음). marketplace를 받을 때 읽어 두고 설치본과 비교한다.
+   * undefined면 이 값을 읽기 전에 받은 marketplace다.
+   */
+  pluginVersion?: string | null;
   category?: string;
   tags: string[];
   source: PluginSource;
@@ -38,7 +43,15 @@ export async function readMarketplaceManifest(root: string): Promise<Marketplace
   const path = ".claude-plugin/marketplace.json";
   const text = await readContainedFile(root, path, { optional: true });
   if (text === undefined) throw badRequest(`the repository has no ${path}`);
-  return parseMarketplaceManifest(parseJsonLenient(text, path));
+  const manifest = parseMarketplaceManifest(parseJsonLenient(text, path));
+  for (const entry of manifest.plugins) {
+    if (entry.source.type !== "relative") continue;
+    // 읽지 못하는 plugin은 설치할 때 오류가 나므로 여기서는 버전만 비워 둔다
+    const dir = await resolveRelativeSource(root, entry.source.path, manifest.pluginRoot).catch(() => undefined);
+    const plugin = dir ? await readPluginManifest(dir).catch(() => undefined) : undefined;
+    entry.pluginVersion = (plugin && str(plugin, "version")) ?? null;
+  }
+  return manifest;
 }
 
 export function parseMarketplaceManifest(json: unknown): MarketplaceManifest {

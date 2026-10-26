@@ -98,8 +98,10 @@ curl -fsS http://127.0.0.1:8080/healthz
 ```
 
 그다음 관리 화면(`/admin`, 키는 `$PI_GATEWAY_SECRETS/gateway/admin_api_key`)의 **LLM** 페이지에서 LLM을 설정한다. 설정하기 전에는 `/v1/responses`가 503(`llm_not_configured`)이다.
-- API 형식, base URL(예: `http://vllm.internal:8000/v1`), API 키(없으면 비운다), 모델 목록, 기본 모델
-- 모델의 `contextWindow`는 vLLM의 `--max-model-len`과 맞춘다.
+- LLM 서버마다 id, API 형식, base URL(예: `http://vllm.internal:8000/v1`), API 키(없으면 비운다), 모델 목록을 넣고, 전체에서 기본 모델 하나를 고른다. vLLM은 보통 서버 하나에 모델 하나이므로 모델마다 서버를 추가한다.
+- 모델 id는 서버끼리 겹치면 안 된다. `GET /v1/models`의 `owned_by`가 서버 id다.
+- **모델 가져오기**는 서버의 `/v1/models`에서 목록을 받아 고르게 한다 (vLLM이면 `contextWindow`가 `--max-model-len`으로 채워진다). 직접 넣을 때도 `contextWindow`는 `--max-model-len`과 맞춘다.
+- 페이지를 열면 서버마다 연결·인증을 확인하고 등록한 모델이 서버에 있는지 표시한다. 모델의 **테스트**는 짧은 요청을 실제로 보내 본다. 둘 다 저장하기 전 입력값으로 할 수 있다.
 - 설정은 gateway DB(`/data/gateway.db`)에 저장되고 저장하는 즉시 적용된다. 메모리의 세션은 다음 턴에 새 설정으로 다시 열린다. 키는 관리 화면에 다시 보이지 않는다.
 
 기동 순서는 다음과 같다.

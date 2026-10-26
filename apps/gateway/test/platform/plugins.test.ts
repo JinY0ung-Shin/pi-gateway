@@ -439,20 +439,55 @@ describe("plugin 업데이트·broker 장애", () => {
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
       await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
+      expect(harness.plugins.getPlugin(ID).update).toBeUndefined();
       const current = harness.mcp.store.get("monsemi-frontend")!;
       if (current.transport.type !== "stdio") throw new Error("stdio expected");
       await harness.mcp.upsert({ ...current, transport: { ...current.transport, env: { ...current.transport.env, SERVICE_URL: "http://admin:9000" } } }, "admin");
 
       setMcp(fixture.mkt, "1.9.1", { LOG_FORMAT: "text" });
       await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
+      // 새로고침하면 marketplace 사본의 plugin.json 버전으로 업데이트가 있는지 안다
+      expect(harness.plugins.getPlugin(ID).update).toEqual({ version: "1.9.1" });
+      const entry = harness.plugins.getMarketplace("defect-agent-plugins").plugins.find((p) => p.name === "defect-agent-frontend")!;
+      expect(entry.installed).toMatchObject({ version: "1.9.0", update: { version: "1.9.1" } });
       const { plugin } = await harness.plugins.update(ID, {}, "t");
       expect(plugin.version).toBe("1.9.1");
+      expect(plugin.update).toBeUndefined();
       const after = harness.mcp.store.get("monsemi-frontend")!;
       expect(after.transport).toMatchObject({
         args: [join(plugin.installPath, "mcp/server.js")],
         env: { LOG_FORMAT: "text", SERVICE_URL: "http://admin:9000", CLAUDE_PLUGIN_ROOT: plugin.installPath, THREAD_ID: "{{metadata:THREAD_ID}}" },
       });
       expect(after.scope).toBe("per-session");
+    } finally {
+      await harness.close();
+      await broker.close();
+    }
+  });
+
+  it("업데이트 표시: git source는 marketplace가 고정한 sha가 바뀌면 알고, 고정하지 않았으면 모른다", async () => {
+    const fixture = buildFixture(tempDir("fixture-pin"));
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
+    try {
+      await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "remote" }, "t");
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "subdir" }, "t");
+
+      write(fixture.remote, "skills/r/SKILL.md", "---\nname: r\ndescription: Remote skill v2\n---\nbody");
+      const next = commitAll(fixture.remote);
+      const path = join(fixture.mkt, ".claude-plugin/marketplace.json");
+      const manifest = JSON.parse(readFileSync(path, "utf8")) as { plugins: { name?: string; source?: { sha?: string } }[] };
+      manifest.plugins.find((p) => p.name === "remote")!.source!.sha = next;
+      write(fixture.mkt, ".claude-plugin/marketplace.json", JSON.stringify(manifest));
+      commitAll(fixture.mkt);
+      await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
+
+      expect(harness.plugins.getPlugin("remote@defect-agent-plugins").update).toEqual({ version: next.slice(0, 12) });
+      expect(harness.plugins.getPlugin("subdir@defect-agent-plugins").update).toBeUndefined();
+      const { plugin } = await harness.plugins.update("remote@defect-agent-plugins", {}, "t");
+      expect(plugin).toMatchObject({ version: next.slice(0, 12) });
+      expect(plugin.update).toBeUndefined();
     } finally {
       await harness.close();
       await broker.close();

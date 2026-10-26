@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { api, enc, errorText, formatTime } from "../api";
+import { ApiError, api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Notice, recordToLines, Section, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpScope, PluginView } from "../types";
 
@@ -66,6 +66,25 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
   const [ref, setRef] = useState("");
   const [token, setToken] = useState("");
   const [tokenUsername, setTokenUsername] = useState("");
+  /** git이 실패해 token을 물어보는 marketplace */
+  const [needsToken, setNeedsToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState("");
+  const [refreshUsername, setRefreshUsername] = useState("");
+
+  /** token 없이 먼저 해 보고, git이 실패하면 그 줄에서 token을 받는다 (비공개 저장소) */
+  const refresh = (name: string, auth: { token?: string; tokenUsername?: string } = {}) =>
+    action.run(async () => {
+      try {
+        await api("POST", `/marketplaces/${enc(name)}/refresh`, auth);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "git_failed") setNeedsToken(name);
+        throw error;
+      }
+      setNeedsToken(null);
+      setRefreshToken("");
+      setRefreshUsername("");
+      await props.onChanged();
+    }, `${name}을(를) 새로고침했습니다`);
 
   const add = (e: Event) => {
     e.preventDefault();
@@ -106,7 +125,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
               </td>
             </tr>
           )}
-          {props.marketplaces.map((m) => (
+          {props.marketplaces.map((m) => [
             <tr key={m.name} class={props.selected === m.name ? "selected" : ""}>
               <td>
                 <button class="link" onClick={() => props.onSelect(props.selected === m.name ? null : m.name)}>
@@ -125,17 +144,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
               </td>
               <td>{formatTime(m.refreshedAt)}</td>
               <td class="actions">
-                <button
-                  class="small"
-                  disabled={action.busy}
-                  onClick={() =>
-                    action.run(async () => {
-                      const t = prompt("비공개 저장소면 token을 입력하세요 (공개면 비워 두세요)") ?? "";
-                      await api("POST", `/marketplaces/${enc(m.name)}/refresh`, t ? { token: t } : {});
-                      await props.onChanged();
-                    }, `${m.name}을(를) 새로고침했습니다`)
-                  }
-                >
+                <button class="small" disabled={action.busy} onClick={() => void refresh(m.name)}>
                   새로고침
                 </button>
                 <button
@@ -152,8 +161,42 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; selected: string
                   삭제
                 </button>
               </td>
-            </tr>
-          ))}
+            </tr>,
+            needsToken === m.name && (
+              <tr key={`${m.name}-token`}>
+                <td colSpan={6}>
+                  <form
+                    class="row wrap"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void refresh(m.name, { token: refreshToken, ...(refreshUsername ? { tokenUsername: refreshUsername } : {}) });
+                    }}
+                  >
+                    <span class="small-text">비공개 저장소면 token을 넣고 다시 받으세요 (저장하지 않습니다).</span>
+                    <input
+                      type="password"
+                      autocomplete="off"
+                      placeholder="token"
+                      aria-label={`${m.name} token`}
+                      value={refreshToken}
+                      onInput={(e) => setRefreshToken(e.currentTarget.value)}
+                    />
+                    <input
+                      placeholder="token 사용자 (기본 x-access-token)"
+                      value={refreshUsername}
+                      onInput={(e) => setRefreshUsername(e.currentTarget.value)}
+                    />
+                    <button class="small primary" type="submit" disabled={action.busy || !refreshToken}>
+                      token으로 새로고침
+                    </button>
+                    <button class="small" type="button" onClick={() => setNeedsToken(null)}>
+                      닫기
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            ),
+          ])}
         </tbody>
       </table>
       <form class="row wrap" onSubmit={add}>
@@ -189,6 +232,13 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void> }) {
       (r) => (r.warnings.length ? `설치했습니다. 확인할 점: ${r.warnings.join(" / ")}` : "설치했습니다"),
     );
 
+  const update = (id: string, version: string) =>
+    action.run(async () => {
+      await api("POST", `/plugins/${enc(id)}/update`, {});
+      await load();
+      await props.onInstalled();
+    }, `${id}을(를) 업데이트했습니다 (v${version})`);
+
   return (
     <Section title={`${props.name}의 plugin`}>
       {action.view}
@@ -218,7 +268,12 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void> }) {
                   {e.installed ? (
                     <>
                       <Badge tone="green" title="설치본 plugin.json의 버전">{`설치됨 v${e.installed.version}`}</Badge>
-                      {e.listedVersion && e.listedVersion !== e.installed.version && (
+                      {e.installed.update && (
+                        <button class="small primary" disabled={action.busy} onClick={() => update(e.installed!.id, e.installed!.update!.version)}>
+                          {`업데이트 (v${e.installed.update.version})`}
+                        </button>
+                      )}
+                      {!e.installed.update && e.listedVersion && e.listedVersion !== e.installed.version && (
                         <div class="small-text muted">marketplace 표기({e.listedVersion})와 설치본 plugin.json 버전이 다릅니다</div>
                       )}
                     </>
@@ -249,6 +304,7 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
             <div class="row space">
               <div>
                 <strong class="mono">{p.id}</strong> <Badge>{p.version}</Badge>
+                {p.update && <Badge tone="blue">{`업데이트 있음 v${p.update.version}`}</Badge>}
                 {p.description && <div class="muted small-text">{p.description}</div>}
               </div>
               <Toggle
@@ -313,16 +369,19 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
             )}
             <div class="row">
               <button
-                class="small"
+                class={p.update ? "small primary" : "small"}
                 disabled={action.busy}
                 onClick={() =>
-                  action.run(async () => {
-                    await api("POST", `/plugins/${enc(p.id)}/update`, {});
-                    await props.onChanged();
-                  }, `${p.id}을(를) 다시 설치했습니다`)
+                  action.run(
+                    async () => {
+                      await api("POST", `/plugins/${enc(p.id)}/update`, {});
+                      await props.onChanged();
+                    },
+                    p.update ? `${p.id}을(를) 업데이트했습니다 (v${p.update.version})` : `${p.id}을(를) 다시 설치했습니다`,
+                  )
                 }
               >
-                업데이트
+                {p.update ? `업데이트 (v${p.update.version})` : "다시 설치"}
               </button>
               <button
                 class="small danger"
@@ -340,7 +399,10 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
           </div>
         ))}
       </div>
-      <p class="muted small-text">새 버전을 받으려면 marketplace를 새로고침한 뒤 업데이트하세요. 바뀐 내용은 새 세션부터 적용됩니다.</p>
+      <p class="muted small-text">
+        marketplace를 새로고침하면 새 버전이 있는 plugin에 '업데이트 있음'이 붙습니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
+        알 수 있으니, 그 밖의 경우는 '다시 설치'로 최신 내용을 받으세요. 바뀐 내용은 새 세션부터 적용됩니다.
+      </p>
     </Section>
   );
 }

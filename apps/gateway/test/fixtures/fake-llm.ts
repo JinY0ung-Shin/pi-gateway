@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 
 /**
- * 테스트용 OpenAI 호환 LLM 서버 (`POST /v1/chat/completions`, stream=true).
+ * 테스트용 OpenAI 호환 LLM 서버 (`POST /v1/chat/completions`, stream=true, `GET /v1/models`).
  * 요청마다 큐에서 시나리오 하나를 꺼내 SSE chunk로 응답한다.
  */
 
@@ -43,6 +43,10 @@ export interface FakeLlm {
   url: string;
   requests: ChatRequest[];
   headers: IncomingMessage["headers"][];
+  /** `GET /v1/models`가 돌려줄 목록 (vLLM 모양) */
+  models: Array<{ id: string; max_model_len?: number }>;
+  /** `GET /v1/models` 요청의 헤더 */
+  modelRequests: IncomingMessage["headers"][];
   /** 다음 요청들에 쓸 시나리오를 추가한다 */
   enqueue(...turns: FakeScript[]): void;
   /** 큐가 비었을 때 쓰는 기본 응답 */
@@ -57,9 +61,17 @@ export async function startFakeLlm(): Promise<FakeLlm> {
   let fallback: FakeScript = { text: "ok" };
   const requests: ChatRequest[] = [];
   const headers: IncomingMessage["headers"][] = [];
+  const models: FakeLlm["models"] = [];
+  const modelRequests: IncomingMessage["headers"][] = [];
   let callIndex = 0;
 
   const server: Server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === "GET" && (req.url === "/v1/models" || req.url?.startsWith("/v1/models?"))) {
+      modelRequests.push(req.headers);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: models.map((m) => ({ object: "model", owned_by: "vllm", ...m })) }));
+      return;
+    }
     if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
       res.writeHead(404).end();
       return;
@@ -139,6 +151,8 @@ export async function startFakeLlm(): Promise<FakeLlm> {
     url: `http://127.0.0.1:${port}/v1`,
     requests,
     headers,
+    models,
+    modelRequests,
     enqueue: (...turns) => {
       queue.push(...turns);
     },

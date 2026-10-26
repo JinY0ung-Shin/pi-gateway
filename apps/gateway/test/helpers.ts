@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
 import { jwtSecretBytes, type McpServerConfig, type VisibleServer } from "@pi-gateway/shared";
 import pino from "pino";
-import { LlmSettings } from "../src/agent/runtime.js";
+import { type LlmServer, LlmSettings } from "../src/agent/runtime.js";
 import { createGateway, type Gateway, type GatewayOverrides } from "../src/app.js";
 import { type GatewayConfig, loadConfig } from "../src/config.js";
 import type { McpRegistry, PluginResources, PromptService, SubagentDefinition } from "../src/contracts.js";
@@ -26,8 +26,11 @@ export interface SseEvent {
 
 export interface HarnessOptions {
   env?: Record<string, string>;
-  /** 관리 화면에서 넣는 LLM 설정 (기본: 가짜 LLM과 test-model·think-model·vision-model). null이면 설정하지 않는다. */
-  llm?: Partial<LlmSettings> | null;
+  /**
+   * 관리 화면에서 넣는 LLM 설정. 기본은 가짜 LLM 서버 하나(id "test")와 test-model·think-model·vision-model이고,
+   * 넘긴 값은 그 서버에 덮어쓴다. null이면 설정하지 않는다.
+   */
+  llm?: (Partial<LlmServer> & { defaultModel?: string }) | null;
   /** 가짜 대신 실제 sandboxd를 쓴다 (Docker e2e) */
   sandboxd?: { url: string; secret: string };
   fakeSandbox?: { stallAttach?: boolean };
@@ -117,21 +120,25 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     ...(options.overrides ?? {}),
   });
   if (options.llm !== null) {
-    await gateway.models.update(
-      LlmSettings.parse({
-      api: "openai-completions",
-      baseUrl: llm.url,
-      apiKey: "",
-      models: [
-        { id: "test-model", contextWindow: 32000, maxTokens: 4096 },
-        { id: "think-model", contextWindow: 32000, maxTokens: 4096, reasoning: true },
-        { id: "vision-model", contextWindow: 32000, maxTokens: 4096, input: ["text", "image"] },
+    const { defaultModel = "test-model", ...server } = options.llm ?? {};
+    const settings = LlmSettings.parse({
+      servers: [
+        {
+          id: "test",
+          api: "openai-completions",
+          baseUrl: llm.url,
+          apiKey: "",
+          models: [
+            { id: "test-model", contextWindow: 32000, maxTokens: 4096 },
+            { id: "think-model", contextWindow: 32000, maxTokens: 4096, reasoning: true },
+            { id: "vision-model", contextWindow: 32000, maxTokens: 4096, input: ["text", "image"] },
+          ],
+          ...server,
+        },
       ],
-      defaultModel: "test-model",
-      ...(options.llm ?? {}),
-    }),
-    "test",
-    );
+      defaultModel,
+    });
+    await gateway.models.update(settings, "test");
   }
   await gateway.app.listen({ host: "127.0.0.1", port: 0 });
   const address = gateway.app.server.address();
