@@ -125,6 +125,8 @@ async function prepareEnv(work: string, auth: GitAuth & { allowLocal: boolean })
     GIT_ALLOW_PROTOCOL: auth.allowLocal ? "https:http:file" : "https:http",
     GIT_LFS_SKIP_SMUDGE: "1",
   };
+  // 사내 CA를 git도 믿게 한다. 이미지(Debian)의 git은 이 파일을 더해도 시스템 CA(/etc/ssl/certs)를 계속 믿는다.
+  if (process.env.NODE_EXTRA_CA_CERTS) env.GIT_SSL_CAINFO = process.env.NODE_EXTRA_CA_CERTS;
   const secrets: string[] = [];
   if (auth.token) {
     const askpass = join(work, "askpass.sh");

@@ -119,7 +119,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 | `SANDBOX_EGRESS_ALLOW` | sandbox가 써야 하는 도메인·IP만 | 목록에 없는 목적지는 모두 막힌다. 호스트 주소나 넓은 CIDR을 넣으면 그 안의 모든 서비스가 열리므로 포트까지 적는다 ([§6](#6-네트워크-차단-규칙)) |
 | `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
-| `NODE_EXTRA_CA_CERTS` | 사내 CA PEM 파일의 호스트 경로 (필요할 때만) | LLM 엔드포인트가 사내 CA 인증서를 쓰면 gateway가 그 CA를 믿게 한다. compose가 gateway 컨테이너에 읽기 전용으로 mount한다 |
+| `NODE_EXTRA_CA_CERTS` | 사내 CA PEM 파일의 호스트 경로 (필요할 때만) | LLM 엔드포인트나 사내 git 저장소(plugin marketplace)가 사내 CA 인증서를 쓰면 gateway와 gateway가 실행하는 git이 그 CA를 믿게 한다. compose가 gateway 컨테이너에 읽기 전용으로 mount한다 |
 
 `TRUST_PROXY`에 넣을 주소: `GATEWAY_BIND_ADDR=127.0.0.1`로 공개한 포트에 같은 호스트의 nginx가 연결하면, Docker의 userland-proxy를 거치므로 gateway에는 edge 네트워크의 gateway IP에서 온 연결로 보인다.
 
