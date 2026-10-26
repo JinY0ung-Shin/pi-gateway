@@ -193,6 +193,8 @@ services:
       PLUGIN_ALLOW_LOCAL_SOURCES: ${PLUGIN_ALLOW_LOCAL_SOURCES:-0}
       # 앞단 프록시 (docs/OPERATIONS.md §3.4)
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      # 사내 CA: .env의 NODE_EXTRA_CA_CERTS(호스트의 PEM 파일)를 아래 경로로 mount한다. 비우면 쓰지 않는다
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:+/etc/pi-gateway/extra-ca.pem}
     secrets:
       - source: gw_api_key
         target: api_key
@@ -209,6 +211,13 @@ services:
       - type: bind
         source: ${PI_GATEWAY_HOME}/plugins
         target: /opt/plugins
+        bind:
+          create_host_path: false
+      # NODE_EXTRA_CA_CERTS가 없으면 빈 파일(/dev/null)이라 아무것도 더하지 않는다
+      - type: bind
+        source: ${NODE_EXTRA_CA_CERTS:-/dev/null}
+        target: /etc/pi-gateway/extra-ca.pem
+        read_only: true
         bind:
           create_host_path: false
     tmpfs:
