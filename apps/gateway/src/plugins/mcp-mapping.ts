@@ -47,14 +47,6 @@ export function referencedDefaultEnv(raw: unknown, defaultsEnv: Record<string, s
   return out;
 }
 
-/** 설치 요청에서 서버별로 덮어쓰는 값 */
-export interface McpOverride {
-  id?: string | undefined;
-  env?: Record<string, string> | undefined;
-  scope?: McpScope | undefined;
-  enabled?: boolean | undefined;
-}
-
 export interface PluginMcpContext {
   pluginId: string;
   pluginName: string;
@@ -65,7 +57,8 @@ export interface PluginMcpContext {
   dataDir: string;
   description?: string | undefined;
   defaults: PluginMcpDefaults;
-  override?: McpOverride | undefined;
+  /** plugin이 꺼져 있으면 false (서버도 꺼진 채로 등록한다) */
+  enabled: boolean;
 }
 
 export interface MappedMcpServer {
@@ -120,9 +113,7 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
   if (cfg.oauth !== undefined) return { name, requiredSecrets: [], unsupported: "OAuth MCP servers are not supported yet", warnings };
 
   const conv = (v: string) => convertClaudeVariables(v, ctx);
-  const override = ctx.override ?? {};
-  let id = override.id ?? sanitizeServerId(name);
-  if (!id) id = sanitizeServerId(`${ctx.pluginName}-mcp`);
+  const id = sanitizeServerId(name) || sanitizeServerId(`${ctx.pluginName}-mcp`);
 
   let config: McpServerConfig;
   if (type === "stdio") {
@@ -137,16 +128,16 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     if (secrets.length > 0) {
       return { name, requiredSecrets: [], unsupported: `stdio server needs secrets (${secrets.join(", ")}); only http servers can use secrets`, warnings };
     }
-    const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env, ...(override.env ?? {}) };
+    const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env };
     if (command.startsWith("npx") || command === "uvx") warnings.push(`'${command}' downloads packages at start-up; pre-install the server instead if possible`);
     const transport = { ...draft, env };
     // stdio 서버는 env·args가 시작 시 고정되므로 템플릿에 맞는 최소 scope가 정해진다.
-    const scope = atLeastScope(override.scope ?? ctx.defaults.scope, requiredScope({ transport }));
+    const scope = atLeastScope(ctx.defaults.scope, requiredScope({ transport }));
     const parsed = McpServerConfig.safeParse({
       id,
       displayName: `${name} (${ctx.pluginName})`,
       ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
-      enabled: override.enabled ?? true,
+      enabled: ctx.enabled,
       runIn: "sandbox",
       scope,
       transport,
@@ -162,9 +153,9 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
       id,
       displayName: `${name} (${ctx.pluginName})`,
       ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
-      enabled: override.enabled ?? true,
+      enabled: ctx.enabled,
       runIn: "broker",
-      scope: override.scope ?? "shared",
+      scope: "shared",
       transport: { type: "http", url: conv(cfg.url), headers },
       source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
     });

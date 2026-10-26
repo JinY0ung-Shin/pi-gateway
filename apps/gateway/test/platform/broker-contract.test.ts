@@ -111,12 +111,12 @@ async function registryFlow(b: TestBroker): Promise<unknown[]> {
   const created = await registry.upsert(docs, "contract");
   out.push(["upsert", created.store, created.missingSecrets]);
   await registry.setSecret("docs", "T", { value: "contract-secret-1" }, "contract");
-  const entry = await registry.get("docs");
-  out.push(["get", entry.missingSecrets, (entry.secrets ?? []).map((s) => s.name)]);
+  const entry = (await registry.list()).servers.find((s) => s.config.id === "docs")!;
+  out.push(["list", entry.missingSecrets, (entry.secrets ?? []).map((s) => s.name)]);
   out.push(["visible", (await registry.brokerServersFor("alice", "s1")).map((s) => s.id)]);
   out.push(["literal rejected before broker", await registry.upsert({ ...docs, id: "lit", transport: { type: "http", url: "https://x.example.com/mcp", headers: { Authorization: "Bearer abc" } } }, "c").then(() => "ok", (e: { status: number }) => e.status)]);
   await registry.remove("docs", "contract");
-  out.push(["removed", await registry.get("docs").then(() => "found", (e: { status: number }) => e.status)]);
+  out.push(["removed", (await registry.list()).servers.some((s) => s.config.id === "docs")]);
   return out;
 }
 
@@ -168,10 +168,10 @@ describe("broker contract (fake vs real createBroker)", () => {
     expect(await registryFlow(fake)).toEqual(realFlow);
     expect(realFlow).toEqual([
       ["upsert", "broker", ["T"]],
-      ["get", [], ["T"]],
+      ["list", [], ["T"]],
       ["visible", ["docs"]],
       ["literal rejected before broker", 400],
-      ["removed", 404],
+      ["removed", false],
     ]);
   });
 });

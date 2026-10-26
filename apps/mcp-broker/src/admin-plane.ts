@@ -205,11 +205,5 @@ export function buildAdminPlane(deps: {
     }
   });
 
-  app.get("/admin/audit", async (req) => {
-    const raw = Number((req.query as { limit?: string }).limit ?? 100);
-    const limit = Number.isInteger(raw) ? Math.min(Math.max(raw, 1), 1000) : 100;
-    return { events: store.listAudit(limit) };
-  });
-
   return app;
 }

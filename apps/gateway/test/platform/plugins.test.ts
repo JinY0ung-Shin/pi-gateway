@@ -528,6 +528,7 @@ describe("plugin 업데이트·broker 장애", () => {
       const fixture = buildFixture(tempDir(`fixture-keep-${kind}`));
       const harness = await buildHarness({ env: testBrokerEnv(broker) });
       const sid = "secret-tools@defect-agent-plugins";
+      const docsEntry = async () => (await harness.mcp.list()).servers.find((s) => s.config.id === "remote-docs")!;
       const bump = (version: string) => {
         const file = join(fixture.mkt, "plugins/secret-tools/.claude-plugin/plugin.json");
         writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), version }));
@@ -538,7 +539,7 @@ describe("plugin 업데이트·broker 장애", () => {
         const first = await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "secret-tools" }, "t");
         const pluginDir = dirname(first.plugin.installPath);
         await harness.mcp.setSecret("remote-docs", "DOCS_TOKEN", { value: "docs_kept_across_updates" }, "admin");
-        const secretsBefore = (await harness.mcp.get("remote-docs")).secrets;
+        const secretsBefore = (await docsEntry()).secrets;
         expect(secretsBefore?.map((s) => s.name)).toEqual(["DOCS_TOKEN"]);
         for (const version of ["0.1.1", "0.1.2"]) {
           bump(version);
@@ -548,7 +549,7 @@ describe("plugin 업데이트·broker 장애", () => {
           expect(readlinkSync(join(pluginDir, "current"))).toBe(version);
           expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
         }
-        const docs = await harness.mcp.get("remote-docs");
+        const docs = await docsEntry();
         expect(docs.missingSecrets).toEqual([]);
         // 다시 넣은 값이 아니라 처음 넣은 값이 그대로 남았다 (setAt·fingerprint가 같다)
         expect(docs.secrets).toEqual(secretsBefore);

@@ -53,24 +53,6 @@ sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh
 - 파일은 그 비밀값을 쓰는 서비스의 uid만 읽을 수 있다(0400).
 - 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다.
 
-스크립트 없이 직접 만들려면 다음을 실행한다. 같이 쓰는 값은 같은 값의 사본이어야 한다.
-
-```bash
-H=/srv/pi-gateway; S=$H/secrets
-install -d -o 1000 -g 1000 -m 0700 $H/workspaces
-install -d -o 10001 -g 10001 -m 0755 $H/plugins
-install -d -m 0700 $S $S/gateway $S/sandboxd $S/broker
-put() { printf '%s' "$1" > "$2"; chown "$3:$3" "$2"; chmod 0400 "$2"; }
-r() { openssl rand -base64 "$1" | tr -d '\n'; }
-v=$(r 48); put "$v" $S/gateway/sandboxd_jwt_secret 10001; put "$v" $S/sandboxd/sandboxd_jwt_secret 1000
-v=$(r 48); put "$v" $S/gateway/broker_jwt_secret 10001;   put "$v" $S/broker/broker_jwt_secret 0
-put "$(openssl rand -base64 32 | tr -d '\n')" $S/broker/broker_kek 0      # 정확히 32바이트(base64)
-put "$(r 32)" $S/gateway/admin_api_key 10001
-put "$(r 32)" $S/gateway/api_key 10001
-put "" $S/gateway/user_api_keys 10001
-stat -c %g /var/run/docker.sock   # → .env의 DOCKER_GID
-```
-
 **호스트에서 uid 1000이 실제 로그인 사용자인 경우**
 - 그 사용자가 모든 workspace의 소유자로 보인다.
 - 전용 호스트를 쓰거나, Docker의 `userns-remap`을 켜서 컨테이너 uid가 다른 호스트 uid로 매핑되게 한다.
@@ -118,7 +100,6 @@ curl -fsS http://127.0.0.1:8080/healthz
 | `TRUST_PROXY` | 프록시 IP/CIDR 목록 (예: `172.18.0.1`) | 클라이언트 IP를 X-Forwarded-For에서 읽어, 관리 화면 로그인 잠금(IP별)이 실제 클라이언트 기준으로 동작하게 한다. **IP/CIDR 목록만 받는다.** hop 수와 `true`(아무 클라이언트나 IP를 속일 수 있다)는 거부한다. 직접 공개할 때는 `false` |
 | `SANDBOX_EGRESS_ALLOW` | sandbox가 써야 하는 도메인·IP만 | 목록에 없는 목적지는 모두 막힌다. 호스트 주소나 넓은 CIDR을 넣으면 그 안의 모든 서비스가 열리므로 포트까지 적는다 ([§6](#6-네트워크-차단-규칙)) |
 | `SANDBOX_RUNTIME` | `runsc` (gVisor), `SANDBOX_PIDS_LIMIT=4096`과 함께 | sandbox의 시스템 콜을 호스트 커널 대신 gVisor가 처리한다. 설치와 필요한 옵션은 [§7](#7-gvisorrunsc로-커널-분리하기) |
-| `PLUGIN_ALLOW_LOCAL_SOURCES` | `0` | 로컬 경로 marketplace는 개발용이다 |
 | `MCP_METADATA_KEYS` | `THREAD_ID,ORCHESTRATOR_URL` | 기존 클라이언트가 보내는 키만 MCP 템플릿에 넘긴다. metadata에는 비밀값을 담지 않는다 |
 | `NODE_EXTRA_CA_CERTS` | 사내 CA PEM 파일의 호스트 경로 (필요할 때만) | LLM 엔드포인트, 사내 git 저장소(plugin marketplace), 원격 MCP 서버가 사내 CA 인증서를 쓰면 gateway와 gateway가 실행하는 git, mcp-broker가 그 CA를 믿게 한다. compose가 gateway·mcp-broker 컨테이너에 읽기 전용으로 mount한다 |
 

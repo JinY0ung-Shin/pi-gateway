@@ -56,7 +56,6 @@ export function createSandboxBashTool(sandbox: SandboxHandle): ToolDefinition {
         updateTimer = setTimeout(flushUpdate, Math.max(0, delay));
       };
 
-      const startedAt = performance.now();
       let result: Awaited<ReturnType<SandboxHandle["exec"]>>;
       try {
         onUpdate?.({ content: [], details: undefined });
@@ -103,23 +102,14 @@ export function createSandboxBashTool(sandbox: SandboxHandle): ToolDefinition {
       if (result.exitCode === null) {
         throw new Error(appendStatus(text, result.signal ? `Command terminated by signal ${result.signal}` : "Command terminated without an exit code"));
       }
-      const wallTimeSeconds = Math.round((performance.now() - startedAt) / 100) / 10;
-      const structuredContent = {
-        output: full.length > 1024 * 1024 ? full.slice(-1024 * 1024) : full,
-        truncated: wasTruncated,
-        ...(details?.fullOutputPath ? { full_output_path: details.fullOutputPath } : {}),
-        exit_code: result.exitCode,
-        wall_time_seconds: wallTimeSeconds,
-      };
       if (result.exitCode !== 0) {
         return {
           content: [{ type: "text", text: appendStatus(text, `Command exited with code ${result.exitCode}`) }],
           details,
-          structuredContent,
           isError: true,
         };
       }
-      return { content: [{ type: "text", text }], details, structuredContent };
+      return { content: [{ type: "text", text }], details };
     },
   };
   return definition as unknown as ToolDefinition;

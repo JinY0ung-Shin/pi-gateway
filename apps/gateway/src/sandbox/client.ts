@@ -31,11 +31,12 @@ export class SandboxError extends Error {
   }
 }
 
+/** exec·attach를 제외한 요청의 제한 시간 */
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export interface SandboxClientOptions {
   baseUrl: string;
   jwtSecret: Uint8Array;
-  /** exec·attach를 제외한 요청의 제한 시간 */
-  requestTimeoutMs?: number;
 }
 
 export interface ExecHandlers {
@@ -49,13 +50,11 @@ export interface ExecResult {
   signal: string | null;
   timedOut: boolean;
   truncated: boolean;
-  durationMs: number;
 }
 
 export type ExecInput = Omit<ExecRequest, "user">;
 
 export interface AttachedProcess {
-  readonly procId: string;
   write(data: Buffer | string): void;
   onStdout(listener: (chunk: Buffer) => void): void;
   onStderr(listener: (chunk: Buffer) => void): void;
@@ -66,12 +65,10 @@ export interface AttachedProcess {
 export class SandboxClient {
   readonly baseUrl: string;
   readonly jwtSecret: Uint8Array;
-  readonly requestTimeoutMs: number;
 
   constructor(options: SandboxClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.jwtSecret = options.jwtSecret;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
   }
 
   for(principal: string, sessionId?: string): SandboxHandle {
@@ -83,7 +80,7 @@ export class SandboxClient {
     const token = await signInternalToken(this.jwtSecret, AUD_SANDBOXD, { sub: ADMIN_PRINCIPAL });
     const res = await fetch(this.baseUrl + SANDBOXD_ROUTES.list, {
       headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(this.requestTimeoutMs),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw await toSandboxError(res);
     return ListSandboxesResponse.parse(await res.json()).sandboxes;
@@ -120,7 +117,7 @@ export class SandboxHandle {
   }
 
   private async post(route: string, body: Record<string, unknown>, signal?: AbortSignal, timeoutMs?: number): Promise<Response> {
-    const timeout = AbortSignal.timeout(timeoutMs ?? this.client.requestTimeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs ?? REQUEST_TIMEOUT_MS);
     let res: Response;
     try {
       res = await fetch(this.client.baseUrl + route, {
@@ -177,7 +174,6 @@ export class SandboxHandle {
               signal: event.signal,
               timedOut: event.timedOut,
               truncated: event.truncated,
-              durationMs: event.durationMs,
             };
             break;
           case "error":
@@ -309,7 +305,6 @@ export class SandboxHandle {
           if (startTimer) clearTimeout(startTimer);
           signal?.removeEventListener("abort", onAbort);
           resolve({
-            procId: msg.procId,
             write: (chunk) => {
               if (ws.readyState === WebSocket.OPEN) ws.send(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk, { binary: true });
             },

@@ -166,19 +166,17 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
 export class PromptManager implements PromptService {
   readonly #db: Db;
   readonly #language: string;
-  readonly #timeZone: string | undefined;
 
-  constructor(db: Db, config: Pick<GatewayConfig, "prompts">, options: { timeZone?: string } = {}) {
+  constructor(db: Db, config: Pick<GatewayConfig, "prompts">) {
     this.#db = db;
     this.#language = config.prompts.language;
-    this.#timeZone = options.timeZone;
     migrate(db, "prompts", MIGRATIONS);
   }
 
   // ── 세션용 ─────────────────────────────────────────────────────
 
   snapshotForSession(input: PromptRenderInput): string {
-    return renderPrompt(this.live().content, buildPromptVars(input, this.#language, this.#timeZone));
+    return renderPrompt(this.live().content, buildPromptVars(input, this.#language));
   }
 
   // ── 조회 ───────────────────────────────────────────────────────
@@ -309,7 +307,7 @@ export class PromptManager implements PromptService {
       if (!row) throw notFound(`prompt '${req.name}' v${version} not found`);
       template = row.content;
     } else template = this.live().content;
-    const text = renderPrompt(template, buildPromptVars({ user: req.user, model: req.model ?? "model", now: new Date() }, this.#language, this.#timeZone));
+    const text = renderPrompt(template, buildPromptVars({ user: req.user, model: req.model ?? "model", now: new Date() }, this.#language));
     const analysis = analyzePrompt(template);
     return { text, used: analysis.used, unknown: analysis.unknown, charCount: text.length };
   }
@@ -328,16 +326,6 @@ export class PromptManager implements PromptService {
       this.#insertVersion(req.name, 1, req.content, req.message || "처음 만듦", actor, at);
     })();
     return this.get(req.name);
-  }
-
-  updateDescription(name: string, description: unknown, actorInput?: string): PromptDetail {
-    const value = parse(Description, description);
-    normalizeActor(actorInput);
-    const result = this.#db
-      .prepare("UPDATE prompts SET description = ?, updated_at = ? WHERE name = ?")
-      .run(value, now(), name);
-    if (result.changes === 0) throw notFound(`prompt '${name}' not found`);
-    return this.get(name);
   }
 
   addVersion(name: string, input: unknown, actorInput?: string): PromptVersion {

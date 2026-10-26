@@ -15,7 +15,7 @@ case "$PI_GATEWAY_HOME" in /*) ;; *) echo "PI_GATEWAY_HOME must be absolute" >&2
 SECRETS="${PI_GATEWAY_SECRETS:-$PI_GATEWAY_HOME/secrets}"
 case "$SECRETS" in /*) ;; *) echo "PI_GATEWAY_SECRETS must be absolute" >&2; exit 1 ;; esac
 ENV_FILE="${ENV_FILE:-$(dirname "$0")/../.env}"
-DOCKER_SOCK="${DOCKER_SOCKET_HOST:-/var/run/docker.sock}"
+DOCKER_SOCK=/var/run/docker.sock
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run as root (directory ownership needs chown)" >&2

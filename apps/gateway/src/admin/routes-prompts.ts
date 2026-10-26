@@ -18,17 +18,11 @@ export function registerPromptRoutes(app: FastifyInstance, ctx: AdminContext): v
 
   app.get<NameParams>("/prompts/:name", async (req) => prompts.get(req.params.name));
 
-  app.patch<NameParams & { Body: { description?: unknown } }>("/prompts/:name", async (req) =>
-    prompts.updateDescription(req.params.name, req.body?.description, actorOf(req)),
-  );
-
   app.post<NameParams & { Body: unknown }>("/prompts/:name/versions", { bodyLimit: BODY_LIMIT }, async (req, reply) =>
     reply.code(201).send(prompts.addVersion(req.params.name, req.body, actorOf(req))),
   );
 
   app.post<NameParams & { Body: unknown }>("/prompts/:name/deploy", async (req) => prompts.deploy(req.params.name, req.body, actorOf(req)));
-
-  app.get("/prompt-live", async () => prompts.live());
 
   app.post<{ Body: unknown }>("/prompt-live/reset", async (req) => prompts.reset(req.body, actorOf(req)));
 

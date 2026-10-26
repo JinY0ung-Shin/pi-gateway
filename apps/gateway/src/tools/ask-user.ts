@@ -1,5 +1,5 @@
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 
 /**
  * AskUserQuestion — Claude Code와 같은 입력 스키마.
@@ -27,7 +27,6 @@ export const AskUserQuestionParams = Type.Object({
     { minItems: 1, maxItems: 4 },
   ),
 });
-export type AskUserQuestionInput = Static<typeof AskUserQuestionParams>;
 
 export const ASK_USER_PLACEHOLDER_RESULT =
   "The question was shown to the user. Their answer will arrive as the next user message. Stop here and wait for it.";

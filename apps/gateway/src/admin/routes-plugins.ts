@@ -35,8 +35,6 @@ export function registerPluginRoutes(app: FastifyInstance, ctx: AdminContext): v
     return reply.code(201).send(result);
   });
 
-  app.get<IdParams>("/plugins/:id", async (req) => plugins.getPlugin(req.params.id));
-
   app.get<{ Params: { id: string; name: string } }>("/plugins/:id/skills/:name", async (req) => plugins.skillContent(req.params.id, req.params.name));
 
   app.post<IdParams & { Body: unknown }>("/plugins/:id/update", async (req) => plugins.update(req.params.id, req.body, actorOf(req)));

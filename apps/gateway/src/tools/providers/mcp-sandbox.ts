@@ -5,11 +5,10 @@ import { connectionSets, type McpProviderDeps, newSet } from "./mcp-shared.js";
 /** mcp-sandbox provider — 비밀키가 없는 stdio MCP 서버. 사용자 sandbox 컨테이너 안에서 실행된다. */
 export function createSandboxMcpToolProvider(deps: McpProviderDeps): ToolProvider {
   const sets = connectionSets();
-  const enabledServers = () => deps.registry.sandboxServers().filter((s) => s.enabled && s.runIn === "sandbox");
   return {
     id: "mcp-sandbox",
     async createTools(ctx) {
-      const servers = enabledServers();
+      const servers = deps.registry.sandboxServers();
       if (servers.length === 0) return [];
       const set = newSet(deps, ctx);
       await sets.replace(ctx.sessionId, set);

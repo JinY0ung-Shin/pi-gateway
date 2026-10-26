@@ -71,7 +71,6 @@ export const McpServerConfig = McpServerConfigBase.superRefine((config, ctx) => 
   for (const message of validateMcpServerConfig(config)) ctx.addIssue({ code: "custom", message });
 });
 export type McpServerConfig = z.infer<typeof McpServerConfig>;
-export type McpServerConfigInput = z.input<typeof McpServerConfig>;
 
 // ── 템플릿 ──────────────────────────────────────────────────────────
 

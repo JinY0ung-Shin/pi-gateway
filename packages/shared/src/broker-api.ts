@@ -28,7 +28,6 @@ export const BROKER_ADMIN_ROUTES = {
   secret: (id: string, name: string) => `/admin/servers/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
   test: (id: string) => `/admin/servers/${encodeURIComponent(id)}/test`,
   tools: (id: string) => `/admin/servers/${encodeURIComponent(id)}/tools`,
-  audit: "/admin/audit",
 } as const;
 
 export const SecretName = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
@@ -79,17 +78,6 @@ export const TestServerResponse = z.object({
 });
 export type TestServerResponse = z.infer<typeof TestServerResponse>;
 export const ListToolsResponse = z.object({ tools: z.array(ToolSummary) });
-
-export const AuditEvent = z.object({
-  at: z.string(),
-  actor: z.string(),
-  action: z.string(),
-  serverId: z.string().optional(),
-  detail: z.string().optional(),
-});
-export type AuditEvent = z.infer<typeof AuditEvent>;
-/** GET /admin/audit?limit= */
-export const ListAuditResponse = z.object({ events: z.array(AuditEvent) });
 
 /** GET /mcp/servers (데이터 평면) */
 export const VisibleServer = z.object({

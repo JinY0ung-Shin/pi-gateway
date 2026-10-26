@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
-import { findTemplateRefs, MCP_SERVER_ID_PATTERN, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
+import { findTemplateRefs, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
@@ -32,7 +32,7 @@ import {
   referencedDefaultEnv,
   sanitizeServerId,
 } from "./mcp-mapping.js";
-import { type CopyLimits, DEFAULT_COPY_LIMITS, readContainedFile, safeCopyTree } from "./safe-copy.js";
+import { readContainedFile, safeCopyTree } from "./safe-copy.js";
 import { type McpRecord, type MarketplaceRecord, type PluginRecord, PluginStore, type ResolvedSource } from "./store.js";
 
 const envKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -49,20 +49,11 @@ const RefreshMarketplaceInput = z.object({
   tokenUsername: z.string().max(100).optional(),
 });
 
-const McpOverrideInput = z.object({
-  id: z.string().regex(MCP_SERVER_ID_PATTERN).optional(),
-  env: z.record(envKey, z.string().max(4096)).optional(),
-  scope: McpScope.optional(),
-  enabled: z.boolean().optional(),
-});
-
 const InstallInput = z.object({
   marketplace: z.string().min(1),
   plugin: z.string().min(1),
   token: z.string().max(4096).optional(),
   tokenUsername: z.string().max(100).optional(),
-  /** plugin 안의 MCP 서버 이름 → 덮어쓸 값 */
-  mcpOverrides: z.record(z.string(), McpOverrideInput).default({}),
 });
 
 const SettingsInput = z.object({
@@ -124,10 +115,9 @@ export interface PluginView {
 export interface PluginServiceOptions {
   registry: McpRegistryService;
   log: Logger;
-  /** 로컬 경로·file:// 저장소 허용 (테스트·개발용). 기본값은 PLUGIN_ALLOW_LOCAL_SOURCES=1일 때만. */
+  /** 로컬 경로·file:// 저장소 허용 (테스트용) */
   allowLocalSources?: boolean;
   gitTimeoutMs?: number;
-  copyLimits?: CopyLimits;
 }
 
 interface ResourceCache {
@@ -174,7 +164,6 @@ export class PluginService implements PluginResources {
   readonly #marketplacesDir: string;
   readonly #allowLocal: boolean;
   readonly #gitTimeoutMs: number;
-  readonly #limits: CopyLimits;
   #cache: ResourceCache | undefined;
   #queue: Promise<unknown> = Promise.resolve();
 
@@ -185,9 +174,8 @@ export class PluginService implements PluginResources {
     this.#pluginsDir = config.pluginsDir;
     this.#workDir = join(config.dataDir, "plugin-work");
     this.#marketplacesDir = join(config.dataDir, "plugin-marketplaces");
-    this.#allowLocal = options.allowLocalSources ?? process.env.PLUGIN_ALLOW_LOCAL_SOURCES === "1";
+    this.#allowLocal = options.allowLocalSources ?? false;
     this.#gitTimeoutMs = options.gitTimeoutMs ?? 120_000;
-    this.#limits = options.copyLimits ?? DEFAULT_COPY_LIMITS;
   }
 
   // ── PluginResources ────────────────────────────────────────────
@@ -451,7 +439,7 @@ export class PluginService implements PluginResources {
       const finalDir = stablePluginPath(pluginDir);
       const dataDir = pluginDataDir(marketplace.name, entry.name);
 
-      const copy = await safeCopyTree(sourceDir, staging, this.#limits);
+      const copy = await safeCopyTree(sourceDir, staging);
       const found = await discoverComponents({ stagingDir: staging, finalDir, pluginName: entry.name, manifest, entry, dataDir });
       await rewriteTextFiles(found, staging, finalDir, dataDir);
 
@@ -466,7 +454,6 @@ export class PluginService implements PluginResources {
         root: finalDir,
         dataDir,
         description,
-        overrides: req.mcpOverrides,
         enabled,
         read: (rel) => readContainedFile(staging, rel, { optional: true }).catch(() => undefined),
       });
@@ -573,7 +560,6 @@ export class PluginService implements PluginResources {
       root: string;
       dataDir: string;
       description: string | undefined;
-      overrides: z.infer<typeof InstallInput>["mcpOverrides"];
       enabled: boolean;
       /** plugin 기준 상대 경로의 파일 내용 (참조 검사용) */
       read: (rel: string) => Promise<string | undefined>;
@@ -583,7 +569,6 @@ export class PluginService implements PluginResources {
     const out: { name: string; mapped: MappedMcpServer }[] = [];
     for (const [name, raw] of Object.entries(servers).sort(([a], [b]) => a.localeCompare(b))) {
       const texts = (await Promise.all(pluginEntryFiles(raw).map((rel) => ctx.read(rel)))).filter((t): t is string => t !== undefined);
-      const override = ctx.overrides[name];
       const mapped = mapPluginMcpServer(name, raw, {
         pluginId: ctx.id,
         pluginName: ctx.pluginName,
@@ -592,7 +577,7 @@ export class PluginService implements PluginResources {
         dataDir: ctx.dataDir,
         description: ctx.description,
         defaults: { env: referencedDefaultEnv(raw, defaults.env, texts), scope: defaults.scope },
-        override: override ? { ...override, enabled: ctx.enabled ? override.enabled : false } : { enabled: ctx.enabled ? undefined : false },
+        enabled: ctx.enabled,
       });
       out.push({ name, mapped });
     }

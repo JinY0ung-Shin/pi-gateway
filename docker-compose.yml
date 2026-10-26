@@ -37,7 +37,7 @@ services:
   # sandbox 이미지를 빌드만 하고 바로 끝나는 서비스. sandboxd가 이 이미지로 사용자 컨테이너를 만든다.
   # 파생 이미지를 쓰려면 SANDBOX_IMAGE만 바꾼다 (docs/OPERATIONS.md "sandbox에 도구 추가하기").
   sandbox-image:
-    image: ${SANDBOX_BASE_IMAGE:-pi-gateway/sandbox:latest}
+    image: pi-gateway/sandbox:latest
     build:
       context: ./images/sandbox
       args: *mirror-args
@@ -100,7 +100,7 @@ services:
       - source: sbx_sandboxd_jwt_secret
         target: sandboxd_jwt_secret
     volumes:
-      - ${DOCKER_SOCKET_HOST:-/var/run/docker.sock}:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
       - type: bind
         source: ${PI_GATEWAY_HOME}/workspaces
         target: /srv/workspaces
@@ -198,7 +198,6 @@ services:
       MCP_FORWARD_HEADERS:
       MCP_METADATA_KEYS: ${MCP_METADATA_KEYS:-THREAD_ID,ORCHESTRATOR_URL}
       PROMPT_LANGUAGE: ${PROMPT_LANGUAGE:-Korean}
-      PLUGIN_ALLOW_LOCAL_SOURCES: ${PLUGIN_ALLOW_LOCAL_SOURCES:-0}
       # 앞단 프록시 (docs/OPERATIONS.md §3.4)
       TRUST_PROXY: ${TRUST_PROXY:-false}
       # 사내 CA: .env의 NODE_EXTRA_CA_CERTS(호스트의 PEM 파일)를 아래 경로로 mount한다. 비우면 쓰지 않는다

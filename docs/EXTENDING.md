@@ -184,63 +184,8 @@ interface ToolSessionContext {
 
 1. `apps/gateway/src/tools/providers/<이름>.ts`에 provider를 만들어요.
 2. `apps/gateway/src/tools/registry.ts`의 `createDefaultToolProviders()` 목록에 추가해요. 목록 순서가 이름이 겹칠 때의 우선순위예요.
-3. 테스트를 추가해요 (아래 템플릿).
+3. 테스트를 추가해요. 가짜 LLM이 도구를 호출하게 하고 가짜 sandboxd에 간 요청을 확인하는 하네스가 `apps/gateway/test/helpers.ts`에 있어요.
 4. gateway를 다시 배포해요.
-
-### 최소 예시: sandbox에서 `wc`를 실행하는 provider
-
-`apps/gateway/test/examples/word-count-provider.ts`:
-
-```ts
-const Params = Type.Object({ path: Type.String({ description: "File path, relative to /workspace" }) });
-
-export function createWordCountProvider(): ToolProvider {
-  return {
-    id: "word-count",
-    async createTools(ctx) {
-      const tool: ToolDefinition<typeof Params> = {
-        name: "word_count",
-        label: "word count",
-        description: "Count the lines, words and bytes of a file in the workspace.",
-        parameters: Params,
-        async execute(_toolCallId, params, signal) {
-          const output: Buffer[] = [];
-          const result = await ctx.sandbox.exec(
-            { argv: ["wc", "--", resolveSandboxPath(params.path, SANDBOX_WORKSPACE)] },
-            { onStdout: (c) => output.push(c), onStderr: (c) => output.push(c), ...(signal ? { signal } : {}) },
-          );
-          const text = Buffer.concat(output).toString("utf8").trim();
-          if (result.exitCode !== 0) return { content: [{ type: "text", text }], details: undefined, isError: true };
-          return { content: [{ type: "text", text }], details: undefined };
-        },
-      };
-      return [tool as unknown as ToolDefinition];
-    },
-  };
-}
-```
-
-### 테스트 템플릿
-
-`apps/gateway/test/tool-provider.test.ts`가 그대로 복사해서 쓸 수 있는 틀이에요. 가짜 LLM(`fixtures/fake-llm.ts`)이 도구를 호출하게 하고, 가짜 sandboxd(`fixtures/fake-sandboxd.ts`)에 간 요청을 확인해요.
-
-```ts
-let h: Harness;
-beforeAll(async () => {
-  h = await startHarness({ overrides: { toolProviders: (defaults) => [...defaults, createWordCountProvider()] } });
-});
-afterAll(async () => h.close());
-
-it("runs inside the sandbox", async () => {
-  writeFileSync(join(h.sandbox.workspaceOf("alice"), "poem.txt"), "one two\nthree\n");
-  h.llm.enqueue({ toolCalls: [{ id: "wc1", name: "word_count", arguments: { path: "poem.txt" } }] }, { text: "done" });
-  const res = await h.stream({ input: "count" });
-  const result = ofType(res.events, "response.tool_result")[0]!.data;
-  expect(result.is_error).toBe(false);
-  const exec = h.sandbox.calls.find((c) => c.route === SANDBOXD_ROUTES.exec && c.body.argv[0] === "wc");
-  expect(exec?.body.argv).toEqual(["wc", "--", "/workspace/poem.txt"]);
-});
-```
 
 ### 체크리스트
 

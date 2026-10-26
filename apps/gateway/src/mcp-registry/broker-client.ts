@@ -4,14 +4,12 @@ import {
   AUD_BROKER_ADMIN,
   BROKER_ADMIN_ROUTES,
   BROKER_ROUTES,
-  ListAuditResponse,
   ListServersResponse,
   ListToolsResponse,
   type McpServerConfig,
   McpServerView,
   signInternalToken,
   TestServerResponse,
-  type AuditEvent,
   type ToolSummary,
   type VisibleServer,
   VisibleServersResponse,
@@ -95,11 +93,6 @@ export class BrokerClient {
     const query = user ? `?user=${encodeURIComponent(user)}` : "";
     const body = await this.#admin("GET", `${BROKER_ADMIN_ROUTES.tools(id)}${query}`, { timeoutMs: TEST_TIMEOUT_MS });
     return this.#parse(ListToolsResponse, body).tools;
-  }
-
-  async audit(limit: number): Promise<AuditEvent[]> {
-    const body = await this.#admin("GET", `${BROKER_ADMIN_ROUTES.audit}?limit=${Math.max(1, Math.min(limit, 1000))}`);
-    return this.#parse(ListAuditResponse, body).events;
   }
 
   // ── 데이터 평면 ────────────────────────────────────────────────

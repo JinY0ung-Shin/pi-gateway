@@ -116,13 +116,12 @@ export function StatusPage() {
               <th>컨테이너</th>
               <th>상태</th>
               <th>마지막 사용</th>
-              <th>메모리</th>
             </tr>
           </thead>
           <tbody>
             {status.sandboxes.items.length === 0 && (
               <tr>
-                <td colSpan={5} class="muted">
+                <td colSpan={4} class="muted">
                   실행 중인 sandbox가 없습니다.
                 </td>
               </tr>
@@ -133,7 +132,6 @@ export function StatusPage() {
                 <td class="mono small-text">{s.containerName}</td>
                 <td>{s.state === "running" ? <Badge tone="green">running</Badge> : <Badge>{s.state}</Badge>}</td>
                 <td>{formatTime(s.lastActiveAt)}</td>
-                <td>{formatBytes(s.memoryBytes)}</td>
               </tr>
             ))}
           </tbody>

@@ -11,8 +11,6 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: AdminContext): void
 
   app.get("/mcp/servers", async () => mcp.list());
 
-  app.get<IdParams>("/mcp/servers/:id", async (req) => mcp.get(req.params.id));
-
   app.post<{ Body: { config?: unknown } }>("/mcp/validate", async (req) => mcp.validate(req.body?.config ?? req.body));
 
   app.put<IdParams & { Body: { config?: unknown } }>("/mcp/servers/:id", async (req) => {
@@ -45,9 +43,5 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: AdminContext): void
 
   app.get<IdParams & { Querystring: { user?: string } }>("/mcp/servers/:id/tools", async (req) => ({
     tools: await mcp.tools(req.params.id, req.query.user || undefined),
-  }));
-
-  app.get<{ Querystring: { limit?: string } }>("/mcp/audit", async (req) => ({
-    events: await mcp.audit(Number(req.query.limit ?? 100) || 100),
   }));
 }

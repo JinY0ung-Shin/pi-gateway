@@ -65,8 +65,6 @@ static void pid_path(char *out, size_t n, const char *id) { snprintf(out, n, STA
 static int parse_signal(const char *name) {
   if (strcmp(name, "TERM") == 0) return SIGTERM;
   if (strcmp(name, "KILL") == 0) return SIGKILL;
-  if (strcmp(name, "INT") == 0) return SIGINT;
-  if (strcmp(name, "HUP") == 0) return SIGHUP;
   return -1;
 }
 

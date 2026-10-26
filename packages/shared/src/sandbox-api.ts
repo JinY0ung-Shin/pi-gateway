@@ -14,7 +14,6 @@ import { z } from "zod";
 export const SANDBOX_WORKSPACE = "/workspace";
 export const SANDBOX_HOME = "/workspace/.home";
 export const SANDBOX_PLUGINS_DIR = "/opt/plugins";
-export const SANDBOX_TMP = "/tmp";
 export const SANDBOX_UID = 1000;
 export const SANDBOX_GID = 1000;
 
@@ -76,7 +75,6 @@ export const SandboxInfo = z.object({
   /** 이번 호출에서 새로 만들었는지 (ensure 응답에만 있음) */
   created: z.boolean().optional(),
   lastActiveAt: z.string().optional(),
-  memoryBytes: z.number().optional(),
 });
 export type SandboxInfo = z.infer<typeof SandboxInfo>;
 
@@ -152,7 +150,6 @@ export const FsWriteRequest = z.object({
   mkdirs: z.boolean().default(true),
 });
 export type FsWriteRequest = z.input<typeof FsWriteRequest>;
-export const FsWriteResponse = z.object({ size: z.number() });
 
 /** POST /v1/fs/stat — 없으면 200 `{exists:false}`. 심볼릭 링크 자체를 본다 (lstat). */
 export const FsStatRequest = z.object({ user: principal, path: sandboxPath });

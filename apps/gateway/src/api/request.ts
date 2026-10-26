@@ -35,14 +35,11 @@ export const ResponseCreateRequest = z
     instructions: z.string().nullish(),
     previous_response_id: z.string().nullish(),
     stream: z.boolean().nullish(),
-    store: z.boolean().nullish(),
     background: z.boolean().nullish(),
     metadata: z.record(z.string(), z.string()).nullish(),
     user: z.string().nullish(),
     reasoning: z.object({ effort: z.string().nullish() }).passthrough().nullish(),
     text: z.object({ format: z.object({ type: z.string() }).passthrough().nullish() }).passthrough().nullish(),
-    temperature: z.number().nullish(),
-    max_output_tokens: z.number().nullish(),
   })
   .passthrough();
 export type ResponseCreateRequest = z.infer<typeof ResponseCreateRequest>;

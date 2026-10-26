@@ -180,7 +180,7 @@ export interface StatusView {
     broker: ServiceCheck;
     sandboxd: ServiceCheck;
   };
-  sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string; memoryBytes?: number }[]; error?: string };
+  sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string }[]; error?: string };
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };

@@ -265,7 +265,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     return { ok: true, tools: [{ name: "search", description: "검색" }], durationMs: 3 };
   });
   app.get<{ Params: { id: string } }>("/admin/servers/:id/tools", async () => ({ tools: [{ name: "search", description: "검색" }] }));
-  app.get("/admin/audit", async () => ({ events: [{ at: "2026-10-16T00:00:00.000Z", actor: "admin", action: "server.put", serverId: "x" }] }));
 
   app.get("/mcp/servers", async (req, reply) => {
     const token = bearerToken(req.headers.authorization);

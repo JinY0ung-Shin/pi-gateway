@@ -11,13 +11,12 @@ export class SseWriter {
 
   constructor(private readonly res: ServerResponse) {}
 
-  start(headers: Record<string, string> = {}): void {
+  start(): void {
     this.res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
-      ...headers,
     });
     this.res.flushHeaders?.();
     this.res.on("close", () => {

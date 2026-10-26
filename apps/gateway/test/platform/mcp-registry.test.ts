@@ -106,16 +106,15 @@ describe("MCP registry", () => {
 
     for (const [method, url] of [
       ["GET", "/admin/api/mcp/servers"],
-      ["GET", "/admin/api/mcp/servers/github"],
       ["POST", "/admin/api/mcp/servers/github/test"],
       ["GET", "/admin/api/mcp/servers/github/tools"],
-      ["GET", "/admin/api/mcp/audit"],
     ] as const) {
       res = await h.app.inject({ method, url, headers: method === "GET" ? { cookie } : { ...headers }, ...(method === "POST" ? { payload: {} } : {}) });
       expect(res.statusCode).toBe(200);
       bodies.push(res.body);
     }
-    const view = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers/github", headers: { cookie } })).json();
+    const list = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers", headers: { cookie } })).json();
+    const view = list.servers.find((s: { config: { id: string } }) => s.config.id === "github");
     expect(view.missingSecrets).toEqual([]);
     expect(view.secrets[0]).toMatchObject({ name: "GITHUB_TOKEN" });
 

@@ -55,14 +55,6 @@ export interface SecretMeta {
   fingerprint: string;
 }
 
-export interface AuditRecord {
-  at: string;
-  actor: string;
-  action: string;
-  serverId?: string;
-  detail?: string;
-}
-
 interface ServerRow {
   id: string;
   config: string;
@@ -226,22 +218,10 @@ export class BrokerStore {
     return requiredSecretNames(server.config).filter((name) => !present.has(name));
   }
 
-  addAudit(record: Omit<AuditRecord, "at">): void {
+  addAudit(record: { actor: string; action: string; serverId?: string; detail?: string }): void {
     this.#db
       .prepare("INSERT INTO audit (at, actor, action, server_id, detail) VALUES (?, ?, ?, ?, ?)")
       .run(new Date().toISOString(), record.actor, record.action, record.serverId ?? null, record.detail ?? null);
-  }
-
-  listAudit(limit: number): AuditRecord[] {
-    const rows = this.#db
-      .prepare("SELECT at, actor, action, server_id, detail FROM audit ORDER BY id DESC LIMIT ?")
-      .all(limit) as { at: string; actor: string; action: string; server_id: string | null; detail: string | null }[];
-    return rows.map((r) => {
-      const out: AuditRecord = { at: r.at, actor: r.actor, action: r.action };
-      if (r.server_id !== null) out.serverId = r.server_id;
-      if (r.detail !== null) out.detail = r.detail;
-      return out;
-    });
   }
 }
 

@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
   atLeastScope,
-  type AuditEvent,
   findLiteralCredentials,
   McpServerConfig,
   PutSecretRequest,
@@ -125,14 +124,6 @@ export class McpRegistryService implements McpRegistry {
     return { servers, broker };
   }
 
-  async get(id: string): Promise<McpServerEntry> {
-    const local = this.store.get(id);
-    if (local) return { store: "sandbox", config: local, requiredSecrets: requiredSecretNames(local) };
-    const remote = await this.#brokerEntry(id);
-    if (remote) return remote;
-    throw notFound(`MCP server '${id}' not found`);
-  }
-
   /**
    * 저장하기 전 검사. clearsSecrets는 이 설정으로 저장하면 broker가 지울 비밀키 이름이다
    * (같은 id의 broker 서버가 실행 대상(url origin·헤더)을 바꾸거나 sandbox로 옮길 때).
@@ -205,10 +196,6 @@ export class McpRegistryService implements McpRegistry {
       throw new PlatformError(400, "not_available", "sandbox servers start on first use in a session; tools cannot be listed here");
     }
     return this.#broker.tools(id, user);
-  }
-
-  async audit(limit: number): Promise<AuditEvent[]> {
-    return this.#broker.audit(limit);
   }
 
   // ── plugin 연동 ────────────────────────────────────────────────

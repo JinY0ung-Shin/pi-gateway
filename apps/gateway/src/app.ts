@@ -19,7 +19,6 @@ import { buildServer } from "./server.js";
 import { SessionHub } from "./sessions/hub.js";
 import { TurnLimiter } from "./sessions/limiter.js";
 import { SessionStore } from "./sessions/store.js";
-import type { ToolProvider } from "./tools/provider.js";
 import { createDefaultToolProviders, ToolRegistry } from "./tools/registry.js";
 import { ToolSettings } from "./tools/settings.js";
 
@@ -34,8 +33,6 @@ export interface GatewayOverrides {
   prompts?: PromptService;
   plugins?: PluginResources;
   mcpRegistry?: McpRegistry;
-  /** 기본 provider 목록 대신 쓸 provider (테스트·확장용) */
-  toolProviders?: (defaults: ToolProvider[]) => ToolProvider[];
   registerAdminRoutes?: RegisterAdminRoutes;
   /** pi settings 덮어쓰기 (테스트에서 retry를 끄는 등) */
   piSettings?: Record<string, unknown>;
@@ -67,13 +64,12 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
 
   const models = await createModelRuntime(db);
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
-  const defaults = createDefaultToolProviders({
+  const providers = createDefaultToolProviders({
     mcpRegistry,
     broker: config.broker,
     mcpCache: new McpToolCache(),
     ...(overrides.mcpListTimeoutMs ? { mcpListTimeoutMs: overrides.mcpListTimeoutMs } : {}),
   });
-  const providers = overrides.toolProviders ? overrides.toolProviders(defaults) : defaults;
   const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));
   const toolSettings = new ToolSettings(db);
 
