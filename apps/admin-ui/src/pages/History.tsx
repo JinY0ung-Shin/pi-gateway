@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Notice, Section, useAction } from "../components";
+import { Modal, Notice, Section, useAction } from "../components";
 import { newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
 
 /** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간 */
@@ -87,7 +87,8 @@ export function HistoryPage(props: { focus?: string }) {
   return (
     <>
       <RetentionSection />
-      {props.focus ? <Transcript id={props.focus} /> : <SessionList />}
+      <SessionList />
+      {props.focus && <Transcript id={props.focus} />}
     </>
   );
 }
@@ -199,7 +200,7 @@ function Transcript(props: { id: string }) {
   }, [props.id]);
 
   return (
-    <Section title="대화" actions={<a href="#/history">← 목록</a>}>
+    <Modal title="대화" onClose={() => (location.hash = "#/history")}>
       {error && <Notice tone="error">{error}</Notice>}
       {!data && !error && <p class="muted">불러오는 중…</p>}
       {data && (
@@ -214,7 +215,7 @@ function Transcript(props: { id: string }) {
           </div>
         </>
       )}
-    </Section>
+    </Modal>
   );
 }
 

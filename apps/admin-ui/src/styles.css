@@ -96,7 +96,8 @@ h2 {
   margin: 0;
 }
 
-h2.mono {
+/* 창 제목의 식별자 */
+h2 .mono {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0;
@@ -124,6 +125,10 @@ input.mono {
 
 .small-text {
   font-size: 12px;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .warn-text {
@@ -618,6 +623,7 @@ a:focus-visible {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 1rem 1.35rem 1.25rem;
+  outline: none;
 }
 
 /* 창 안에서는 본문이 스크롤하므로 코드 블록 높이를 따로 막지 않는다 */
@@ -866,70 +872,7 @@ button.modal-close:hover:not(:disabled) {
   cursor: not-allowed;
 }
 
-/* ── 목록 + 상세 (도구·MCP·skill·agent) ── */
-
-.split {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
-}
-
-@media (max-width: 1000px) {
-  .split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.sidebar {
-  padding: 0.75rem 0.6rem;
-  position: sticky;
-  top: 1rem;
-  max-height: calc(100vh - 2rem);
-  overflow-y: auto;
-}
-
-@media (max-width: 1000px) {
-  .sidebar {
-    position: static;
-    max-height: none;
-  }
-}
-
-.sidebar-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 0 0.45rem;
-  margin-bottom: 0.5rem;
-}
-
-.nav-list {
-  list-style: none;
-  margin: 0 0 0.5rem;
-  padding: 0;
-}
-
-.nav-list button {
-  width: 100%;
-  text-align: left;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  padding: 0.35rem 0.5rem;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.nav-list button:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.nav-list button.active {
-  background: var(--accent-soft);
-  color: var(--text);
-  font-weight: 600;
-}
+/* ── 탭·코드 블록 ── */
 
 .tabs {
   display: flex;

@@ -7,7 +7,7 @@ type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind
 
 export function PromptsPage() {
   const [list, setList] = useState<PromptList | null>(null);
-  const [selection, setSelection] = useState<Selection>({ kind: "default" });
+  const [selection, setSelection] = useState<Selection | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = async () => {
@@ -24,118 +24,122 @@ export function PromptsPage() {
 
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
   if (!list) return <p class="muted">불러오는 중…</p>;
+  const close = () => setSelection(null);
 
   return (
-    <div class="split">
-      <aside class="sidebar card">
-        <div class="sidebar-head">
-          <strong>프롬프트</strong>
-          <button class="small" onClick={() => setSelection({ kind: "new" })}>
-            + 새 프롬프트
-          </button>
-        </div>
-        <ul class="nav-list">
-          <li>
-            <button class={selection.kind === "default" ? "active" : ""} onClick={() => setSelection({ kind: "default" })}>
-              기본 프롬프트 {list.live.isDefault && <Badge tone="green">배포 중</Badge>}
+    <>
+      <Section
+        title="프롬프트"
+        actions={
+          <>
+            <button onClick={() => setSelection({ kind: "full" })}>모델이 받는 전체 프롬프트</button>
+            <button class="primary" onClick={() => setSelection({ kind: "new" })}>
+              + 새 프롬프트
             </button>
-          </li>
-          {list.prompts.map((p) => (
-            <li key={p.name}>
-              <button
-                class={selection.kind === "prompt" && selection.name === p.name ? "active" : ""}
-                onClick={() => setSelection({ kind: "prompt", name: p.name })}
-              >
-                <span class="mono">{p.name}</span> <span class="muted">v{p.latestVersion}</span>
-                {p.liveVersion !== null && <Badge tone="green">v{p.liveVersion} 배포 중</Badge>}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <ul class="nav-list">
-          <li>
-            <button class={selection.kind === "full" ? "active" : ""} onClick={() => setSelection({ kind: "full" })}>
-              모델이 받는 전체 프롬프트
-            </button>
-          </li>
-        </ul>
-        <p class="muted small-text">변수: {list.variables.map((v) => `{{${v}}}`).join(" ")}</p>
-      </aside>
-      <div class="main">
-        {selection.kind === "default" && <DefaultPrompt list={list} onChanged={reload} />}
-        {selection.kind === "full" && <FullPrompt />}
-        {selection.kind === "new" && (
-          <NewPrompt
-            onCreated={async (name) => {
-              await reload();
-              setSelection({ kind: "prompt", name });
-            }}
-          />
-        )}
-        {selection.kind === "prompt" && (
-          <PromptEditor
-            key={selection.name}
-            name={selection.name}
-            list={list}
-            onChanged={reload}
-          />
-        )}
-        <Deployments revision={list.live.revision} />
-      </div>
-    </div>
+          </>
+        }
+      >
+        <table class="table">
+          <thead>
+            <tr>
+              <th>이름</th>
+              <th>설명</th>
+              <th>버전</th>
+              <th>배포</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="clickable" onClick={() => setSelection({ kind: "default" })}>
+              <td class="nowrap">기본 프롬프트</td>
+              <td class="muted small-text">배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트</td>
+              <td class="muted">-</td>
+              <td>{list.live.isDefault && <Badge tone="green">배포 중</Badge>}</td>
+            </tr>
+            {list.prompts.map((p) => (
+              <tr key={p.name} class="clickable" onClick={() => setSelection({ kind: "prompt", name: p.name })}>
+                <td class="mono nowrap">{p.name}</td>
+                <td class="muted small-text">{p.description}</td>
+                <td>v{p.latestVersion}</td>
+                <td>{p.liveVersion !== null && <Badge tone="green">v{p.liveVersion} 배포 중</Badge>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+      {selection?.kind === "default" && <DefaultPrompt list={list} onChanged={reload} onClose={close} />}
+      {selection?.kind === "full" && <FullPrompt onClose={close} />}
+      {selection?.kind === "new" && (
+        <NewPrompt
+          variables={list.variables}
+          onClose={close}
+          onCreated={async (name) => {
+            await reload();
+            setSelection({ kind: "prompt", name });
+          }}
+        />
+      )}
+      {selection?.kind === "prompt" && <PromptEditor key={selection.name} name={selection.name} list={list} onChanged={reload} onClose={close} />}
+      <Deployments revision={list.live.revision} />
+    </>
   );
 }
 
-function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void> }) {
+/** 프롬프트에 쓸 수 있는 변수 */
+const variablesText = (variables: string[]) => variables.map((v) => `{{${v}}}`).join(" ");
+
+function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void>; onClose: () => void }) {
   const action = useAction();
   const [preview, setPreview] = useState<string | null>(null);
   const { live } = props.list;
   return (
-    <Section
-      title="기본 프롬프트"
-      actions={
-        <>
-          <button
-            onClick={() => action.run(async () => setPreview((await api<{ text: string }>("POST", "/prompt-render", { content: props.list.defaultContent })).text))}
-          >
-            미리보기
-          </button>
-          {!live.isDefault && (
+    <>
+      <Modal
+        title="기본 프롬프트"
+        onClose={props.onClose}
+        actions={
+          <>
             <button
-              class="danger"
-              disabled={action.busy}
-              onClick={() =>
-                confirm("배포를 취소하고 기본 프롬프트로 되돌릴까요? 새 세션부터 적용됩니다.") &&
-                action.run(async () => {
-                  await api("POST", "/prompt-live/reset", {});
-                  await props.onChanged();
-                }, "기본 프롬프트로 되돌렸습니다")
-              }
+              onClick={() => action.run(async () => setPreview((await api<{ text: string }>("POST", "/prompt-render", { content: props.list.defaultContent })).text))}
             >
-              기본 프롬프트로 되돌리기
+              미리보기
             </button>
-          )}
-        </>
-      }
-    >
-      {action.view}
-      <p class="muted">
-        배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트입니다. 현재 배포:{" "}
-        {live.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${live.name} v${live.version}`}</Badge>} ({formatTime(live.deployedAt)},{" "}
-        {live.deployedBy})
-      </p>
-      <pre class="code-block">{props.list.defaultContent}</pre>
+            {!live.isDefault && (
+              <button
+                class="danger"
+                disabled={action.busy}
+                onClick={() =>
+                  confirm("배포를 취소하고 기본 프롬프트로 되돌릴까요? 새 세션부터 적용됩니다.") &&
+                  action.run(async () => {
+                    await api("POST", "/prompt-live/reset", {});
+                    await props.onChanged();
+                  }, "기본 프롬프트로 되돌렸습니다")
+                }
+              >
+                기본 프롬프트로 되돌리기
+              </button>
+            )}
+          </>
+        }
+      >
+        {action.view}
+        <p class="muted">
+          배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트입니다. 현재 배포:{" "}
+          {live.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${live.name} v${live.version}`}</Badge>} ({formatTime(live.deployedAt)},{" "}
+          {live.deployedBy})
+        </p>
+        <pre class="code-block">{props.list.defaultContent}</pre>
+      </Modal>
       {preview !== null && (
         <Modal title="기본 프롬프트 렌더링 결과" onClose={() => setPreview(null)}>
           <pre class="code-block">{preview}</pre>
         </Modal>
       )}
-    </Section>
+    </>
   );
 }
 
 /** 배포 중인 프롬프트로 새 세션을 열었을 때 모델이 실제로 받는 시스템 프롬프트와 도구 */
-function FullPrompt() {
+function FullPrompt(props: { onClose: () => void }) {
   const action = useAction();
   const [user, setUser] = useState("admin");
   const [preview, setPreview] = useState<SessionPreview | null>(null);
@@ -144,8 +148,9 @@ function FullPrompt() {
     void load();
   }, []);
   return (
-    <Section
+    <Modal
       title="모델이 받는 전체 프롬프트"
+      onClose={props.onClose}
       actions={
         <form
           class="row"
@@ -185,17 +190,17 @@ function FullPrompt() {
           </div>
         </>
       )}
-    </Section>
+    </Modal>
   );
 }
 
-function NewPrompt(props: { onCreated: (name: string) => Promise<void> }) {
+function NewPrompt(props: { variables: string[]; onCreated: (name: string) => Promise<void>; onClose: () => void }) {
   const action = useAction();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   return (
-    <Section title="새 프롬프트">
+    <Modal title="새 프롬프트" onClose={props.onClose}>
       {action.view}
       <form
         class="form"
@@ -218,16 +223,17 @@ function NewPrompt(props: { onCreated: (name: string) => Promise<void> }) {
         <label class="field">
           <span>내용</span>
           <textarea rows={18} class="mono" value={content} onInput={(e) => setContent((e.currentTarget as HTMLTextAreaElement).value)} required />
+          <small class="muted">변수: {variablesText(props.variables)}</small>
         </label>
         <button class="primary" type="submit" disabled={action.busy}>
           만들기
         </button>
       </form>
-    </Section>
+    </Modal>
   );
 }
 
-function PromptEditor(props: { name: string; list: PromptList; onChanged: () => Promise<void> }) {
+function PromptEditor(props: { name: string; list: PromptList; onChanged: () => Promise<void>; onClose: () => void }) {
   const [detail, setDetail] = useState<PromptDetail | null>(null);
   const [draft, setDraft] = useState("");
   const [message, setMessage] = useState("");
@@ -246,7 +252,13 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
     void action.run(load);
   }, [props.name]);
 
-  if (!detail) return action.view ?? <p class="muted">불러오는 중…</p>;
+  if (!detail) {
+    return (
+      <Modal title={props.name} onClose={props.onClose}>
+        {action.view ?? <p class="muted">불러오는 중…</p>}
+      </Modal>
+    );
+  }
   const latest = detail.versions.at(-1)!;
   const shownVersion = shown === null ? null : detail.versions.find((v) => v.version === shown);
 
@@ -269,87 +281,87 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
   };
 
   return (
-    <Section
-      title={props.name}
-      actions={detail.liveVersion !== null && <Badge tone="green">v{detail.liveVersion} 배포 중</Badge>}
-    >
-      {action.view}
-      <p class="muted">{detail.description || "설명 없음"}</p>
-      <div class="tabs">
-        <button class={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>
-          편집
-        </button>
-        <button
-          class={view === "preview" ? "active" : ""}
-          onClick={() => {
-            setView("preview");
-            void action.run(async () => setPreview(await api<{ text: string; unknown: string[] }>("POST", "/prompt-render", { content: draft })));
-          }}
-        >
-          미리보기
-        </button>
-      </div>
-      {view === "edit" && (
-        <div class="form">
-          <textarea rows={20} class="mono" value={draft} onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)} />
-          <div class="row">
-            <input
-              class="grow"
-              placeholder="변경 내용 (선택)"
-              value={message}
-              maxLength={200}
-              onInput={(e) => setMessage((e.currentTarget as HTMLInputElement).value)}
-            />
-            <button class="primary" disabled={action.busy || draft === latest.content} onClick={saveVersion}>
-              v{latest.version + 1}로 저장
-            </button>
-          </div>
+    <>
+      <Modal title={props.name} onClose={props.onClose} actions={detail.liveVersion !== null && <Badge tone="green">v{detail.liveVersion} 배포 중</Badge>}>
+        {action.view}
+        <p class="muted">{detail.description || "설명 없음"}</p>
+        <div class="tabs">
+          <button class={view === "edit" ? "active" : ""} onClick={() => setView("edit")}>
+            편집
+          </button>
+          <button
+            class={view === "preview" ? "active" : ""}
+            onClick={() => {
+              setView("preview");
+              void action.run(async () => setPreview(await api<{ text: string; unknown: string[] }>("POST", "/prompt-render", { content: draft })));
+            }}
+          >
+            미리보기
+          </button>
         </div>
-      )}
-      {view === "preview" && preview && (
-        <>
-          {preview.unknown.length > 0 && <Notice tone="warn">알 수 없는 변수는 그대로 남습니다: {preview.unknown.join(", ")}</Notice>}
-          <pre class="code-block">{preview.text}</pre>
-        </>
-      )}
-      <h3>버전</h3>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>버전</th>
-            <th>메시지</th>
-            <th>작성자</th>
-            <th>시각</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {[...detail.versions].reverse().map((v) => (
-            <tr key={v.version}>
-              <td>
-                v{v.version} {detail.liveVersion === v.version && <Badge tone="green">배포 중</Badge>}
-              </td>
-              <td>{v.message || <span class="muted">-</span>}</td>
-              <td>{v.author}</td>
-              <td>{formatTime(v.createdAt)}</td>
-              <td class="actions">
-                <button class="small" onClick={() => setShown(v.version)}>
-                  보기
-                </button>
-                <button class="small" disabled={detail.liveVersion === v.version || action.busy} onClick={() => deploy(v.version)}>
-                  {live.name === props.name && live.version !== null && v.version < live.version ? "롤백" : "배포"}
-                </button>
-              </td>
+        {view === "edit" && (
+          <div class="form">
+            <textarea rows={20} class="mono" value={draft} onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)} />
+            <span class="muted small-text">변수: {variablesText(props.list.variables)}</span>
+            <div class="row">
+              <input
+                class="grow"
+                placeholder="변경 내용 (선택)"
+                value={message}
+                maxLength={200}
+                onInput={(e) => setMessage((e.currentTarget as HTMLInputElement).value)}
+              />
+              <button class="primary" disabled={action.busy || draft === latest.content} onClick={saveVersion}>
+                v{latest.version + 1}로 저장
+              </button>
+            </div>
+          </div>
+        )}
+        {view === "preview" && preview && (
+          <>
+            {preview.unknown.length > 0 && <Notice tone="warn">알 수 없는 변수는 그대로 남습니다: {preview.unknown.join(", ")}</Notice>}
+            <pre class="code-block">{preview.text}</pre>
+          </>
+        )}
+        <h3>버전</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>버전</th>
+              <th>메시지</th>
+              <th>작성자</th>
+              <th>시각</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {[...detail.versions].reverse().map((v) => (
+              <tr key={v.version}>
+                <td>
+                  v{v.version} {detail.liveVersion === v.version && <Badge tone="green">배포 중</Badge>}
+                </td>
+                <td>{v.message || <span class="muted">-</span>}</td>
+                <td>{v.author}</td>
+                <td>{formatTime(v.createdAt)}</td>
+                <td class="actions">
+                  <button class="small" onClick={() => setShown(v.version)}>
+                    보기
+                  </button>
+                  <button class="small" disabled={detail.liveVersion === v.version || action.busy} onClick={() => deploy(v.version)}>
+                    {live.name === props.name && live.version !== null && v.version < live.version ? "롤백" : "배포"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Modal>
       {shownVersion && (
         <Modal title={`${props.name} v${shownVersion.version}`} onClose={() => setShown(null)}>
           <pre class="code-block">{shownVersion.content}</pre>
         </Modal>
       )}
-    </Section>
+    </>
   );
 }
 

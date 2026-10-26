@@ -71,7 +71,7 @@ export function Section(props: { title: string; actions?: ComponentChildren; chi
 }
 
 /** 목록 위에 뜨는 편집·상세 창. ×나 Esc로 닫으면 onClose가 불린다. 머리는 두고 본문만 스크롤한다. */
-export function Modal(props: { title: string; actions?: ComponentChildren; onClose: () => void; children: ComponentChildren }) {
+export function Modal(props: { title: ComponentChildren; actions?: ComponentChildren; onClose: () => void; children: ComponentChildren }) {
   const ref = useRef<HTMLDialogElement>(null);
   // 그리기 전에 열어야 key가 바뀌어 다시 만들어질 때 깜빡이지 않는다
   useLayoutEffect(() => {
@@ -88,7 +88,10 @@ export function Modal(props: { title: string; actions?: ComponentChildren; onClo
           </button>
         </div>
       </header>
-      <div class="modal-body">{props.children}</div>
+      {/* 열면 본문에 초점을 둔다. 머리의 첫 버튼·스위치에 두면 Space로 스크롤하려다 그것이 눌린다. */}
+      <div class="modal-body" tabIndex={-1} autofocus>
+        {props.children}
+      </div>
     </dialog>
   );
 }
