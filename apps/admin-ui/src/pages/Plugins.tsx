@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { ApiError, api, enc, errorText, formatTime } from "../api";
+import { api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpServerList, PluginView } from "../types";
 
@@ -68,26 +68,10 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
   const action = useAction();
   const [url, setUrl] = useState("");
   const [ref, setRef] = useState("");
-  const [token, setToken] = useState("");
-  const [tokenUsername, setTokenUsername] = useState("");
-  /** git이 실패해 token을 물어보는 marketplace와 그때 바꾸려던 ref */
-  const [needsToken, setNeedsToken] = useState<{ name: string; ref?: string } | null>(null);
-  const [refreshToken, setRefreshToken] = useState("");
-  const [refreshUsername, setRefreshUsername] = useState("");
 
-  /** token 없이 먼저 해 보고, git이 실패하면 그 줄에서 token을 받는다 (비공개 저장소) */
-  const refresh = (name: string, body: { ref?: string; token?: string; tokenUsername?: string } = {}) =>
+  const refresh = (name: string, body: { ref?: string } = {}) =>
     action.run(async () => {
-      let result: { warnings: string[] };
-      try {
-        result = await api<{ warnings: string[] }>("POST", `/marketplaces/${enc(name)}/refresh`, body);
-      } catch (error) {
-        if (error instanceof ApiError && error.code === "git_failed") setNeedsToken({ name, ...(body.ref !== undefined ? { ref: body.ref } : {}) });
-        throw error;
-      }
-      setNeedsToken(null);
-      setRefreshToken("");
-      setRefreshUsername("");
+      const result = await api<{ warnings: string[] }>("POST", `/marketplaces/${enc(name)}/refresh`, body);
       await props.onChanged();
       return result;
     }, (r) => {
@@ -98,15 +82,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
   const add = (e: Event) => {
     e.preventDefault();
     void action.run(async () => {
-      const created = await api<MarketplaceView>("POST", "/marketplaces", {
-        url,
-        ...(ref ? { ref } : {}),
-        ...(token ? { token } : {}),
-        ...(tokenUsername ? { tokenUsername } : {}),
-      });
+      const created = await api<MarketplaceView>("POST", "/marketplaces", { url, ...(ref ? { ref } : {}) });
       setUrl("");
       setRef("");
-      setToken("");
       await props.onChanged();
       props.onSelect(created.name);
     }, "marketplace를 추가했습니다");
@@ -134,7 +112,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
               </td>
             </tr>
           )}
-          {props.marketplaces.map((m) => [
+          {props.marketplaces.map((m) => (
             <tr key={m.name}>
               <td>
                 <button class="link" onClick={() => props.onSelect(m.name)}>
@@ -182,56 +160,18 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
                   삭제
                 </button>
               </td>
-            </tr>,
-            needsToken?.name === m.name && (
-              <tr key={`${m.name}-token`}>
-                <td colSpan={6}>
-                  <form
-                    class="row wrap"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void refresh(m.name, { ...(needsToken.ref !== undefined ? { ref: needsToken.ref } : {}), token: refreshToken, ...(refreshUsername ? { tokenUsername: refreshUsername } : {}) });
-                    }}
-                  >
-                    <span class="small-text">비공개 저장소면 token을 넣고 다시 받으세요 (저장하지 않습니다). 매번 넣지 않으려면 gateway에 PLUGIN_GIT_TOKEN을 설정하세요.</span>
-                    <input
-                      type="password"
-                      autocomplete="off"
-                      placeholder="token"
-                      aria-label={`${m.name} token`}
-                      value={refreshToken}
-                      onInput={(e) => setRefreshToken(e.currentTarget.value)}
-                    />
-                    <input
-                      placeholder="token 사용자 (기본 x-access-token)"
-                      value={refreshUsername}
-                      onInput={(e) => setRefreshUsername(e.currentTarget.value)}
-                    />
-                    <button class="small primary" type="submit" disabled={action.busy || !refreshToken}>
-                      token으로 새로고침
-                    </button>
-                    <button class="small" type="button" onClick={() => setNeedsToken(null)}>
-                      닫기
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            ),
-          ])}
+            </tr>
+          ))}
         </tbody>
       </table>
       <form class="row wrap" onSubmit={add}>
         <input class="grow mono" placeholder="https://github.com/org/marketplace.git 또는 org/repo" value={url} onInput={(e) => setUrl((e.currentTarget as HTMLInputElement).value)} required />
         <input placeholder="branch·tag (선택)" value={ref} onInput={(e) => setRef((e.currentTarget as HTMLInputElement).value)} />
-        <input type="password" autocomplete="off" placeholder="token (비공개 저장소)" value={token} onInput={(e) => setToken((e.currentTarget as HTMLInputElement).value)} />
-        <input placeholder="token 사용자 (기본 x-access-token)" value={tokenUsername} onInput={(e) => setTokenUsername((e.currentTarget as HTMLInputElement).value)} />
         <button class="primary" type="submit" disabled={action.busy}>
           {action.busy ? "받는 중…" : "추가"}
         </button>
       </form>
-      <p class="muted small-text">
-        여기 넣은 token은 저장하지 않고 저장소를 받는 동안에만 씁니다. 비워 두면 gateway에 설정된 PLUGIN_GIT_TOKEN을 씁니다.
-      </p>
+      <p class="muted small-text">비공개 저장소는 gateway에 설정한 PLUGIN_GIT_TOKEN으로 받습니다 (운영 가이드 §4).</p>
     </Section>
   );
 }

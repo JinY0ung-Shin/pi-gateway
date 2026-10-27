@@ -176,15 +176,15 @@ describe("plugin installer (fixture marketplace)", () => {
   beforeAll(async () => {
     fx = buildFixture(tempDir("fixture"));
     broker = await startFakeBroker();
-    h = await buildHarness({ env: brokerEnv(broker.url) });
+    h = await buildHarness({ env: { ...brokerEnv(broker.url), PLUGIN_GIT_TOKEN: TOKEN } });
   });
   afterAll(async () => {
     await h?.close();
     await broker?.close();
   });
 
-  it("marketplace를 추가한다 (token은 저장하지 않는다)", async () => {
-    const res = await api("POST", "/admin/api/marketplaces", { url: fx.mkt, token: TOKEN });
+  it("marketplace를 추가한다 (설정된 token은 DB·로그에 남지 않는다)", async () => {
+    const res = await api("POST", "/admin/api/marketplaces", { url: fx.mkt });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ name: "defect-agent-plugins", commitSha: fx.mktSha, pluginCount: 7, invalidEntries: 1, owner: "monsemi" });
     expect(dbFilesContain(h.dbPath, TOKEN)).toBe(false);
@@ -454,7 +454,7 @@ describe("plugin 업데이트·broker 장애", () => {
       expect(harness.plugins.getPlugin(ID).update).toEqual({ version: "1.9.1" });
       const entry = harness.plugins.getMarketplace("defect-agent-plugins").plugins.find((p) => p.name === "defect-agent-frontend")!;
       expect(entry.installed).toMatchObject({ version: "1.9.0", update: { version: "1.9.1" } });
-      const { plugin } = await harness.plugins.update(ID, {}, "t");
+      const { plugin } = await harness.plugins.update(ID, "t");
       expect(plugin.version).toBe("1.9.1");
       expect(plugin.update).toBeUndefined();
       const after = harness.mcp.store.get("monsemi-frontend")!;
@@ -550,7 +550,7 @@ describe("plugin 업데이트·broker 장애", () => {
 
       expect(harness.plugins.getPlugin("remote@defect-agent-plugins").update).toEqual({ version: next.slice(0, 12) });
       expect(harness.plugins.getPlugin("subdir@defect-agent-plugins").update).toBeUndefined();
-      const { plugin } = await harness.plugins.update("remote@defect-agent-plugins", {}, "t");
+      const { plugin } = await harness.plugins.update("remote@defect-agent-plugins", "t");
       expect(plugin).toMatchObject({ version: next.slice(0, 12) });
       expect(plugin.update).toBeUndefined();
     } finally {
@@ -583,15 +583,18 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
-  it("입력한 token은 marketplace와 다른 곳의 plugin source로 보내지 않는다", async () => {
+  it("설정된 token은 marketplace에는 보내고 다른 곳의 plugin source로는 보내지 않는다", async () => {
     const fixture = buildFixture(tempDir("fixture-token-host"));
     const broker = await startFakeBroker();
-    const harness = await buildHarness({ env: brokerEnv(broker.url) });
+    const harness = await buildHarness({ env: { ...brokerEnv(broker.url), PLUGIN_GIT_TOKEN: TOKEN } });
     try {
-      await harness.plugins.addMarketplace({ url: `file://${fixture.mkt}` }, "t");
       vi.mocked(gitFetch).mockClear();
-      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "remote", token: TOKEN }, "t");
-      expect(vi.mocked(gitFetch).mock.calls.map(([options]) => [options.url, options.token])).toEqual([[fixture.remote, undefined]]);
+      await harness.plugins.addMarketplace({ url: `file://${fixture.mkt}` }, "t");
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "remote" }, "t");
+      expect(vi.mocked(gitFetch).mock.calls.map(([options]) => [options.url, options.token])).toEqual([
+        [`file://${fixture.mkt}`, TOKEN],
+        [fixture.remote, undefined],
+      ]);
     } finally {
       await harness.close();
       await broker.close();
@@ -612,7 +615,7 @@ describe("plugin 업데이트·broker 장애", () => {
       expect(harness.plugins.getPlugin(sid).enabled).toBe(true);
       await expect(harness.plugins.uninstall(sid, "t")).rejects.toMatchObject({ status: 503 });
       expect(harness.plugins.getPlugin(sid).version).toBe("0.1.0");
-      await expect(harness.plugins.update(sid, {}, "t")).rejects.toMatchObject({ status: 503 });
+      await expect(harness.plugins.update(sid, "t")).rejects.toMatchObject({ status: 503 });
       broker.setDown(false);
       expect(broker.servers.get("remote-docs")?.enabled).toBe(true);
       const removed = await harness.plugins.uninstall(sid, "t");
@@ -648,7 +651,7 @@ describe("plugin 업데이트·broker 장애", () => {
         for (const version of ["0.1.1", "0.1.2"]) {
           bump(version);
           await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
-          const { plugin, warnings } = await harness.plugins.update(sid, {}, "t");
+          const { plugin, warnings } = await harness.plugins.update(sid, "t");
           expect(plugin.version).toBe(version);
           expect(readlinkSync(join(pluginDir, "current"))).toBe(version);
           expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
@@ -690,7 +693,7 @@ describe("plugin 업데이트·broker 장애", () => {
       writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, "utf8")), version: "1.9.1" }));
       commitAll(fixture.mkt);
       await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t");
-      await expect(harness.plugins.update(ID, {}, "t")).rejects.toMatchObject({ status: 503 });
+      await expect(harness.plugins.update(ID, "t")).rejects.toMatchObject({ status: 503 });
       expect(harness.plugins.getPlugin(ID).version).toBe("1.9.0");
       expect(harness.mcp.store.get("monsemi-frontend")?.enabled).toBe(true);
       const afterUpdate = broker.refused.length;

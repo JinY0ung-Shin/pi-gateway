@@ -50,7 +50,7 @@ export interface ResolvedSource {
   path?: string;
   /** 설치한 커밋 (relative면 marketplace 커밋) */
   commit?: string;
-  /** 설치할 때 marketplace 항목에 적힌 버전 (null = 없음). git source에 업데이트가 있는지 볼 때 쓴다. */
+  /** 설치할 때 marketplace 항목에 적힌 버전 (null = 없음). git source에는 항상 있고, 업데이트가 있는지 볼 때 쓴다. */
   listedVersion?: string | null;
 }
 

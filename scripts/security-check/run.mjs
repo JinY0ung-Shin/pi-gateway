@@ -22,7 +22,6 @@
 //   --lan HOST:PORT        사내망 대상 (여러 번 가능, IP 또는 도메인). 결과는 INFO로만 낸다 (SANDBOX_EGRESS_ALLOW 확인용)
 //   --scan-secret-dir DIR  이 디렉토리의 파일 내용(비밀값)이 sandbox 어디에도 없는지 확인 (기본 /run/secrets)
 //   --out PATH             리포트 파일 (기본 stdout)
-//   --keep                 점검용 workspace(secchk-a, secchk-b)를 비우지 않는다. 컨테이너는 어느 쪽이든 유휴 시간이 지나면 정리된다
 //
 // 종료 코드: 0 = 실패 없음, 1 = FAIL·INVALID·WARN 있음, 2 = 점검을 돌리지 못함
 
@@ -33,7 +32,7 @@ import { join } from "node:path";
 
 // ── 인자 ────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const opt = { url: "http://127.0.0.1:7070", internal: [], egress: null, scanDir: "/run/secrets", keep: false, hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
+const opt = { url: "http://127.0.0.1:7070", internal: [], egress: null, scanDir: "/run/secrets", hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   const next = () => {
@@ -50,7 +49,6 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--lan") opt.lan.push(next());
   else if (a === "--scan-secret-dir") opt.scanDir = next();
   else if (a === "--out") opt.out = next();
-  else if (a === "--keep") opt.keep = true;
   else if (a === "--help" || a === "-h") {
     process.stdout.write(readFileSync(new URL(import.meta.url)).toString().split("\n").filter((l) => l.startsWith("//")).join("\n") + "\n");
     process.exit(0);
@@ -568,7 +566,7 @@ function render(meta) {
   lines.push("## 요약", "");
   lines.push(`- 결과: **${failed === 0 ? "통과" : "실패"}** — PASS ${count("PASS")}, FAIL ${count("FAIL")}, WARN ${count("WARN")}, INVALID ${count("INVALID")}, INFO ${count("INFO")}`);
   lines.push(`- 점검 시각: ${meta.started.toISOString()} ~ ${meta.finished.toISOString()}`);
-  lines.push(`- 대상: sandboxd ${opt.url}, 점검용 사용자 \`${A}\`, \`${B}\` (점검 후 workspace ${opt.keep ? "보존" : "비움"})`);
+  lines.push(`- 대상: sandboxd ${opt.url}, 점검용 사용자 \`${A}\`, \`${B}\` (점검 후 workspace 비움)`);
   lines.push("- 방법: 각 사용자 sandbox 안에서 실제 명령으로 접근을 시도했다. 차단 항목마다 대조군(격리가 없으면 보였을 것)을 함께 확인했다. 대조군이 실패한 항목은 INVALID로 표시하고 실패로 센다.", "");
   lines.push("## 결과", "");
   lines.push("| 영역 | 점검 | 결과 | 근거 | 대조군 |", "|---|---|---|---|---|");
@@ -598,8 +596,6 @@ try {
   process.stderr.write(`security-check could not run: ${err instanceof Error ? err.message : err}\n`);
   exitCode = 2;
 } finally {
-  if (!opt.keep) {
-    for (const u of [A, B]) await sh(u, "find /workspace -mindepth 1 -delete 2>/dev/null; true").catch(() => undefined);
-  }
+  for (const u of [A, B]) await sh(u, "find /workspace -mindepth 1 -delete 2>/dev/null; true").catch(() => undefined);
 }
 process.exit(exitCode);

@@ -16,11 +16,8 @@ export interface MarketplaceEntry {
   name: string;
   description?: string;
   version?: string;
-  /**
-   * relative plugin의 plugin.json 버전 (null = 버전 없음). marketplace를 받을 때 읽어 두고 설치본과 비교한다.
-   * undefined면 이 값을 읽기 전에 받은 marketplace다.
-   */
-  pluginVersion?: string | null;
+  /** relative plugin의 plugin.json 버전 (null = 버전 없음·relative 아님). marketplace를 받을 때 읽어 두고 설치본과 비교한다. */
+  pluginVersion: string | null;
   source: PluginSource;
   raw: JsonObject;
 }
@@ -83,6 +80,7 @@ function parseEntry(raw: unknown): MarketplaceEntry {
     name,
     ...(description ? { description } : {}),
     ...(version ? { version } : {}),
+    pluginVersion: null,
     source: parseSource(raw.source),
     raw,
   };

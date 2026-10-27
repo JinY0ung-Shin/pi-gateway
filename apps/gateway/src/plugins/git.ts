@@ -3,13 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PlatformError } from "../admin/errors.js";
 
-export interface GitAuth {
-  token?: string | undefined;
-  /** 기본값 `x-access-token` (GitHub). GitLab은 `oauth2`. */
-  username?: string | undefined;
-}
-
-export interface GitFetchOptions extends GitAuth {
+export interface GitFetchOptions {
   url: string;
   ref?: string | undefined;
   sha?: string | undefined;
@@ -18,6 +12,7 @@ export interface GitFetchOptions extends GitAuth {
   tmpRoot: string;
   allowLocal: boolean;
   timeoutMs?: number | undefined;
+  token?: string | undefined;
 }
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -27,7 +22,7 @@ const GITHUB_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /**
  * git 원격 주소를 검사하고 정규화한다.
  * - https/http만 허용한다. 로컬 경로와 file://은 allowLocal일 때만 허용한다.
- * - URL에 들어 있는 사용자 이름·비밀번호는 거부한다 (token 필드를 쓴다).
+ * - URL에 들어 있는 사용자 이름·비밀번호는 거부한다 (PLUGIN_GIT_TOKEN을 쓴다).
  * - SSH(`git@host:…`)와 그 밖의 transport(ext:: 등)는 거부한다.
  * - `owner/repo`는 GitHub 주소로 바꾼다.
  */
@@ -39,7 +34,7 @@ export function normalizeGitUrl(input: string, allowLocal: boolean): string {
     if (!allowLocal) throw new PlatformError(400, "invalid_url", "local paths are not allowed");
     return s;
   }
-  if (/^[^/:@\s]+@[^/:\s]+:/.test(s)) throw new PlatformError(400, "invalid_url", "SSH URLs are not supported; use an https URL and a token");
+  if (/^[^/:@\s]+@[^/:\s]+:/.test(s)) throw new PlatformError(400, "invalid_url", "SSH URLs are not supported; use an https URL (and PLUGIN_GIT_TOKEN for private repositories)");
   let url: URL;
   try {
     url = new URL(s);
@@ -54,7 +49,7 @@ export function normalizeGitUrl(input: string, allowLocal: boolean): string {
     throw new PlatformError(400, "invalid_url", `unsupported git URL protocol '${url.protocol}'`);
   }
   if (url.username || url.password) {
-    throw new PlatformError(400, "credentials_in_url", "do not put credentials in the URL; use the token field instead");
+    throw new PlatformError(400, "credentials_in_url", "do not put credentials in the URL; set PLUGIN_GIT_TOKEN instead");
   }
   return url.toString();
 }
@@ -109,7 +104,7 @@ interface GitContext {
   secrets: string[];
 }
 
-async function prepareEnv(work: string, auth: GitAuth & { allowLocal: boolean }): Promise<GitContext> {
+async function prepareEnv(work: string, auth: Pick<GitFetchOptions, "token" | "allowLocal">): Promise<GitContext> {
   const home = join(work, "home");
   await mkdir(home, { recursive: true, mode: 0o700 });
   const env: NodeJS.ProcessEnv = {
@@ -130,13 +125,13 @@ async function prepareEnv(work: string, auth: GitAuth & { allowLocal: boolean })
     const askpass = join(work, "askpass.sh");
     await writeFile(
       askpass,
-      '#!/bin/sh\ncase "$1" in\n  Username*) printf \'%s\\n\' "$PI_GW_GIT_USERNAME" ;;\n  *) printf \'%s\\n\' "$PI_GW_GIT_TOKEN" ;;\nesac\n',
+      // 사용자 이름은 GitHub 형식(x-access-token)으로 고정한다.
+      '#!/bin/sh\ncase "$1" in\n  Username*) echo x-access-token ;;\n  *) printf \'%s\\n\' "$PI_GW_GIT_TOKEN" ;;\nesac\n',
       { mode: 0o700 },
     );
     await chmod(askpass, 0o700);
     env.GIT_ASKPASS = askpass;
     env.PI_GW_GIT_TOKEN = auth.token;
-    env.PI_GW_GIT_USERNAME = auth.username || "x-access-token";
     secrets.push(auth.token);
   }
   return { env, secrets };

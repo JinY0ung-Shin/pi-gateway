@@ -41,22 +41,16 @@ const envKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const AddMarketplaceInput = z.object({
   url: z.string().min(1).max(2048),
   ref: z.string().max(200).optional(),
-  token: z.string().max(4096).optional(),
-  tokenUsername: z.string().max(100).optional(),
 });
 
 const RefreshMarketplaceInput = z.object({
   /** 주면 branch·tag를 바꾸고 이 marketplace에서 설치한 plugin을 다시 설치한다. 빈 문자열은 기본 브랜치. */
   ref: z.string().max(200).optional(),
-  token: z.string().max(4096).optional(),
-  tokenUsername: z.string().max(100).optional(),
 });
 
 const InstallInput = z.object({
   marketplace: z.string().min(1),
   plugin: z.string().min(1),
-  token: z.string().max(4096).optional(),
-  tokenUsername: z.string().max(100).optional(),
 });
 
 const SettingsInput = z.object({
@@ -291,7 +285,7 @@ export class PluginService implements PluginResources {
     const actor = normalizeActor(actorInput);
     return this.#exclusive(async () => {
       const url = normalizeGitUrl(req.url, this.#allowLocal);
-      const { dir, commit, manifest, work } = await this.#cloneMarketplace(url, req.ref, req);
+      const { dir, commit, manifest, work } = await this.#cloneMarketplace(url, req.ref);
       try {
         if (this.store.getMarketplace(manifest.name)) {
           throw conflict("exists", `marketplace '${manifest.name}' already exists; refresh it instead`);
@@ -321,7 +315,7 @@ export class PluginService implements PluginResources {
       const record = this.store.getMarketplace(name);
       if (!record) throw notFound(`marketplace '${name}' not found`);
       const ref = req.ref === undefined ? record.ref : req.ref || null;
-      const { dir, commit, manifest, work } = await this.#cloneMarketplace(record.url, ref ?? undefined, req);
+      const { dir, commit, manifest, work } = await this.#cloneMarketplace(record.url, ref ?? undefined);
       try {
         if (manifest.name !== name) {
           throw conflict("name_changed", `the repository now declares marketplace '${manifest.name}' instead of '${name}'`);
@@ -332,9 +326,8 @@ export class PluginService implements PluginResources {
         const warnings: string[] = [];
         if (req.ref !== undefined) {
           for (const plugin of this.store.listPlugins().filter((p) => p.marketplace === name)) {
-            const auth = { ...(req.token ? { token: req.token } : {}), ...(req.tokenUsername ? { tokenUsername: req.tokenUsername } : {}) };
             try {
-              const result = await this.#install({ marketplace: name, plugin: plugin.name, ...auth }, actor);
+              const result = await this.#install({ marketplace: name, plugin: plugin.name }, actor);
               warnings.push(...result.warnings.map((w) => `${plugin.id}: ${w}`));
             } catch (error) {
               warnings.push(`${plugin.id}: 다시 설치하지 못해 그대로 둡니다 (${describe(error)})`);
@@ -391,11 +384,10 @@ export class PluginService implements PluginResources {
   }
 
   /** marketplace의 현재 내용으로 다시 설치한다 (먼저 marketplace를 새로고침해야 새 버전이 보인다). */
-  update(id: string, input: unknown, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
+  update(id: string, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
     const record = this.store.getPlugin(id);
     if (!record) throw notFound(`plugin '${id}' not found`);
-    const extra = (input ?? {}) as Record<string, unknown>;
-    return this.install({ ...extra, marketplace: record.marketplace, plugin: record.name }, actorInput);
+    return this.install({ marketplace: record.marketplace, plugin: record.name }, actorInput);
   }
 
   setEnabled(id: string, enabled: boolean, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
@@ -445,7 +437,7 @@ export class PluginService implements PluginResources {
     const staging = join(this.#pluginsDir, ".staging", randomId());
     const warnings: string[] = [];
     try {
-      const { dir: sourceDir, resolved } = await this.#fetchSource(entry, marketplace, req, work);
+      const { dir: sourceDir, resolved } = await this.#fetchSource(entry, marketplace, work);
       const manifest = await readPluginManifest(sourceDir);
       const version = safeVersion(
         str(manifest ?? {}, "version") ?? entry.version ?? resolved.commit?.slice(0, 12) ?? "unknown",
@@ -526,7 +518,6 @@ export class PluginService implements PluginResources {
   async #fetchSource(
     entry: MarketplaceEntry,
     marketplace: MarketplaceRecord,
-    auth: { token?: string | undefined; tokenUsername?: string | undefined },
     work: string,
   ): Promise<{ dir: string; resolved: ResolvedSource }> {
     const source = entry.source;
@@ -548,9 +539,8 @@ export class PluginService implements PluginResources {
       tmpRoot: work,
       allowLocal: this.#allowLocal,
       timeoutMs: this.#gitTimeoutMs,
-      // token(입력한 것이든 설정된 것이든)은 marketplace와 같은 호스트에만 보낸다 (marketplace.json이 가리키는 다른 서버로 새지 않게)
-      token: sameHost(url, marketplace.url) ? (auth.token ?? this.#gitToken) : undefined,
-      username: auth.tokenUsername,
+      // token은 marketplace와 같은 호스트에만 보낸다 (marketplace.json이 가리키는 다른 서버로 새지 않게)
+      token: sameHost(url, marketplace.url) ? this.#gitToken : undefined,
     });
     const pins = { ...(source.ref ? { ref: source.ref } : {}), ...(source.sha ? { sha: source.sha } : {}), listedVersion: entry.version ?? null };
     if (source.type === "git-subdir") {
@@ -720,11 +710,7 @@ export class PluginService implements PluginResources {
     return !(current.source.kind === "plugin" && current.source.pluginId === pluginId);
   }
 
-  async #cloneMarketplace(
-    url: string,
-    ref: string | undefined,
-    auth: { token?: string | undefined; tokenUsername?: string | undefined },
-  ): Promise<{ dir: string; commit: string; manifest: MarketplaceManifest; work: string }> {
+  async #cloneMarketplace(url: string, ref: string | undefined): Promise<{ dir: string; commit: string; manifest: MarketplaceManifest; work: string }> {
     await mkdir(this.#workDir, { recursive: true });
     const work = await mkdtemp(join(this.#workDir, "marketplace-"));
     try {
@@ -736,8 +722,7 @@ export class PluginService implements PluginResources {
         tmpRoot: work,
         allowLocal: this.#allowLocal,
         timeoutMs: this.#gitTimeoutMs,
-        token: auth.token ?? this.#gitToken,
-        username: auth.tokenUsername,
+        token: this.#gitToken,
       });
       const manifest = await readMarketplaceManifest(dir);
       return { dir, commit, manifest, work };
@@ -841,13 +826,12 @@ function updateOf(record: PluginRecord, marketplace: MarketplaceRecord | undefin
   const entry = marketplace?.manifest.plugins.find((p) => p.name === record.name);
   if (!marketplace || !entry || entry.source.type === "unsupported") return {};
   if (entry.source.type === "relative") {
-    if (entry.pluginVersion === undefined) return {};
     const version = safeVersion(entry.pluginVersion ?? entry.version ?? marketplace.commitSha.slice(0, 12));
     return version === record.version ? {} : { update: { version } };
   }
   const { sha } = entry.source;
   const listed = record.source.listedVersion;
-  const moved = (sha !== undefined && sha !== record.source.commit) || (listed !== undefined && (entry.version ?? null) !== listed);
+  const moved = (sha !== undefined && sha !== record.source.commit) || (entry.version ?? null) !== listed;
   return moved ? { update: { version: safeVersion(entry.version ?? sha?.slice(0, 12) ?? "latest") } } : {};
 }
 

@@ -146,7 +146,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/api_key` | 10001 | gateway | 서비스 키 (`body.user`를 믿는다, BFF용). 빈 파일이면 끈다 |
 | `gateway/user_api_keys` | 10001 | gateway | `{"사용자":"키"}`. 키가 사용자를 정한다 |
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |
-| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token. 관리 화면에서 token을 넣지 않으면 이 값을 쓴다. token은 관리 화면에서 넣은 것이든 이 값이든 marketplace와 같은 호스트에만 보낸다. 빈 파일이면 쓰지 않는다 |
+| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token (사용자 이름은 `x-access-token`). marketplace와 같은 호스트에만 보낸다. 빈 파일이면 쓰지 않는다 |
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
@@ -334,7 +334,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
   - 대조군이 실패하면 그 항목은 `INVALID`이고 실패로 센다. 검사 방법이 틀려서 통과하는 일을 막기 위해서다.
 - sandbox의 `/etc/resolv.conf`에는 Docker가 호스트의 nameserver·search domain을 그대로 넣는다. sandbox에는 네트워크가 없어 그 주소로 갈 수는 없지만 사내 DNS 주소는 보인다. 운영 서버에서 돌린 리포트의 "/etc 내용" 상세에서 무엇이 보이는지 확인한다.
 - `WARN`(허용 목록이 호스트 주소를 열어 둔 항목 등)도 실패로 센다.
-- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--keep`(점검용 workspace 보존).
+- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가).
 
 ## 9. 운영 메모
 
