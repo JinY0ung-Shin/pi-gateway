@@ -144,6 +144,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
               </td>
               <td>{formatTime(m.refreshedAt)}</td>
               <td class="actions">
+                <button class="small" onClick={() => props.onSelect(m.name)}>
+                  plugin 설치
+                </button>
                 <button class="small" disabled={action.busy} onClick={() => void refresh(m.name)}>
                   새로고침
                 </button>
