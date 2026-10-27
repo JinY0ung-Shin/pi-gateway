@@ -196,8 +196,6 @@ services:
       TURN_QUEUE_MAX_WAITERS: ${TURN_QUEUE_MAX_WAITERS:-256}
       SSE_KEEPALIVE_SECONDS: ${SSE_KEEPALIVE_SECONDS:-15}
       # MCP·프롬프트·plugin
-      # 값 없이 키만 적은 변수는 .env에 있을 때만 넘어간다 (빈 문자열과 '설정 안 함'을 구분하는 변수)
-      MCP_FORWARD_HEADERS:
       MCP_METADATA_KEYS: ${MCP_METADATA_KEYS:-THREAD_ID,ORCHESTRATOR_URL}
       PROMPT_LANGUAGE: ${PROMPT_LANGUAGE:-Korean}
       # 앞단 프록시 (docs/OPERATIONS.md §3.4)

@@ -11,7 +11,7 @@ import { z } from "zod";
  *
  * 템플릿 자리표시자 (transport의 문자열 값 안에서만 쓴다):
  *   {{secret:NAME}}      broker 비밀 저장소 값              — broker만
- *   {{ctx.header:NAME}}  클라이언트가 보낸 헤더(allowlist)    — broker만 (사용자 토큰이 agent에게 보이면 안 되므로)
+ *   {{ctx.header:NAME}}  클라이언트가 보낸 헤더               — broker만 (사용자 토큰이 agent에게 보이면 안 되므로)
  *   {{user}}             principal
  *   {{session}}          gateway 세션 id
  *   {{metadata:KEY}}     요청 metadata(allowlist)
@@ -133,6 +133,13 @@ export function collectTemplateRefs(config: Pick<McpServerConfig, "transport">):
 export function requiredSecretNames(config: Pick<McpServerConfig, "transport">): string[] {
   const names = new Set<string>();
   for (const ref of collectTemplateRefs(config).refs) if (ref.kind === "secret") names.add(ref.name);
+  return [...names].sort();
+}
+
+/** 설정이 {{ctx.header:…}}로 쓰는 클라이언트 헤더 이름 (소문자) */
+export function requiredHeaderNames(config: Pick<McpServerConfig, "transport">): string[] {
+  const names = new Set<string>();
+  for (const ref of collectTemplateRefs(config).refs) if (ref.kind === "header") names.add(ref.name);
   return [...names].sort();
 }
 

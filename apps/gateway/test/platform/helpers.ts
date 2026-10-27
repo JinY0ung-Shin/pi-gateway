@@ -116,7 +116,7 @@ export async function buildHarness(options: {
     mcp,
     stats: () => ({ liveSessions: 2, activeTurns: 1, queuedTurns: 0 }),
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
-    chat: { respond: async () => ({}), cancel: async () => ({}), preview: async () => ({}) },
+    chat: { respond: async () => ({}), cancel: async () => ({}), preview: async () => ({}), forwardHeaders: () => mcp.forwardHeaders() },
     llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },
     sessions: new SessionStore(db),
     toolSettings: new ToolSettings(db),

@@ -173,6 +173,16 @@ describe("MCP registry", () => {
     broker = await startFakeBroker(); // afterEach가 닫을 수 있게
   });
 
+  it("forwardHeaders는 broker 서버 설정의 {{ctx.header}} 이름이고, 서버를 바꾸면 다시 읽는다", async () => {
+    h = await buildHarness({ env: brokerEnv(broker.url) });
+    expect(await h.mcp.forwardHeaders()).toEqual([]);
+    const foo = { ...brokerServer, id: "foo", transport: { type: "http", url: "https://foo.example.com/mcp", headers: { "X-Api-Key": "{{ctx.header:X-Foo-Token}}" } } };
+    await h.mcp.upsert(foo, "t");
+    expect(await h.mcp.forwardHeaders()).toEqual(["x-foo-token"]);
+    await h.mcp.remove("foo", "t");
+    expect(await h.mcp.forwardHeaders()).toEqual([]);
+  });
+
   it("sandbox 서버에 리터럴 자격증명을 넣으면 400이고, broker+{{secret}}을 쓰라고 알려준다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     const literal = { ...sandboxServer, transport: { ...sandboxServer.transport, env: { GITHUB_TOKEN: "ghp_literal_value_123" } } };

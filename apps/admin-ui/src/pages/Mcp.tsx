@@ -161,7 +161,7 @@ function Placeholders() {
           </tr>
           <tr>
             <td class="mono">{"{{ctx.header:NAME}}"}</td>
-            <td>클라이언트 요청 헤더 (MCP_FORWARD_HEADERS 허용분, broker 서버만)</td>
+            <td>클라이언트 요청 헤더 (broker 서버만)</td>
           </tr>
           <tr>
             <td class="mono">{"{{user}}"}</td>

@@ -7,7 +7,7 @@ import type { GatewayModels } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
-import type { PluginResources, PromptService } from "../contracts.js";
+import type { McpRegistry, PluginResources, PromptService } from "../contracts.js";
 import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError } from "../errors.js";
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
@@ -31,6 +31,7 @@ export interface ResponsesDeps {
   models: GatewayModels;
   prompts: PromptService;
   plugins: PluginResources;
+  mcpRegistry: McpRegistry;
   log: Logger;
 }
 
@@ -39,10 +40,10 @@ const USER_CANCELLED = "user_cancelled";
 
 const notFoundSession = (prev: string) => notFound(`Session for previous_response_id '${prev}' not found or expired`);
 
-function requestContext(headers: IncomingHttpHeaders, metadata: Record<string, string> | null | undefined, config: GatewayConfig): RequestContext {
+async function requestContext(headers: IncomingHttpHeaders, metadata: Record<string, string> | null | undefined, deps: ResponsesDeps): Promise<RequestContext> {
   const ctx: RequestContext = {};
   const forwarded: Record<string, string> = {};
-  for (const name of config.mcp.forwardHeaders) {
+  for (const name of await deps.mcpRegistry.forwardHeaders()) {
     const v = headers[name];
     if (v === undefined) continue;
     forwarded[name] = Array.isArray(v) ? v.join(", ") : v;
@@ -50,7 +51,7 @@ function requestContext(headers: IncomingHttpHeaders, metadata: Record<string, s
   if (Object.keys(forwarded).length > 0) ctx.headers = forwarded;
   if (metadata) {
     const picked: Record<string, string> = {};
-    for (const key of config.mcp.metadataKeys) if (typeof metadata[key] === "string") picked[key] = metadata[key];
+    for (const key of deps.config.mcp.metadataKeys) if (typeof metadata[key] === "string") picked[key] = metadata[key];
     if (Object.keys(picked).length > 0) ctx.metadata = picked;
   }
   return ctx;
@@ -286,7 +287,7 @@ async function runLocked(
 
   let live: LiveSession;
   try {
-    live = await deps.hub.acquire(record, abort.signal, requestContext(req.headers, plan.body.metadata, deps.config));
+    live = await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, plan.body.metadata, deps));
   } catch (err) {
     if (plan.isNew) await deps.hub.discardLocked(record.id);
     if (err instanceof SessionTranscriptMissingError) {

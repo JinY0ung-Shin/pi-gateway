@@ -106,6 +106,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     models,
     prompts,
     plugins,
+    mcpRegistry,
     log: logger.child({ component: "responses" }),
   };
   const app = await buildServer({
@@ -131,6 +132,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),
         preview: (req, reply) => sendApiErrors(reply, () => previewSession(responses, req.body)),
+        forwardHeaders: () => mcpRegistry.forwardHeaders(),
       },
     },
     registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,

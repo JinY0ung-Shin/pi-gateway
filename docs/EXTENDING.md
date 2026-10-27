@@ -79,7 +79,7 @@ workspace 파일을 다루는 서버 (sandbox) — 예: `monsemi-frontend`:
 | 자리표시자 | 값 | broker | sandbox |
 |---|---|---|---|
 | `{{secret:NAME}}` | broker 비밀 저장소 값 | ✅ | ❌ |
-| `{{ctx.header:NAME}}` | 클라이언트가 보낸 헤더 (`MCP_FORWARD_HEADERS` allowlist) | ✅ | ❌ |
+| `{{ctx.header:NAME}}` | 클라이언트가 보낸 헤더 | ✅ | ❌ |
 | `{{user}}` | 사용자 id | ✅ | ✅ |
 | `{{session}}` | gateway 세션 id | ✅ | ✅ |
 | `{{metadata:KEY}}` | 요청 metadata (`MCP_METADATA_KEYS` allowlist) | ✅ | ✅ |
@@ -92,8 +92,7 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 
 예: `foo` 서버가 `JSESSIONID` 쿠키를 요구할 때
 
-1. `.env`에 헤더 이름을 넣고 gateway를 재시작해요: `MCP_FORWARD_HEADERS=x-foo-session`
-2. broker 서버로 등록해요.
+1. broker 서버로 등록하고, 값이 들어갈 자리에 `{{ctx.header:<받을 요청 헤더 이름>}}`을 써요. 설정에 쓴 헤더만 broker로 넘어가요. 따로 허용 목록을 둘 필요가 없고 재시작도 필요 없어요.
 
    ```json
    {
@@ -107,12 +106,13 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
    }
    ```
 
-3. 클라이언트가 모든 `/v1/responses` 요청에 `X-Foo-Session: <쿠키 값>`을 붙여요. `previous_response_id`로 이어가는 요청과 AskUserQuestion 답(`function_call_output`)도 마찬가지예요. 가장 최근 요청의 값을 써요.
+2. 클라이언트가 모든 `/v1/responses` 요청에 `X-Foo-Session: <쿠키 값>`을 붙여요. `previous_response_id`로 이어가는 요청과 AskUserQuestion 답(`function_call_output`)도 마찬가지예요. 가장 최근 요청의 값을 써요.
 
 - 브라우저의 `Cookie` 헤더를 통째로 넘기지 말고 필요한 값 하나만 보내요. broker는 넘겨받은 헤더 값 전체를 도구 결과에서 가리므로, 값이 하나일 때 정확히 가려져요.
 - `metadata`에는 넣지 않아요. metadata는 sandbox MCP 서버에도 가요.
 - 세션을 처음 열 때 값이 없어 서버가 도구 목록 요청을 거절하면, 그 서버 도구는 세션이 유휴 정리(`SESSION_IDLE_SECONDS`)된 뒤 다시 열릴 때까지 빠져요.
 - MCP 서버가 `Set-Cookie`로 준 새 쿠키는 클라이언트로 돌아가지 않아요. 만료되면 클라이언트가 새 값을 보내야 해요.
+- plugin이 등록한 서버의 `{{secret:NAME}}`이 사실은 사용자마다 다른 값이면, MCP 페이지에서 그 헤더 값을 `{{ctx.header:…}}`로 바꿔요. 비밀키 목록에서 빠지고, 바꾼 값은 plugin을 업데이트해도 유지돼요.
 - MCP 페이지의 연결 확인은 쿠키 없이 해요. 관리 화면 채팅의 헤더 입력칸에 값을 넣어 확인해요.
 
 ### 모델에 보이는 이름

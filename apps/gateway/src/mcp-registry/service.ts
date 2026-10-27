@@ -5,6 +5,7 @@ import {
   findLiteralCredentials,
   McpServerConfig,
   PutSecretRequest,
+  requiredHeaderNames,
   requiredScope,
   requiredSecretNames,
   SecretName,
@@ -80,6 +81,8 @@ export class McpRegistryService implements McpRegistry {
   readonly #broker: BrokerClient;
   readonly #log: Logger;
   readonly #pluginsDir: string;
+  /** forwardHeaders 결과. broker 서버를 바꾸면 비운다 (broker 서버는 이 gateway로만 바뀐다). */
+  #forwardHeaders: Promise<string[]> | undefined;
 
   constructor(db: Db, config: Pick<GatewayConfig, "broker" | "pluginsDir">, log: Logger) {
     this.store = new SandboxServerStore(db, log);
@@ -101,6 +104,22 @@ export class McpRegistryService implements McpRegistry {
       this.#log.warn({ err: describe(error) }, "could not list MCP servers from the broker; continuing without them");
       return [];
     }
+  }
+
+  forwardHeaders(): Promise<string[]> {
+    if (!this.#forwardHeaders) {
+      const loading: Promise<string[]> = this.#broker.listServers().then(
+        (views) => [...new Set(views.flatMap((v) => requiredHeaderNames(v.config)))].sort(),
+        (error) => {
+          // 실패는 기억하지 않는다. 다음 요청이 다시 묻는다.
+          if (this.#forwardHeaders === loading) this.#forwardHeaders = undefined;
+          this.#log.warn({ err: describe(error) }, "could not list MCP servers from the broker; forwarding no client headers");
+          return [];
+        },
+      );
+      this.#forwardHeaders = loading;
+    }
+    return this.#forwardHeaders;
   }
 
   // ── 관리 ───────────────────────────────────────────────────────
@@ -154,10 +173,11 @@ export class McpRegistryService implements McpRegistry {
       // (id는 한 저장소에만 둔다). broker가 안 되면 503이다.
       const remote = this.store.get(config.id) ? undefined : await this.#brokerEntry(config.id);
       this.store.upsert(config, actor);
-      if (remote) await this.#broker.deleteServer(config.id, actor);
+      if (remote) await this.#deleteBrokerServer(config.id, actor);
       return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
     }
     const view = await this.#broker.putServer(config, actor);
+    this.#forwardHeaders = undefined;
     this.store.delete(config.id);
     return toEntry(view);
   }
@@ -165,7 +185,7 @@ export class McpRegistryService implements McpRegistry {
   async remove(id: string, actor: string): Promise<void> {
     // sandbox 서버의 id는 broker에 없다 (upsert가 한 저장소에만 둔다).
     if (this.store.delete(id)) return;
-    if (!(await this.#broker.deleteServer(id, actor))) throw notFound(`MCP server '${id}' not found`);
+    if (!(await this.#deleteBrokerServer(id, actor))) throw notFound(`MCP server '${id}' not found`);
   }
 
   async setSecret(id: string, name: unknown, body: unknown, actor: string): Promise<void> {
@@ -258,7 +278,7 @@ export class McpRegistryService implements McpRegistry {
     if (options.broker !== false) {
       for (const view of await this.#broker.listServers()) {
         if (view.config.source.kind === "plugin" && view.config.source.pluginId === pluginId) {
-          await this.#broker.deleteServer(view.config.id, actor);
+          await this.#deleteBrokerServer(view.config.id, actor);
           removed.push(view.config.id);
         }
       }
@@ -271,6 +291,12 @@ export class McpRegistryService implements McpRegistry {
   }
 
   // ── 내부 ───────────────────────────────────────────────────────
+
+  async #deleteBrokerServer(id: string, actor: string): Promise<boolean> {
+    const deleted = await this.#broker.deleteServer(id, actor);
+    this.#forwardHeaders = undefined;
+    return deleted;
+  }
 
   /** broker의 서버 하나 (없으면 undefined). broker가 안 되면 503. */
   async #brokerEntry(id: string): Promise<McpServerEntry | undefined> {

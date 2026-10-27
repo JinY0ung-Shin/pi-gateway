@@ -43,8 +43,6 @@ export interface GatewayConfig {
     nonStreamTimeoutSeconds: number;
   };
   mcp: {
-    /** broker JWT ctx.headers로 넘길 클라이언트 헤더 이름 (소문자) */
-    forwardHeaders: string[];
     /** MCP 템플릿에서 쓸 수 있는 요청 metadata 키 */
     metadataKeys: string[];
   };
@@ -168,7 +166,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       nonStreamTimeoutSeconds: int("NON_STREAM_TIMEOUT_SECONDS", 600, env),
     },
     mcp: {
-      forwardHeaders: list(env.MCP_FORWARD_HEADERS).map((h) => h.toLowerCase()),
       metadataKeys: list(env.MCP_METADATA_KEYS),
     },
     prompts: { language: env.PROMPT_LANGUAGE || "Korean" },

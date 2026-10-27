@@ -85,7 +85,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     DATA_DIR: dataDir,
     PLUGINS_DIR: join(dataDir, "plugins"),
     TURN_QUEUE_TIMEOUT_SECONDS: "1",
-    MCP_FORWARD_HEADERS: "x-user-token",
     MCP_METADATA_KEYS: "thread_id",
     SSE_KEEPALIVE_SECONDS: "1",
     LOG_LEVEL: "silent",
@@ -108,6 +107,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     sandboxServers: () => options.sandboxServers ?? [],
     brokerServersFor: async (): Promise<VisibleServer[]> =>
       Object.keys(options.brokerServers ?? {}).map((id) => ({ id, displayName: id, timeoutSec: 30 })),
+    forwardHeaders: async () => ["x-user-token"],
   };
   const gateway = await createGateway(config, pino({ level: "silent" }), {
     db: openDatabase(":memory:"),

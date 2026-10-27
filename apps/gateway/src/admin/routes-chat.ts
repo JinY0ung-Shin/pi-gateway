@@ -9,7 +9,7 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AdminContext): voi
     models: llm.list().map((m) => ({ id: m.id, name: m.name ?? m.id, reasoning: m.reasoning, image: m.input.includes("image") })),
     defaultModel: llm.defaultModel() ?? null,
     /** MCP 템플릿 {{ctx.header:NAME}}로 넘어가는 헤더. 채팅 화면이 요청 헤더로 보낸다. */
-    forwardHeaders: config.mcp.forwardHeaders,
+    forwardHeaders: await chat.forwardHeaders(),
     /** MCP 템플릿 {{metadata:KEY}}로 넘어가는 metadata 키 */
     metadataKeys: config.mcp.metadataKeys,
   }));

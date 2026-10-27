@@ -66,6 +66,11 @@ export interface McpRegistry {
    * 호출이 실패하면 빈 배열을 돌려주고 경고 로그를 남긴다.
    */
   brokerServersFor(principal: string, sessionId: string): Promise<VisibleServer[]>;
+  /**
+   * broker JWT ctx.headers로 넘길 클라이언트 헤더 이름 (소문자): broker 서버 설정이 `{{ctx.header:NAME}}`으로 쓰는 것.
+   * broker에 묻지 못하면 빈 배열을 돌려주고 경고 로그를 남긴다.
+   */
+  forwardHeaders(): Promise<string[]>;
 }
 
 // ── 관리 화면 (구현: src/admin) ────────────────────────────────────
@@ -97,6 +102,8 @@ export interface AdminDeps {
     cancel: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
     /** body `{ user, model? }`로 새 세션을 열면 모델이 받는 시스템 프롬프트와 도구 */
     preview: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+    /** MCP 템플릿 {{ctx.header:NAME}}로 넘어가는 헤더 (McpRegistry.forwardHeaders) */
+    forwardHeaders: () => Promise<string[]>;
   };
   /** 대화 기록 보기와 보관 기간 */
   sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;

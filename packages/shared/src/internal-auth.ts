@@ -12,7 +12,7 @@ const ISSUER = "pi-gateway:gateway";
 const MAX_TTL_SECONDS = 300;
 
 export interface RequestContext {
-  /** `MCP_FORWARD_HEADERS`로 허용된 클라이언트 요청 헤더. 이름은 소문자. */
+  /** broker 서버 설정이 `{{ctx.header:NAME}}`으로 쓰는 클라이언트 요청 헤더. 이름은 소문자. */
   headers?: Record<string, string>;
   /** `MCP_METADATA_KEYS`로 허용된 요청 metadata. */
   metadata?: Record<string, string>;
