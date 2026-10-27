@@ -60,6 +60,11 @@ export function McpPage(props: { focus?: string | undefined }) {
   const setCheck = (id: string, result: TestResult | "checking" | null) =>
     setChecks(({ [id]: _, ...rest }) => (result ? { ...rest, [id]: result } : rest));
 
+  const test = async (id: string) => {
+    setCheck(id, "checking");
+    setCheck(id, await testServer(id));
+  };
+
   const checkAll = async () => {
     const targets = list.servers.filter((s) => s.config.enabled);
     setCheckingAll(true);
@@ -99,12 +104,13 @@ export function McpPage(props: { focus?: string | undefined }) {
               <th>범위</th>
               <th>출처</th>
               <th>상태</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {list.servers.length === 0 && (
               <tr>
-                <td colSpan={6} class="muted">
+                <td colSpan={7} class="muted">
                   등록된 서버가 없습니다.
                 </td>
               </tr>
@@ -124,6 +130,12 @@ export function McpPage(props: { focus?: string | undefined }) {
                 <td>
                   <ServerState entry={s} check={checks[s.config.id]} />
                 </td>
+                {/* 이 칸을 눌러도 편집 창은 열리지 않는다 */}
+                <td class="actions" onClick={(e) => e.stopPropagation()}>
+                  <button class="small" disabled={checks[s.config.id] === "checking"} onClick={() => void test(s.config.id)}>
+                    테스트
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -134,7 +146,6 @@ export function McpPage(props: { focus?: string | undefined }) {
           key={editing === "new" ? "new" : editing.config.id}
           entry={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
-          onTested={(result) => editing !== "new" && setCheck(editing.config.id, result)}
           onSaved={async (id) => {
             // 설정이 바뀌었으니 이전 확인 결과는 버린다
             if (id) setCheck(id, null);
@@ -285,16 +296,10 @@ function fromForm(f: FormState, source: McpServerConfig["source"]): McpServerCon
   };
 }
 
-function ServerEditor(props: {
-  entry: McpServerEntry | null;
-  onClose: () => void;
-  onTested: (result: TestResult) => void;
-  onSaved: (id: string) => Promise<void>;
-}) {
+function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void; onSaved: (id: string) => Promise<void> }) {
   const [form, setForm] = useState<FormState>(() => toForm(props.entry?.config ?? null));
   const [errors, setErrors] = useState<string[]>([]);
   const [required, setRequired] = useState<string[]>(props.entry?.requiredSecrets ?? []);
-  const [test, setTest] = useState<TestResult | null>(null);
   const action = useAction();
   const isNew = props.entry === null;
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
@@ -346,49 +351,26 @@ function ServerEditor(props: {
       title={isNew ? "MCP 서버 추가" : `MCP 서버 ${props.entry!.config.id}`}
       onClose={props.onClose}
       actions={
-        <>
-          {!isNew && (
-            <button
-              disabled={action.busy}
-              onClick={() =>
-                action.run(async () => {
-                  const result = await testServer(props.entry!.config.id);
-                  setTest(result);
-                  props.onTested(result);
-                })
-              }
-            >
-              연결 테스트
-            </button>
-          )}
-          {!isNew && (
-            <button
-              class="danger"
-              onClick={() =>
-                confirm(`MCP 서버 ${props.entry!.config.id}을(를) 지울까요?`) &&
-                action.run(async () => {
-                  await api("DELETE", `/mcp/servers/${enc(props.entry!.config.id)}`);
-                  await props.onSaved("");
-                  props.onClose();
-                })
-              }
-            >
-              삭제
-            </button>
-          )}
-        </>
+        !isNew && (
+          <button
+            class="danger"
+            onClick={() =>
+              confirm(`MCP 서버 ${props.entry!.config.id}을(를) 지울까요?`) &&
+              action.run(async () => {
+                await api("DELETE", `/mcp/servers/${enc(props.entry!.config.id)}`);
+                await props.onSaved("");
+                props.onClose();
+              })
+            }
+          >
+            삭제
+          </button>
+        )
       }
     >
       {action.view}
       {props.entry?.config.source.kind === "plugin" && (
         <Notice tone="info">plugin {props.entry.config.source.pluginId}가 등록한 서버입니다. 여기서 바꾼 env·범위·도구 필터는 plugin을 업데이트해도 유지됩니다.</Notice>
-      )}
-      {test && (
-        <Notice tone={test.ok ? "ok" : "error"} onClose={() => setTest(null)}>
-          {test.ok ? `연결 성공 (${test.durationMs}ms)` : `실패: ${test.error}`}
-          {test.note && <div class="small-text">{test.note}</div>}
-          {test.tools && <div class="small-text">도구: {test.tools.map((t) => t.name).join(", ") || "없음"}</div>}
-        </Notice>
       )}
       <div class="grid-2">
         <label class="field">
