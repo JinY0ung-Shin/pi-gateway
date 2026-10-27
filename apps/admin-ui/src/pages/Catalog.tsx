@@ -10,6 +10,8 @@ interface Item {
   name: string;
   description: string;
   badge?: ComponentChildren;
+  /** 줄 끝 칸 (도구 켜고 끄기). 이 칸을 눌러도 창은 열리지 않는다. */
+  actions?: ComponentChildren;
 }
 
 /** 목록에 보이는 설명 첫 줄 */
@@ -25,18 +27,23 @@ function Explorer(props: {
   error: string | null;
   selected?: string | undefined;
   empty: string;
+  /** 표 위에 보일 안내·결과 */
+  intro?: ComponentChildren;
   children: (name: string, close: () => void) => ComponentChildren;
 }) {
   if (props.error) return <Notice tone="error">{props.error}</Notice>;
   if (!props.items) return <p class="muted">불러오는 중…</p>;
   const selected = props.items.find((i) => i.name === props.selected)?.name;
+  const hasActions = props.items.some((i) => i.actions !== undefined);
   return (
     <Section title={props.title} actions={<span class="muted small-text">{props.items.length}개</span>}>
+      {props.intro}
       <table class="table">
         <thead>
           <tr>
             <th>이름</th>
             <th>설명</th>
+            {hasActions && <th />}
           </tr>
         </thead>
         <tbody>
@@ -53,6 +60,11 @@ function Explorer(props: {
                 <span class="mono">{i.name}</span> {i.badge}
               </td>
               <td class="muted small-text">{firstLine(i.description)}</td>
+              {hasActions && (
+                <td class="actions" onClick={(e) => e.stopPropagation()}>
+                  {i.actions}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -98,15 +110,33 @@ export function ToolsPage(props: { focus?: string | undefined }) {
     <Explorer
       page="tools"
       title="기본 도구"
+      intro={
+        <>
+          <p class="muted small-text">
+            끄면 새 대화와 대화 중인 세션의 다음 턴부터 모델(plugin agent 포함)에게 그 도구를 주지 않습니다.{" "}
+            <span class="warn-text">read를 끄면 모델이 skill 파일(SKILL.md)을 읽지 못합니다.</span>
+          </p>
+          {action.view}
+        </>
+      }
       items={
         tools &&
         tools.map((t) => ({
           name: t.name,
           description: t.description,
-          badge: (
-            <>
-              <RunsInBadge value={t.runsIn} /> {!t.enabled && <Badge tone="amber">꺼짐</Badge>}
-            </>
+          badge: <RunsInBadge value={t.runsIn} />,
+          actions: (
+            <Toggle
+              checked={t.enabled}
+              label={`${t.name} 사용`}
+              disabled={action.busy}
+              onChange={(next) =>
+                action.run(async () => {
+                  await api("POST", `/tools/${enc(t.name)}/${next ? "enable" : "disable"}`);
+                  await load();
+                })
+              }
+            />
           ),
         }))
       }
@@ -120,30 +150,14 @@ export function ToolsPage(props: { focus?: string | undefined }) {
           <Modal
             title={
               <>
-                <span class="mono">{t.name}</span> <RunsInBadge value={t.runsIn} />
+                <span class="mono">{t.name}</span> <RunsInBadge value={t.runsIn} /> {!t.enabled && <Badge tone="amber">꺼짐</Badge>}
               </>
             }
             onClose={close}
-            actions={
-              <Toggle
-                checked={t.enabled}
-                label={`${t.name} 사용`}
-                disabled={action.busy}
-                onChange={(next) =>
-                  action.run(async () => {
-                    await api("POST", `/tools/${enc(t.name)}/${next ? "enable" : "disable"}`);
-                    await load();
-                  })
-                }
-              />
-            }
           >
-            {action.view}
             <p class="small-text muted">
-              {t.runsIn === "sandbox" ? "사용자 sandbox 컨테이너 안에서 실행됩니다." : "gateway 안에서 실행됩니다 (파일·명령을 직접 다루지 않습니다)."}{" "}
-              끄면 새 대화와 대화 중인 세션의 다음 턴부터 모델(plugin agent 포함)에게 이 도구를 주지 않습니다.
+              {t.runsIn === "sandbox" ? "사용자 sandbox 컨테이너 안에서 실행됩니다." : "gateway 안에서 실행됩니다 (파일·명령을 직접 다루지 않습니다)."}
             </p>
-            {t.name === "read" && <p class="small-text warn-text">read를 끄면 모델이 skill 파일(SKILL.md)을 읽지 못합니다.</p>}
             <h3>설명</h3>
             <pre class="code-block">{t.description}</pre>
             {t.promptGuidelines && (
