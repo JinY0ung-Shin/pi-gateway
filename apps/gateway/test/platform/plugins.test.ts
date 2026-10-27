@@ -465,6 +465,34 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
+  it("MCP 기본값을 저장하면 설치된 plugin의 MCP 서버에 바로 적용하고, 관리자가 바꾼 값은 유지한다", async () => {
+    const fixture = buildFixture(tempDir("fixture-defaults"));
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
+    try {
+      await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
+      const current = harness.mcp.store.get("monsemi-frontend")!;
+      if (current.transport.type !== "stdio") throw new Error("stdio expected");
+      await harness.mcp.upsert({ ...current, transport: { ...current.transport, env: { ...current.transport.env, ORCHESTRATOR_URL: "http://admin:9000" } } }, "admin");
+
+      const env = { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}", SERVICE_URL: "http://orchestrator:9000", UNUSED: "x" };
+      const { warnings } = await harness.plugins.updateSettings({ mcpDefaults: { env, scope: "per-user" } }, "t");
+      expect(warnings).toEqual([]);
+      const after = harness.mcp.store.get("monsemi-frontend")!;
+      if (after.transport.type !== "stdio") throw new Error("stdio expected");
+      // server.js가 읽지 않는 UNUSED는 넣지 않는다
+      expect(after.transport.env).toEqual({
+        ...current.transport.env,
+        ORCHESTRATOR_URL: "http://admin:9000",
+        SERVICE_URL: "http://orchestrator:9000",
+      });
+    } finally {
+      await harness.close();
+      await broker.close();
+    }
+  });
+
   it("업데이트 표시: git source는 marketplace가 고정한 sha가 바뀌면 알고, 고정하지 않았으면 모른다", async () => {
     const fixture = buildFixture(tempDir("fixture-pin"));
     const broker = await startFakeBroker();

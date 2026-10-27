@@ -460,7 +460,7 @@ function McpDefaults() {
       <p class="muted small-text">
         plugin이 설치하는 sandbox 실행 MCP 서버 중 그 변수를 실제로 읽는 서버에만 넣는 env입니다. 예: <code>THREAD_ID={"{{metadata:THREAD_ID}}"}</code>,{" "}
         <code>ORCHESTRATOR_URL={"{{metadata:ORCHESTRATOR_URL}}"}</code>, <code>SERVICE_URL=http://orchestrator:9000</code>. metadata 키는 대소문자를 구분하고 gateway의
-        MCP_METADATA_KEYS에 있어야 합니다. 다음 설치·업데이트부터 적용됩니다.
+        MCP_METADATA_KEYS에 있어야 합니다. 저장하면 설치된 plugin의 MCP 서버에도 바로 적용됩니다 (MCP 탭에서 직접 바꾼 값은 그대로 둡니다).
       </p>
       {action.view}
       <div class="grid-2">
@@ -477,7 +477,12 @@ function McpDefaults() {
           </select>
         </label>
       </div>
-      <button class="primary" disabled={action.busy} onClick={() => action.run(() => api("PUT", "/plugin-settings", { mcpDefaults: { env: linesToRecord(env), scope } }), "저장했습니다")}>
+      <button class="primary" disabled={action.busy} onClick={() =>
+          action.run(
+            () => api<{ warnings: string[] }>("PUT", "/plugin-settings", { mcpDefaults: { env: linesToRecord(env), scope } }),
+            (r) => (r.warnings.length ? `저장했습니다. 확인할 점: ${r.warnings.join(" / ")}` : "저장하고 설치된 plugin의 MCP 서버에 적용했습니다"),
+          )
+        }>
         저장
       </button>
     </Section>

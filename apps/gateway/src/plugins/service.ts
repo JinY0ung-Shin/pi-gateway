@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
 import { findTemplateRefs, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
@@ -243,7 +243,8 @@ export class PluginService implements PluginResources {
     return { mcpDefaults: this.store.getSetting(SETTINGS_KEY, DEFAULT_PLUGIN_MCP_DEFAULTS) };
   }
 
-  updateSettings(input: unknown, actorInput?: string): PluginSettings {
+  /** 저장하고, 설치된 plugin의 MCP 서버도 새 기본값으로 다시 등록한다 (관리자가 MCP 탭에서 바꾼 값은 유지한다). */
+  updateSettings(input: unknown, actorInput?: string): Promise<PluginSettings & { warnings: string[] }> {
     const req = parse(SettingsInput, input);
     for (const [key, value] of Object.entries(req.mcpDefaults.env)) {
       const { refs, unknown } = findTemplateRefs(value);
@@ -252,8 +253,16 @@ export class PluginService implements PluginResources {
         throw badRequest(`env ${key}: sandbox servers must not use {{secret:...}} or {{ctx.header:...}}`);
       }
     }
-    this.store.setSetting(SETTINGS_KEY, req.mcpDefaults, normalizeActor(actorInput));
-    return this.getSettings();
+    const actor = normalizeActor(actorInput);
+    return this.#exclusive(async () => {
+      const plugins = this.store.listPlugins().filter((p) => p.mcp.length > 0);
+      // 다시 등록하다 broker가 안 되면 서버 기록이 오류로 바뀐다. 아무것도 바꾸기 전에 503으로 끝낸다.
+      if (plugins.some(usesBroker)) await this.#registry.assertBrokerReachable();
+      this.store.setSetting(SETTINGS_KEY, req.mcpDefaults, actor);
+      const warnings: string[] = [];
+      for (const record of plugins) warnings.push(...(await this.#remapInstalledMcp(record, actor)));
+      return { ...this.getSettings(), warnings };
+    });
   }
 
   // ── marketplace ────────────────────────────────────────────────
@@ -588,6 +597,35 @@ export class PluginService implements PluginResources {
       out.push({ name, mapped });
     }
     return out;
+  }
+
+  /** 설치된 사본으로 MCP 서버를 다시 매핑·등록한다 (git에서 다시 받지 않는다). */
+  async #remapInstalledMcp(record: PluginRecord, actor: string): Promise<string[]> {
+    const entry = this.store.getMarketplace(record.marketplace)?.manifest.plugins.find((p) => p.name === record.name);
+    if (!entry) return [`${record.id}: marketplace에 항목이 없어 MCP 기본값을 다시 적용하지 못했습니다`];
+    const dir = await realpath(record.installPath);
+    const dataDir = pluginDataDir(record.marketplace, record.name);
+    const found = await discoverComponents({
+      stagingDir: dir,
+      finalDir: record.installPath,
+      pluginName: record.name,
+      manifest: await readPluginManifest(dir),
+      entry,
+      dataDir,
+    });
+    const mappedServers = await this.#mapServers(found.mcpServers, {
+      id: record.id,
+      pluginName: record.name,
+      version: record.version,
+      root: record.installPath,
+      dataDir,
+      description: str(record.manifest ?? {}, "description") ?? entry.description,
+      enabled: record.enabled,
+      read: (rel) => readContainedFile(dir, rel, { optional: true }).catch(() => undefined),
+    });
+    const { records, warnings } = await this.#registerMcp(mappedServers, { id: record.id, pluginName: record.name, previous: record.mcp, actor });
+    this.store.setPluginMcp(record.id, records);
+    return warnings;
   }
 
   async #registerMcp(
