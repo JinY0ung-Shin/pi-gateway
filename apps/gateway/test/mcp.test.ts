@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
+import { searchTerms } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
@@ -45,13 +46,16 @@ afterAll(async () => {
 });
 
 describe("MCP via the broker", () => {
-  it("offers broker tools and calls them with a fresh JWT carrying the user and forwarded headers", async () => {
-    h.llm.enqueue({ toolCalls: [{ id: "m1", name: "mcp__demo__echo", arguments: { text: "hi" } }] }, { text: "done" });
+  it("offers admin-registered servers through mcp_search and mcp_call with a fresh JWT carrying the user and forwarded headers", async () => {
+    h.llm.enqueue({ toolCalls: [{ id: "m1", name: "mcp_call", arguments: { name: "mcp__demo__echo", arguments: { text: "hi" } } }] }, { text: "done" });
     const before = h.llm.requests.length;
     const res = await h.stream({ input: "use mcp" }, { headers: { "x-user-token": "tok-123", "x-other": "not-forwarded" } });
-    const names = (h.llm.requests[before]!.tools ?? []).map((t) => t.function.name);
-    expect(names).toContain("mcp__demo__echo");
-    expect(names).toContain("mcp__demo__fail");
+    const tools = h.llm.requests[before]!.tools ?? [];
+    const names = tools.map((t) => t.function.name);
+    expect(names).toContain("mcp_search");
+    expect(names).toContain("mcp_call");
+    expect(names.filter((n) => n.startsWith("mcp__demo__"))).toEqual([]);
+    expect(tools.find((t) => t.function.name === "mcp_search")!.function.description).toContain("- demo");
     const result = ofType(res.events, "response.tool_result")[0]!.data;
     expect(result.is_error).toBe(false);
     expect(result.content).toBe("echo:hi user=alice token=tok-123");
@@ -74,6 +78,35 @@ describe("MCP via the broker", () => {
     const res = await h.stream({ input: "fail mcp" });
     const result = ofType(res.events, "response.tool_result")[0]!.data;
     expect(result).toMatchObject({ is_error: true, content: "upstream refused" });
+  });
+});
+
+describe("mcp_search and mcp_call", () => {
+  it("returns matching tools with their parameter schemas", async () => {
+    h.llm.enqueue({ toolCalls: [{ id: "q1", name: "mcp_search", arguments: { query: "echo back" } }] }, { text: "ok" });
+    const res = await h.stream({ input: "find" });
+    const content = String(ofType(res.events, "response.tool_result")[0]!.data.content);
+    expect(content.startsWith("## mcp__demo__echo\necho back\nParameters: ")).toBe(true);
+    expect(content).toContain('"required":["text"]');
+  });
+
+  it("returns the schema when arguments do not match, and points unknown names at mcp_search", async () => {
+    h.llm.enqueue(
+      { toolCalls: [{ id: "v1", name: "mcp_call", arguments: { name: "mcp__demo__echo", arguments: {} } }] },
+      { toolCalls: [{ id: "v2", name: "mcp_call", arguments: { name: "mcp__demo__nope" } }] },
+      { text: "ok" },
+    );
+    const res = await h.stream({ input: "bad calls" });
+    const [missing, unknown] = ofType(res.events, "response.tool_result").map((e) => e.data);
+    expect(missing!.is_error).toBe(true);
+    expect(String(missing!.content)).toContain('Parameters of mcp__demo__echo: {"type":"object"');
+    expect(unknown).toMatchObject({ is_error: true });
+    expect(String(unknown!.content)).toContain("Unknown tool 'mcp__demo__nope'. Find the exact name with mcp_search.");
+  });
+
+  it("splits Korean into two-letter terms so particles do not block a match", () => {
+    expect(searchTerms("결함을 조회")).toEqual(["결함", "함을", "조회"]);
+    expect(searchTerms("listIssues v2")).toEqual(["list", "issues", "v2"]);
   });
 });
 
@@ -167,7 +200,12 @@ describe("sandbox MCP plugin integration", () => {
 
   it("creates the plugin data directory in the sandbox before spawning the server", async () => {
     p.llm.enqueue({ toolCalls: [{ id: "pd1", name: "mcp__plugin-srv__whoami", arguments: {} }] }, { text: "done" });
+    const before = p.llm.requests.length;
     const res = await p.stream({ input: "who", metadata: { thread_id: "t-blocked" } });
+    // plugin 서버의 도구는 skill이 이름으로 부르므로 바로 선언하고, 프록시 도구는 만들지 않는다
+    const names = (p.llm.requests[before]!.tools ?? []).map((t) => t.function.name);
+    expect(names).toContain("mcp__plugin-srv__whoami");
+    expect(names).not.toContain("mcp_search");
     const result = ofType(res.events, "response.tool_result")[0]!.data;
     expect(result.is_error).toBe(false);
     const routes = p.sandbox.calls.map((c) => c.route);
@@ -207,13 +245,13 @@ describe("sandbox MCP tool lists are never shared between users", () => {
   });
 
   it("lists each user's tools from that user's own sandbox", async () => {
-    const a = u.llm.requests.length;
-    await u.post({ input: "alice lists" });
-    const aliceTools = (u.llm.requests[a]!.tools ?? []).map((t) => t.function.name);
-    expect(aliceTools).toContain("mcp__peruser__tool_for_alice");
-    const b = u.llm.requests.length;
-    await u.post({ input: "bob lists" }, { key: BOB_KEY });
-    const bobTools = (u.llm.requests[b]!.tools ?? []).map((t) => t.function.name);
+    const search = (id: string) => ({ toolCalls: [{ id, name: "mcp_search", arguments: { query: "tool for", limit: 20 } }] });
+    u.llm.enqueue(search("pu1"), { text: "ok" });
+    const alice = await u.stream({ input: "alice lists" });
+    expect(String(ofType(alice.events, "response.tool_result")[0]!.data.content)).toContain("mcp__peruser__tool_for_alice");
+    u.llm.enqueue(search("pu2"), { text: "ok" });
+    const bob = await u.stream({ input: "bob lists" }, { key: BOB_KEY });
+    const bobTools = String(ofType(bob.events, "response.tool_result")[0]!.data.content);
     expect(bobTools).toContain("mcp__peruser__tool_for_bob");
     expect(bobTools).not.toContain("mcp__peruser__tool_for_alice");
     const bobAttach = u.sandbox.calls.filter((c) => c.route === SANDBOXD_ROUTES.attach && c.user === "bob");

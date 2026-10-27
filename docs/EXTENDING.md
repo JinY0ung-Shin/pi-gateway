@@ -119,6 +119,10 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 
 `mcp__<서버 id>__<도구 이름>` (예: `mcp__github__create_issue`). `toolAllow`/`toolDeny`로 서버 안의 일부 도구만 노출할 수 있어요.
 
+- plugin이 등록한 서버의 도구는 모델의 도구 목록에 바로 들어가요. skill이 이름으로 부르기 때문이에요.
+- 관리 화면에서 등록한 서버의 도구는 목록에 하나씩 넣지 않아요. 모델은 `mcp_search`로 도구와 인자 schema를 찾고 `mcp_call`로 실행해요. 서버가 많아도 도구 목록이 고정돼서 prefix cache가 유지되고, 어느 tool-call parser에서나 동작해요.
+- `mcp_search` 설명에 서버마다 id, 표시 이름, 설명 첫 줄이 들어가요. 모델은 이걸 보고 어떤 서비스가 있는지 알아요. 서버 설명을 채워 두세요.
+
 ---
 
 ## 2. plugin skill 추가 (코드 수정 없음)

@@ -203,7 +203,13 @@ describe("6-8. empty replies, merged questions, cache isolation", () => {
   beforeAll(async () => {
     h = await startHarness({
       sandboxServers: [
-        McpServerConfig.parse({ id: "plugin", runIn: "sandbox", scope: "per-user", transport: { type: "stdio", command: process.execPath, args: [stdioServer] } }),
+        McpServerConfig.parse({
+          id: "plugin",
+          runIn: "sandbox",
+          scope: "per-user",
+          source: { kind: "plugin", pluginId: "demo@mkt", version: "1.0.0" },
+          transport: { type: "stdio", command: process.execPath, args: [stdioServer] },
+        }),
       ],
     });
     // 8번 테스트용: alice가 자기 workspace에 도구 설명을 심어 둔다 (첫 세션 전에)

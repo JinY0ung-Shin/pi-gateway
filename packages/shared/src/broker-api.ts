@@ -80,6 +80,9 @@ export type TestServerResponse = z.infer<typeof TestServerResponse>;
 export const VisibleServer = z.object({
   id: z.string(),
   displayName: z.string().optional(),
+  description: z.string().optional(),
+  /** plugin이 등록한 서버. 그 도구는 skill이 이름으로 부르므로 모델에게 바로 선언한다. */
+  plugin: z.boolean().optional(),
   timeoutSec: z.number().int(),
 });
 export type VisibleServer = z.infer<typeof VisibleServer>;
