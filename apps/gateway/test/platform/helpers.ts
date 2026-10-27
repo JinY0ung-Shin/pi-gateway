@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,7 +201,11 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     const required = requiredSecretNames(config);
     return {
       config,
-      secrets: [...set.keys()].map((name) => ({ name, setAt: "2026-10-16T00:00:00.000Z", fingerprint: `fp-${name.length}` })),
+      secrets: [...set].map(([name, value]) => ({
+        name,
+        setAt: "2026-10-16T00:00:00.000Z",
+        fingerprint: `fp-${createHash("sha256").update(value).digest("hex").slice(0, 12)}`,
+      })),
       missingSecrets: required.filter((n) => !set.has(n)),
     };
   };

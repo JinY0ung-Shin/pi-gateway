@@ -493,6 +493,39 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
+  it("http 서버의 비밀키는 MCP 기본값의 같은 이름으로 채우고, 관리자가 넣은 값은 그대로 둔다", async () => {
+    const fixture = buildFixture(tempDir("fixture-default-secrets"));
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
+    const docsToken = () => broker.secrets.get("remote-docs")?.get("DOCS_TOKEN");
+    const setDefaults = (env: Record<string, string>) => harness.plugins.updateSettings({ mcpDefaults: { env, scope: "per-user" } }, "t");
+    try {
+      await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
+      await setDefaults({ DOCS_TOKEN: "default-docs-1" });
+      const { warnings } = await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "secret-tools" }, "t");
+      expect(docsToken()).toBe("default-docs-1");
+      expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
+      expect(harness.plugins.getPlugin("secret-tools@defect-agent-plugins").mcp.find((m) => m.name === "remote-docs")?.missingSecrets).toEqual([]);
+
+      // 기본값을 바꾸면 따라가고, 기본값에서 빼면 채웠던 값을 지운다
+      await setDefaults({ DOCS_TOKEN: "default-docs-2" });
+      expect(docsToken()).toBe("default-docs-2");
+      await setDefaults({});
+      expect(docsToken()).toBeUndefined();
+
+      // 관리자가 넣은 값은 기본값보다 우선한다
+      await setDefaults({ DOCS_TOKEN: "default-docs-3" });
+      await harness.mcp.setSecret("remote-docs", "DOCS_TOKEN", { value: "admin-docs-token" }, "admin");
+      await setDefaults({ DOCS_TOKEN: "default-docs-4" });
+      expect(docsToken()).toBe("admin-docs-token");
+      await setDefaults({});
+      expect(docsToken()).toBe("admin-docs-token");
+    } finally {
+      await harness.close();
+      await broker.close();
+    }
+  });
+
   it("업데이트 표시: git source는 marketplace가 고정한 sha가 바뀌면 알고, 고정하지 않았으면 모른다", async () => {
     const fixture = buildFixture(tempDir("fixture-pin"));
     const broker = await startFakeBroker();

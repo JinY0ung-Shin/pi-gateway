@@ -64,6 +64,8 @@ export interface McpRecord {
   requiredSecrets: string[];
   /** broker 서버: 등록 직후 아직 값이 없는 비밀키 */
   missingSecrets?: string[];
+  /** broker 서버: plugin MCP 기본값으로 채운 비밀키 이름 → 그때의 fingerprint (다르면 관리자가 바꾼 값) */
+  defaultSecrets?: Record<string, string>;
   warnings: string[];
   /** 이번 설치 때의 매핑 결과 (관리자 수정 전). 다음 업데이트에서 관리자가 바꾼 값을 가려내는 기준이다. */
   baseline?: McpServerConfig;

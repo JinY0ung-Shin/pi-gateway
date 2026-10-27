@@ -10,7 +10,7 @@ import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.j
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources, SubagentDefinition } from "../contracts.js";
 import type { Db } from "../db.js";
-import { policyProblems, type McpRegistryService } from "../mcp-registry/service.js";
+import { type McpRegistryService, type McpServerEntry, policyProblems } from "../mcp-registry/service.js";
 import { normalizeActor } from "../prompts/service.js";
 import { discoverComponents, rewriteTextFiles } from "./components.js";
 import { gitFetch, normalizeGitUrl } from "./git.js";
@@ -673,7 +673,15 @@ export class PluginService implements PluginResources {
       }
       const baseline = previous?.id === config.id ? (previous.baseline ?? null) : null;
       try {
-        const entry = await this.#registry.upsertPluginServer(config, ctx.actor, baseline);
+        let entry = await this.#registry.upsertPluginServer(config, ctx.actor, baseline);
+        let defaultSecrets: Record<string, string> | undefined;
+        if (entry.store === "broker") {
+          try {
+            ({ entry, defaultSecrets } = await this.#fillDefaultSecrets(ctx.id, entry, previous?.id === config.id ? previous.defaultSecrets : undefined, ctx.actor));
+          } catch (error) {
+            warnings.push(`MCP 서버 ${config.id}: 기본값으로 비밀키를 채우지 못했습니다 (${describe(error)})`);
+          }
+        }
         records.push({
           name,
           id: config.id,
@@ -681,6 +689,7 @@ export class PluginService implements PluginResources {
           status: "registered",
           requiredSecrets: mapped.requiredSecrets,
           ...(entry.missingSecrets ? { missingSecrets: entry.missingSecrets } : {}),
+          ...(defaultSecrets ? { defaultSecrets } : {}),
           warnings: mapped.warnings,
           baseline: config,
         });
@@ -705,6 +714,43 @@ export class PluginService implements PluginResources {
       }
     }
     return { records, warnings };
+  }
+
+  /**
+   * broker 서버의 비밀키 중 plugin MCP 기본값에 같은 이름이 있는 것을 그 값으로 채운다.
+   * 관리자가 MCP 탭에서 넣은 값(지난번에 채운 fingerprint와 다른 값)은 그대로 둔다.
+   * 기본값에서 빠진 이름은 지난번에 채운 값만 지운다. {{…}} 템플릿 값은 비밀키로 넣을 수 없어 건너뛴다.
+   */
+  async #fillDefaultSecrets(
+    pluginId: string,
+    entry: McpServerEntry,
+    previous: Record<string, string> | undefined,
+    actor: string,
+  ): Promise<{ entry: McpServerEntry; defaultSecrets?: Record<string, string> }> {
+    const defaults = this.getSettings().mcpDefaults.env;
+    const id = entry.config.id;
+    const current = new Map((entry.secrets ?? []).map((s) => [s.name, s.fingerprint]));
+    const filled: string[] = [];
+    let changed = false;
+    for (const name of entry.requiredSecrets) {
+      const fingerprint = current.get(name);
+      const ours = fingerprint !== undefined && previous?.[name] === fingerprint;
+      if (fingerprint !== undefined && !ours) continue;
+      const value = defaults[name];
+      if (!value || value.includes("{{")) {
+        if (ours) await this.#registry.deleteSecret(id, name, actor);
+        changed ||= ours;
+        continue;
+      }
+      await this.#registry.setSecret(id, name, { value }, actor);
+      filled.push(name);
+      changed = true;
+    }
+    if (!changed) return { entry };
+    const fresh = (await this.#registry.pluginServers(pluginId)).find((e) => e.config.id === id) ?? entry;
+    const fingerprints = new Map((fresh.secrets ?? []).map((s) => [s.name, s.fingerprint]));
+    const defaultSecrets = Object.fromEntries(filled.flatMap((n) => (fingerprints.has(n) ? [[n, fingerprints.get(n)!]] : [])));
+    return { entry: fresh, ...(filled.length > 0 ? { defaultSecrets } : {}) };
   }
 
   async #idTakenByOther(id: string, pluginId: string): Promise<boolean> {
