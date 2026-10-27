@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
-import type { GatewayModels } from "../agent/runtime.js";
+import { type GatewayModels, thinkingLevelOf } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
@@ -158,7 +158,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     const model = body.model ?? defaultModel;
     const modelConfig = deps.models.config(model);
     if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
-    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning) };
+    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig) };
   }
 
   const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession };
@@ -214,13 +214,13 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
   const append: string[] = [];
   if (instructions?.trim()) append.push(instructions.trim());
   append.push(`Current user: ${plan.principal}`);
-  const reasoning = deps.models.config(plan.model)?.reasoning ?? false;
+  const modelConfig = deps.models.config(plan.model);
   const iso = now.toISOString();
   return {
     id: plan.sessionId,
     principal: plan.principal,
     model: plan.model,
-    thinkingLevel: plan.thinkingLevel ?? (reasoning ? "medium" : "off"),
+    thinkingLevel: plan.thinkingLevel ?? (modelConfig?.reasoning ? thinkingLevelOf(modelConfig.defaultEffort) : "off"),
     turn: 0,
     sessionFile: null,
     leafId: null,
@@ -269,7 +269,7 @@ async function runLocked(
         `Stale previous_response_id: only the latest response (${responseId(record.id, record.turn)}) can be continued`,
       );
     }
-    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel.reasoning);
+    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel);
     if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
       throw badRequest("reasoning.effort is fixed when the session is created");
     }

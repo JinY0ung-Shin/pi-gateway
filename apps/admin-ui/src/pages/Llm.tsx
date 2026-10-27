@@ -15,6 +15,8 @@ interface ModelRow {
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
+  efforts: string[];
+  defaultEffort: string;
   input: ("text" | "image")[];
 }
 
@@ -143,6 +145,20 @@ function readablePaths(message: string, servers: ServerForm[]): string {
     .replace(/servers\.(\d+)\.models\.(\d+)\./g, (_, i: string, j: string) => `${sid(i)} › ${servers[Number(i)]?.models[Number(j)]?.id || `모델 ${Number(j) + 1}`} › `)
     .replace(/servers\.(\d+)\./g, (_, i: string) => `${sid(i)} › `);
 }
+
+const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** 새 모델 줄. gateway의 기본값과 같다. */
+const newModel = (id: string, contextWindow: number, maxTokens: number, name?: string): ModelRow => ({
+  id,
+  ...(name ? { name } : {}),
+  contextWindow,
+  maxTokens,
+  reasoning: false,
+  efforts: ["none", "minimal", "low", "medium", "high"],
+  defaultEffort: "high",
+  input: ["text"],
+});
 
 /** 서버가 알려 준 contextWindow로 정하는 maxTokens 기본값 */
 const defaultMaxTokens = (contextWindow: number) => Math.max(256, Math.min(8192, Math.floor(contextWindow / 4)));
@@ -276,6 +292,7 @@ function ServerCard(props: {
   const [picking, setPicking] = useState(false);
   const [tests, setTests] = useState<Record<string, TestResult | "testing">>({});
   const [lastTest, setLastTest] = useState<{ model: string; result: TestResult } | null>(null);
+  const [effortsOf, setEffortsOf] = useState<number | null>(null);
   const checking = props.probe === "checking";
   const probe = props.probe === "checking" ? undefined : props.probe;
   const listed = probe?.ok ? new Set(probe.models?.map((m) => m.id)) : null;
@@ -451,7 +468,14 @@ function ServerCard(props: {
                   <input type="number" min={1} value={m.maxTokens} onInput={(e) => setModel(i, { maxTokens: Number(e.currentTarget.value) })} />
                 </td>
                 <td>
-                  <input type="checkbox" checked={m.reasoning} onChange={(e) => setModel(i, { reasoning: e.currentTarget.checked })} />
+                  <div class="row">
+                    <input type="checkbox" checked={m.reasoning} onChange={(e) => setModel(i, { reasoning: e.currentTarget.checked })} />
+                    {m.reasoning && (
+                      <button class="small" title="받는 reasoning.effort와 기본값" onClick={() => setEffortsOf(i)}>
+                        {`effort ${m.efforts.length}개 · 기본 ${m.defaultEffort}`}
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <input
@@ -479,11 +503,14 @@ function ServerCard(props: {
         </tbody>
       </table>
       <div class="row">
-        <button class="small" onClick={() => addModels([{ id: "", contextWindow: 32768, maxTokens: 8192, reasoning: false, input: ["text"] }])}>
+        <button class="small" onClick={() => addModels([newModel("", 32768, 8192)])}>
           + 직접 추가
         </button>
         <span class="muted small-text">contextWindow는 vLLM의 --max-model-len과 맞춥니다. 뺀 모델로 만든 세션은 이어갈 수 없습니다.</span>
       </div>
+      {effortsOf !== null && s.models[effortsOf] && (
+        <EffortEditor model={s.models[effortsOf]} onChange={(patch) => setModel(effortsOf, patch)} onClose={() => setEffortsOf(null)} />
+      )}
     </Section>
   );
 }
@@ -518,7 +545,7 @@ function ModelPicker(props: {
         .filter((m) => picked.includes(m.id))
         .map((m) => {
           const contextWindow = m.contextWindow ?? 32768;
-          return { id: m.id, ...(m.name ? { name: m.name } : {}), contextWindow, maxTokens: defaultMaxTokens(contextWindow), reasoning: false, input: ["text"] };
+          return newModel(m.id, contextWindow, defaultMaxTokens(contextWindow), m.name);
         }),
     );
   return (
@@ -566,6 +593,52 @@ function ModelPicker(props: {
         </button>
         <span class="muted small-text">reasoning·이미지 여부는 서버가 알려 주지 않으니 추가한 뒤 표시하세요.</span>
       </div>
+    </Modal>
+  );
+}
+
+/** reasoning 모델이 받는 effort와 기본값. 목록에 없는 effort를 요청하면 gateway가 400을 돌려준다. */
+function EffortEditor(props: { model: ModelRow; onChange: (patch: Partial<ModelRow>) => void; onClose: () => void }) {
+  const m = props.model;
+  const toggle = (effort: string, on: boolean) => props.onChange({ efforts: EFFORTS.filter((e) => (e === effort ? on : m.efforts.includes(e))) });
+  return (
+    <Modal title={`${m.id || "새 모델"} reasoning.effort`} onClose={props.onClose}>
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>effort</th>
+            <th>받음</th>
+            <th>기본</th>
+          </tr>
+        </thead>
+        <tbody>
+          {EFFORTS.map((e) => (
+            <tr key={e}>
+              <td class="mono">{e}</td>
+              <td>
+                <input
+                  type="checkbox"
+                  aria-label={`${e} 받음`}
+                  checked={m.efforts.includes(e)}
+                  disabled={e === m.defaultEffort}
+                  onChange={(ev) => toggle(e, ev.currentTarget.checked)}
+                />
+              </td>
+              <td>
+                <input
+                  type="radio"
+                  name="default-effort"
+                  aria-label={`${e} 기본`}
+                  checked={e === m.defaultEffort}
+                  disabled={!m.efforts.includes(e)}
+                  onChange={() => props.onChange({ defaultEffort: e })}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="muted small-text">요청에 effort가 없으면 기본값을 씁니다. 받지 않는 effort를 요청하면 400으로 거절합니다. none은 생각하지 않고 답합니다.</p>
     </Modal>
   );
 }

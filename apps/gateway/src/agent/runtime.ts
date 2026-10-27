@@ -14,14 +14,29 @@ import { type Db, migrate } from "../db.js";
  * - API 키는 config 값 확장(`!cmd`, `$VAR`)을 거치지 않도록 runtime key로 넣는다.
  */
 
-export const LlmModelConfig = z.object({
-  id: z.string().min(1),
-  name: z.string().optional(),
-  contextWindow: z.number().int().positive(),
-  maxTokens: z.number().int().positive(),
-  reasoning: z.boolean().default(false),
-  input: z.array(z.enum(["text", "image"])).default(["text"]),
-});
+/** `/v1/responses`의 reasoning.effort 값. pi thinking level과 이름이 같고 none만 off다. */
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export const thinkingLevelOf = (effort: ReasoningEffort): string => (effort === "none" ? "off" : effort);
+
+export const LlmModelConfig = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().optional(),
+    contextWindow: z.number().int().positive(),
+    maxTokens: z.number().int().positive(),
+    reasoning: z.boolean().default(false),
+    /** reasoning 모델이 받는 effort. 목록에 없는 effort를 요청하면 400 */
+    efforts: z.array(z.enum(REASONING_EFFORTS)).default(["none", "minimal", "low", "medium", "high"]),
+    /** 요청에 effort가 없을 때 쓰는 값 */
+    defaultEffort: z.enum(REASONING_EFFORTS).default("high"),
+    input: z.array(z.enum(["text", "image"])).default(["text"]),
+  })
+  .superRefine((m, ctx) => {
+    if (m.reasoning && !m.efforts.includes(m.defaultEffort)) {
+      ctx.addIssue({ code: "custom", path: ["defaultEffort"], message: "defaultEffort must be one of efforts" });
+    }
+  });
 export type LlmModelConfig = z.infer<typeof LlmModelConfig>;
 
 export const LlmServer = z.object({
@@ -125,6 +140,8 @@ async function register(runtime: ModelRuntime, s: LlmServer): Promise<void> {
       name: m.name ?? m.id,
       api: s.api,
       reasoning: m.reasoning,
+      // pi는 xhigh·max를 map에 있을 때만 지원한다고 본다. 고른 값 그대로 보낸다.
+      ...(m.reasoning ? { thinkingLevelMap: Object.fromEntries(m.efforts.filter((e) => e === "xhigh" || e === "max").map((e) => [e, e])) } : {}),
       input: m.input,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: m.contextWindow,

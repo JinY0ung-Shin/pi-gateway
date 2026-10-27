@@ -1,5 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { type LlmModelConfig, REASONING_EFFORTS, type ReasoningEffort, thinkingLevelOf } from "../agent/runtime.js";
 import { badRequest, validationError } from "../errors.js";
 import { checkImage } from "../tools/image-guard.js";
 
@@ -132,14 +133,15 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
   return { kind: "prompt", text, images, systemText, hasSystemItems };
 }
 
-const EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
-
-/** reasoning.effort → pi thinking level (이름이 같고 none만 off) */
-export function thinkingLevelFor(effort: string | null | undefined, modelReasoning: boolean): string | undefined {
+/** reasoning.effort → pi thinking level. reasoning 모델이면 모델의 efforts에 있어야 한다. */
+export function thinkingLevelFor(effort: string | null | undefined, model: LlmModelConfig): string | undefined {
   if (!effort) return undefined;
-  if (!EFFORTS.has(effort)) throw badRequest(`Unsupported reasoning.effort '${effort}'`, "unsupported_reasoning_effort");
-  if (!modelReasoning || effort === "none") return "off";
-  return effort;
+  if (!(REASONING_EFFORTS as readonly string[]).includes(effort)) throw badRequest(`Unsupported reasoning.effort '${effort}'`, "unsupported_reasoning_effort");
+  if (!model.reasoning) return "off";
+  if (!(model.efforts as string[]).includes(effort)) {
+    throw badRequest(`Model '${model.id}' does not support reasoning.effort '${effort}'. Supported: ${model.efforts.join(", ")}`, "unsupported_reasoning_effort");
+  }
+  return thinkingLevelOf(effort as ReasoningEffort);
 }
 
 const RESPONSE_ID = /^resp_([0-9a-f-]{36})_([1-9][0-9]*)$/;

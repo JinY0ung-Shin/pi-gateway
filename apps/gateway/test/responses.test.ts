@@ -178,6 +178,19 @@ describe("continuation", () => {
     expect(changed.json.error.message).toBe("reasoning.effort is fixed when the session is created");
   });
 
+  it("uses the model's default effort and rejects efforts the model does not take", async () => {
+    const effortSent = async (body: Record<string, unknown>) => {
+      const res = await h.post({ model: "think-model", input: "a", ...body });
+      expect(res.status).toBe(200);
+      return (h.llm.requests.at(-1) as { reasoning_effort?: string }).reasoning_effort;
+    };
+    expect(await effortSent({})).toBe("high");
+    expect(await effortSent({ reasoning: { effort: "xhigh" } })).toBe("xhigh");
+    const rejected = await h.post({ model: "think-model", input: "a", reasoning: { effort: "medium" } });
+    expect(rejected.status).toBe(400);
+    expect(rejected.json.error.code).toBe("unsupported_reasoning_effort");
+  });
+
   it("continues with the session's model and ignores body.model", async () => {
     const first = await h.post({ model: "think-model", input: "a" });
     const next = await h.post({ model: "nope", input: "b", previous_response_id: first.json.id });

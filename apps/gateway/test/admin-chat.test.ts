@@ -44,7 +44,14 @@ describe("POST /admin/api/chat", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.defaultModel).toBe("test-model");
-    expect(body.models).toContainEqual({ id: "vision-model", name: "vision-model", reasoning: false, image: true });
+    expect(body.models).toContainEqual({
+      id: "vision-model",
+      name: "vision-model",
+      reasoning: false,
+      efforts: ["none", "minimal", "low", "medium", "high"],
+      defaultEffort: "high",
+      image: true,
+    });
     expect(body.forwardHeaders).toEqual(["x-user-token"]);
     expect(body.metadataKeys).toEqual(["thread_id"]);
   });

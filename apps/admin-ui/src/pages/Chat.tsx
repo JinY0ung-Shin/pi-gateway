@@ -11,7 +11,7 @@ import { Badge, Notice, Section, useLoad } from "../components";
  */
 
 interface ChatOptions {
-  models: { id: string; name: string; reasoning: boolean; image: boolean }[];
+  models: { id: string; name: string; reasoning: boolean; efforts: string[]; defaultEffort: string; image: boolean }[];
   /** LLM이 설정되지 않았으면 null */
   defaultModel: string | null;
   forwardHeaders: string[];
@@ -75,7 +75,6 @@ type ResponseEvent = Record<string, any> & { type: string };
 
 const STORAGE_KEY = "pi-gateway-admin-chat";
 const RESULT_LIMIT = 4000;
-const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function load(): Saved | null {
   try {
@@ -207,7 +206,7 @@ export function ChatPage() {
     if (prevId) body.previous_response_id = prevId;
     else {
       if (settings.instructions.trim()) body.instructions = settings.instructions;
-      if (settings.effort && model?.reasoning) body.reasoning = { effort: settings.effort };
+      if (settings.effort && model?.reasoning && model.efforts.includes(settings.effort)) body.reasoning = { effort: settings.effort };
     }
     if (meta) body.metadata = meta;
     const forwarded = Object.fromEntries(Object.entries(headers).filter(([name, v]) => v && options?.forwardHeaders.includes(name)));
@@ -375,8 +374,8 @@ export function ChatPage() {
           <label class="field">
             <span>reasoning.effort</span>
             <select value={settings.effort} disabled={locked} onChange={(e) => set({ effort: e.currentTarget.value })}>
-              <option value="">기본</option>
-              {EFFORTS.map((v) => (
+              <option value="">{`기본 (${model.defaultEffort})`}</option>
+              {model.efforts.map((v) => (
                 <option key={v} value={v}>
                   {v}
                 </option>

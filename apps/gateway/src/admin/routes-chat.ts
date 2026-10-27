@@ -6,7 +6,14 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AdminContext): voi
   const { config, llm, chat } = ctx;
   /** 채팅 화면이 고를 수 있는 값 */
   app.get("/chat/options", async () => ({
-    models: llm.list().map((m) => ({ id: m.id, name: m.name ?? m.id, reasoning: m.reasoning, image: m.input.includes("image") })),
+    models: llm.list().map((m) => ({
+      id: m.id,
+      name: m.name ?? m.id,
+      reasoning: m.reasoning,
+      efforts: m.efforts,
+      defaultEffort: m.defaultEffort,
+      image: m.input.includes("image"),
+    })),
     defaultModel: llm.defaultModel() ?? null,
     /** MCP 템플릿 {{ctx.header:NAME}}로 넘어가는 헤더. 채팅 화면이 요청 헤더로 보낸다. */
     forwardHeaders: await chat.forwardHeaders(),
