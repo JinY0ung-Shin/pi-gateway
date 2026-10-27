@@ -74,8 +74,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
   /** token 없이 먼저 해 보고, git이 실패하면 그 줄에서 token을 받는다 (비공개 저장소) */
   const refresh = (name: string, body: { ref?: string; token?: string; tokenUsername?: string } = {}) =>
     action.run(async () => {
+      let result: { warnings: string[] };
       try {
-        await api("POST", `/marketplaces/${enc(name)}/refresh`, body);
+        result = await api<{ warnings: string[] }>("POST", `/marketplaces/${enc(name)}/refresh`, body);
       } catch (error) {
         if (error instanceof ApiError && error.code === "git_failed") setNeedsToken({ name, ...(body.ref !== undefined ? { ref: body.ref } : {}) });
         throw error;
@@ -84,7 +85,11 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
       setRefreshToken("");
       setRefreshUsername("");
       await props.onChanged();
-    }, `${name}을(를) 새로고침했습니다`);
+      return result;
+    }, (r) => {
+      const done = body.ref !== undefined ? `${name}의 branch를 바꾸고 설치된 plugin을 다시 설치했습니다` : `${name}을(를) 새로고침했습니다`;
+      return r.warnings.length ? `${done}. 확인할 점: ${r.warnings.join(" / ")}` : done;
+    });
 
   const add = (e: Event) => {
     e.preventDefault();
@@ -154,7 +159,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
                   class="small"
                   disabled={action.busy}
                   onClick={() => {
-                    const next = prompt("branch·tag (비우면 기본 브랜치)", m.ref ?? "");
+                    const next = prompt("branch·tag (비우면 기본 브랜치). 이 marketplace에서 설치한 plugin도 그 branch로 다시 설치합니다.", m.ref ?? "");
                     if (next !== null) void refresh(m.name, { ref: next.trim() });
                   }}
                 >
@@ -414,7 +419,7 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
         ))}
       </div>
       <p class="muted small-text">
-        marketplace를 새로고침하면 새 버전이 있는 plugin에 '업데이트 있음'이 붙습니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
+        marketplace를 새로고침하면 새 버전이 있는 plugin에 '업데이트 있음'이 붙습니다. branch를 바꾸면 그 marketplace의 plugin을 모두 다시 설치합니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
         알 수 있으니, 그 밖의 경우는 '다시 설치'로 최신 내용을 받으세요. 바뀐 내용은 새 세션부터 적용됩니다.
       </p>
     </Section>

@@ -522,21 +522,27 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
-  it("새로고침에 ref를 주면 그 branch로 바꾸고, 빈 문자열이면 기본 브랜치로 돌아간다", async () => {
+  it("새로고침에 ref를 주면 그 branch로 바꾸고 설치된 plugin을 다시 설치하며, 빈 문자열이면 기본 브랜치로 돌아간다", async () => {
     const fixture = buildFixture(tempDir("fixture-ref"));
-    const harness = await buildHarness();
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
     try {
       const added = await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "defect-agent-frontend" }, "t");
       git(fixture.mkt, "checkout", "-q", "-b", "dev");
-      write(fixture.mkt, "dev.txt", "dev");
+      write(fixture.mkt, `${daf}/.claude-plugin/plugin.json`, JSON.stringify({ name: "defect-agent-frontend", version: "2.0.0" }));
       const dev = commitAll(fixture.mkt);
       git(fixture.mkt, "checkout", "-q", "main");
 
       expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", { ref: "dev" }, "t")).toMatchObject({ ref: "dev", commitSha: dev });
-      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t")).toMatchObject({ ref: "dev", commitSha: dev });
+      expect(harness.plugins.getPlugin(ID).version).toBe("2.0.0");
+      // ref 없이 새로고침하면 branch를 유지하고 다시 설치하지 않는다 (설치 경고도 없다)
+      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t")).toMatchObject({ ref: "dev", commitSha: dev, warnings: [] });
       expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", { ref: "" }, "t")).toMatchObject({ ref: null, commitSha: added.commitSha });
+      expect(harness.plugins.getPlugin(ID).version).toBe("1.9.0");
     } finally {
       await harness.close();
+      await broker.close();
     }
   });
 

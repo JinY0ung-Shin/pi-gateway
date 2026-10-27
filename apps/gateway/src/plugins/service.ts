@@ -45,7 +45,7 @@ const AddMarketplaceInput = z.object({
 });
 
 const RefreshMarketplaceInput = z.object({
-  /** 주면 branch·tag를 바꾼다. 빈 문자열은 기본 브랜치. */
+  /** 주면 branch·tag를 바꾸고 이 marketplace에서 설치한 plugin을 다시 설치한다. 빈 문자열은 기본 브랜치. */
   ref: z.string().max(200).optional(),
   token: z.string().max(4096).optional(),
   tokenUsername: z.string().max(100).optional(),
@@ -323,7 +323,7 @@ export class PluginService implements PluginResources {
     });
   }
 
-  refreshMarketplace(name: string, input: unknown, actorInput?: string): Promise<MarketplaceView> {
+  refreshMarketplace(name: string, input: unknown, actorInput?: string): Promise<MarketplaceView & { warnings: string[] }> {
     const req = parse(RefreshMarketplaceInput, input);
     const actor = normalizeActor(actorInput);
     return this.#exclusive(async () => {
@@ -338,7 +338,19 @@ export class PluginService implements PluginResources {
         const localPath = await this.#placeMarketplace(dir, name);
         this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest, addedBy: record.addedBy });
         this.#log.info({ marketplace: name, commit, actor }, "marketplace refreshed");
-        return toMarketplaceView(this.store.getMarketplace(name)!);
+        const warnings: string[] = [];
+        if (req.ref !== undefined) {
+          for (const plugin of this.store.listPlugins().filter((p) => p.marketplace === name)) {
+            const auth = { ...(req.token ? { token: req.token } : {}), ...(req.tokenUsername ? { tokenUsername: req.tokenUsername } : {}) };
+            try {
+              const result = await this.#install({ marketplace: name, plugin: plugin.name, ...auth }, actor);
+              warnings.push(...result.warnings.map((w) => `${plugin.id}: ${w}`));
+            } catch (error) {
+              warnings.push(`${plugin.id}: 다시 설치하지 못해 그대로 둡니다 (${describe(error)})`);
+            }
+          }
+        }
+        return { ...toMarketplaceView(this.store.getMarketplace(name)!), warnings };
       } finally {
         await rm(work, { recursive: true, force: true });
       }
