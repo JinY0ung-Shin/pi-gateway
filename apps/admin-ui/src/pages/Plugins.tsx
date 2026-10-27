@@ -181,7 +181,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
                       void refresh(m.name, { ...(needsToken.ref !== undefined ? { ref: needsToken.ref } : {}), token: refreshToken, ...(refreshUsername ? { tokenUsername: refreshUsername } : {}) });
                     }}
                   >
-                    <span class="small-text">비공개 저장소면 token을 넣고 다시 받으세요 (저장하지 않습니다).</span>
+                    <span class="small-text">비공개 저장소면 token을 넣고 다시 받으세요 (저장하지 않습니다). 매번 넣지 않으려면 gateway에 PLUGIN_GIT_TOKEN을 설정하세요.</span>
                     <input
                       type="password"
                       autocomplete="off"
@@ -217,7 +217,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
           {action.busy ? "받는 중…" : "추가"}
         </button>
       </form>
-      <p class="muted small-text">token은 저장하지 않습니다. 저장소를 받는 동안에만 쓰입니다.</p>
+      <p class="muted small-text">
+        여기 넣은 token은 저장하지 않고 저장소를 받는 동안에만 씁니다. 비워 두면 gateway에 설정된 PLUGIN_GIT_TOKEN을 씁니다.
+      </p>
     </Section>
   );
 }

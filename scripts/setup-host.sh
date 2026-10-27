@@ -87,6 +87,8 @@ secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
 secret api_key             gen32 "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)
 secret user_api_keys       empty "$G/user_api_keys:$GW_UID"
+# 비공개 plugin marketplace 저장소의 git token은 운영자가 채운다 (빈 파일 = 쓰지 않음)
+secret plugin_git_token    empty "$G/plugin_git_token:$GW_UID"
 
 if [ -S "$DOCKER_SOCK" ]; then
   gid="$(stat -c %g "$DOCKER_SOCK")"

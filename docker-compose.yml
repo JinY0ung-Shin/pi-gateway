@@ -180,6 +180,8 @@ services:
       API_KEY_FILE: /run/secrets/api_key
       USER_API_KEYS_FILE: /run/secrets/user_api_keys
       ADMIN_API_KEY_FILE: /run/secrets/admin_api_key
+      # 비공개 plugin marketplace 저장소의 git token (빈 파일이면 쓰지 않음)
+      PLUGIN_GIT_TOKEN_FILE: /run/secrets/plugin_git_token
       AUTH_DISABLED: ${AUTH_DISABLED:-0}
       # 내부 서비스
       SANDBOXD_URL: http://sandboxd:7070
@@ -209,6 +211,8 @@ services:
         target: user_api_keys
       - source: gw_admin_api_key
         target: admin_api_key
+      - source: gw_plugin_git_token
+        target: plugin_git_token
       - source: gw_sandboxd_jwt_secret
         target: sandboxd_jwt_secret
       - source: gw_broker_jwt_secret
@@ -262,6 +266,8 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/user_api_keys
   gw_admin_api_key:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_api_key
+  gw_plugin_git_token:
+    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/plugin_git_token
   gw_sandboxd_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/sandboxd_jwt_secret
   gw_broker_jwt_secret:

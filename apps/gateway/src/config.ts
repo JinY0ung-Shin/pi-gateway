@@ -12,6 +12,8 @@ export interface GatewayConfig {
   dataDir: string;
   /** 설치된 plugin 루트. gateway와 sandbox에서 같은 경로다. */
   pluginsDir: string;
+  /** marketplace 저장소를 받을 때 요청에 token이 없으면 쓰는 git token */
+  pluginGitToken: string | undefined;
   auth: {
     /** 서비스 키. 이 키로 들어온 요청은 body.user를 그대로 믿는다. */
     apiKey: string | undefined;
@@ -146,6 +148,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     logLevel: env.LOG_LEVEL || "info",
     dataDir: env.DATA_DIR || "/data",
     pluginsDir: env.PLUGINS_DIR || "/opt/plugins",
+    pluginGitToken: readSecret(env, "PLUGIN_GIT_TOKEN") || undefined,
     auth: { apiKey, userApiKeys, adminApiKey, disabled },
     sandboxd: {
       url: (env.SANDBOXD_URL || "http://sandboxd:7070").replace(/\/+$/, ""),

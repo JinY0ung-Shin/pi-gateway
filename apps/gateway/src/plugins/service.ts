@@ -166,10 +166,11 @@ export class PluginService implements PluginResources {
   readonly #marketplacesDir: string;
   readonly #allowLocal: boolean;
   readonly #gitTimeoutMs: number;
+  readonly #gitToken: string | undefined;
   #cache: ResourceCache | undefined;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(db: Db, config: Pick<GatewayConfig, "pluginsDir" | "dataDir">, options: PluginServiceOptions) {
+  constructor(db: Db, config: Pick<GatewayConfig, "pluginsDir" | "dataDir" | "pluginGitToken">, options: PluginServiceOptions) {
     this.store = new PluginStore(db);
     this.#registry = options.registry;
     this.#log = options.log;
@@ -178,6 +179,7 @@ export class PluginService implements PluginResources {
     this.#marketplacesDir = join(config.dataDir, "plugin-marketplaces");
     this.#allowLocal = options.allowLocalSources ?? false;
     this.#gitTimeoutMs = options.gitTimeoutMs ?? 120_000;
+    this.#gitToken = config.pluginGitToken;
   }
 
   // ── PluginResources ────────────────────────────────────────────
@@ -542,7 +544,8 @@ export class PluginService implements PluginResources {
       tmpRoot: work,
       allowLocal: this.#allowLocal,
       timeoutMs: this.#gitTimeoutMs,
-      token: auth.token,
+      // 설정된 token은 marketplace와 같은 호스트에만 보낸다 (marketplace.json이 가리키는 다른 서버로 새지 않게)
+      token: auth.token ?? (sameHost(url, marketplace.url) ? this.#gitToken : undefined),
       username: auth.tokenUsername,
     });
     const pins = { ...(source.ref ? { ref: source.ref } : {}), ...(source.sha ? { sha: source.sha } : {}), listedVersion: entry.version ?? null };
@@ -676,7 +679,7 @@ export class PluginService implements PluginResources {
         tmpRoot: work,
         allowLocal: this.#allowLocal,
         timeoutMs: this.#gitTimeoutMs,
-        token: auth.token,
+        token: auth.token ?? this.#gitToken,
         username: auth.tokenUsername,
       });
       const manifest = await readMarketplaceManifest(dir);
@@ -818,4 +821,12 @@ function toPluginView(record: PluginRecord, marketplace: MarketplaceRecord | und
 function describe(error: unknown): string {
   if (error instanceof PlatformError) return `${error.code}: ${error.message}`;
   return error instanceof Error ? error.message : String(error);
+}
+
+function sameHost(a: string, b: string): boolean {
+  try {
+    return new URL(a).host === new URL(b).host;
+  } catch {
+    return false;
+  }
 }

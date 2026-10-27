@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -21,6 +24,14 @@ describe("gateway config", () => {
     const { broker } = loadConfig({ ...base });
     expect([broker.url, broker.adminUrl]).toEqual(["http://mcp-broker:7080", "http://mcp-broker:7081"]);
     expect(() => loadConfig({ ...base, BROKER_JWT_SECRET: "" })).toThrow(/BROKER_JWT_SECRET/);
+  });
+
+  it("reads PLUGIN_GIT_TOKEN_FILE and treats an empty file as unset", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "gw-config-")), "plugin_git_token");
+    writeFileSync(file, "");
+    expect(loadConfig({ ...base, PLUGIN_GIT_TOKEN_FILE: file }).pluginGitToken).toBeUndefined();
+    writeFileSync(file, "ghp_token\n");
+    expect(loadConfig({ ...base, PLUGIN_GIT_TOKEN_FILE: file }).pluginGitToken).toBe("ghp_token");
   });
 
   it("treats empty env strings as unset", () => {
