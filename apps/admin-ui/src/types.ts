@@ -138,7 +138,6 @@ export interface McpRecord {
   status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
   requiredSecrets: string[];
-  missingSecrets?: string[];
   warnings: string[];
 }
 

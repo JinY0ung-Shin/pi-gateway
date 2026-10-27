@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
-import type { CatalogEntry, MarketplaceView, McpScope, PluginView } from "../types";
+import type { CatalogEntry, MarketplaceView, McpScope, McpServerList, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
   unsupported: "지원 안 함",
@@ -29,17 +29,21 @@ const UNSUPPORTED_LABEL: Record<string, string> = {
 export function PluginsPage() {
   const [marketplaces, setMarketplaces] = useState<MarketplaceView[]>([]);
   const [plugins, setPlugins] = useState<PluginView[]>([]);
+  /** MCP 서버 id → 아직 넣지 않은 비밀키 (plugin 기록이 아니라 MCP 목록의 지금 상태) */
+  const [missingSecrets, setMissingSecrets] = useState<Map<string, string[]>>(new Map());
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = async () => {
     try {
-      const [m, p] = await Promise.all([
+      const [m, p, s] = await Promise.all([
         api<{ marketplaces: MarketplaceView[] }>("GET", "/marketplaces"),
         api<{ plugins: PluginView[] }>("GET", "/plugins"),
+        api<McpServerList>("GET", "/mcp/servers"),
       ]);
       setMarketplaces(m.marketplaces);
       setPlugins(p.plugins);
+      setMissingSecrets(new Map(s.servers.map((e) => [e.config.id, e.missingSecrets ?? []])));
       setError(null);
     } catch (err) {
       setError(errorText(err));
@@ -54,7 +58,7 @@ export function PluginsPage() {
       {error && <Notice tone="error">{error}</Notice>}
       <Marketplaces marketplaces={marketplaces} onSelect={setSelected} onChanged={reload} />
       {selected && <Catalog key={selected} name={selected} onInstalled={reload} onClose={() => setSelected(null)} />}
-      <Installed plugins={plugins} onChanged={reload} />
+      <Installed plugins={plugins} missingSecrets={missingSecrets} onChanged={reload} />
       <McpDefaults />
     </>
   );
@@ -311,7 +315,7 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void>; onClos
   );
 }
 
-function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void> }) {
+function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, string[]>; onChanged: () => Promise<void> }) {
   const action = useAction();
   return (
     <Section title="설치된 plugin">
@@ -355,7 +359,7 @@ function Installed(props: { plugins: PluginView[]; onChanged: () => Promise<void
                       <Badge tone="red" title={m.reason}>
                         {MCP_STATUS_LABEL[m.status] ?? m.status}
                       </Badge>
-                    ) : (m.missingSecrets ?? []).length > 0 ? (
+                    ) : m.id && (props.missingSecrets.get(m.id) ?? []).length > 0 ? (
                       <Badge tone="amber">비밀키 필요</Badge>
                     ) : null,
                 }))}
