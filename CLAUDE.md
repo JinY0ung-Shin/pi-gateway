@@ -13,6 +13,7 @@ If it grows heavy again, it has lost its reason to exist.
 3. **Look for deletions before additions.** When changing something, remove any code, config, docs or scripts that the change makes unnecessary.
 4. **Keep verification proportional.** Run the existing checks (`npm run typecheck`, `npx vitest run`) and add only the tests the change needs. Extra harnesses, tooling, review rounds or agents only when asked.
 5. **Keep explanations short.** Lead with the purpose. If more work seems worthwhile, propose it in one line; don't build it.
+6. **Avoid new environment variables.** Hardcode a value if you can. If operators really must change it, put it in the admin panel instead. Use an environment variable only for what must be known at startup (addresses, secrets, resource sizes). Every new variable also goes into `.env.example` and `docker-compose.yml`, so prefer removing one to adding one.
 
 ## When a request conflicts with the principle
 
