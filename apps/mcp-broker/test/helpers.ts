@@ -37,6 +37,8 @@ export interface TestBroker {
   broker: Broker;
   config: BrokerConfig;
   dataUrl: string;
+  /** broker가 남긴 로그 (JSON 한 줄씩) */
+  logs: Record<string, unknown>[];
   token(claims: InternalClaims): Promise<string>;
   admin(method: "GET" | "PUT" | "POST" | "DELETE", url: string, body?: unknown): Promise<{ status: number; text: string; json: () => any }>;
   /** 관리 API로 http upstream 서버를 등록한다 */
@@ -46,14 +48,15 @@ export interface TestBroker {
 
 export async function startTestBroker(overrides: Partial<BrokerConfig> = {}): Promise<TestBroker> {
   const config = testConfig(overrides);
-  const broker = createBroker(config, { log: pino({ level: "silent" }) });
+  const logs: Record<string, unknown>[] = [];
+  const broker = createBroker(config, { log: pino({ level: "info" }, { write: (line: string) => logs.push(JSON.parse(line)) }) });
   const address = await broker.dataPlane.listen({ host: "127.0.0.1", port: 0 });
   const admin: TestBroker["admin"] = async (method, url, body) => {
     const token = await signInternalToken(config.jwtSecret, AUD_BROKER_ADMIN, { sub: "_admin" });
     const res = await broker.adminPlane.inject({
       method,
       url,
-      headers: { authorization: `Bearer ${token}`, "x-admin-actor": "tester" },
+      headers: { authorization: `Bearer ${token}` },
       ...(body !== undefined ? { payload: body as object } : {}),
     });
     return { status: res.statusCode, text: res.body, json: () => JSON.parse(res.body) };
@@ -62,6 +65,7 @@ export async function startTestBroker(overrides: Partial<BrokerConfig> = {}): Pr
     broker,
     config,
     dataUrl: address,
+    logs,
     token: (claims) => signInternalToken(config.jwtSecret, AUD_BROKER, claims),
     admin,
     async addHttpServer(id, url, extra = {}) {

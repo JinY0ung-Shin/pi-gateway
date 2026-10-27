@@ -137,7 +137,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       ],
       defaultModel,
     });
-    await gateway.models.update(settings, "test");
+    await gateway.models.update(settings);
   }
   await gateway.app.listen({ host: "127.0.0.1", port: 0 });
   const address = gateway.app.server.address();

@@ -5,7 +5,6 @@ export interface LivePrompt {
   version: number | null;
   revision: string;
   deployedAt: string;
-  deployedBy: string;
   isDefault: boolean;
   content: string;
 }
@@ -21,7 +20,6 @@ export interface PromptVersion {
   version: number;
   content: string;
   message: string;
-  author: string;
   createdAt: string;
 }
 
@@ -38,7 +36,6 @@ export interface PromptDeployment {
   action: "deploy" | "rollback" | "reset";
   name: string | null;
   version: number | null;
-  actor: string;
   note: string;
   fromName: string | null;
   fromVersion: number | null;

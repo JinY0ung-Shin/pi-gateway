@@ -181,7 +181,7 @@ export interface FakeBroker {
   servers: Map<string, McpServerConfig>;
   /** 받은 비밀값 (serverId → name → value) — 관리 API가 broker까지 전달했는지 확인용 */
   secrets: Map<string, Map<string, string>>;
-  requests: { method: string; url: string; actor?: string }[];
+  requests: { method: string; url: string }[];
   /** true면 모든 연결을 끊는다 (broker 장애 흉내) */
   setDown(down: boolean): void;
   /** 꺼져 있을 때 들어와서 끊은 요청 */
@@ -219,8 +219,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       req.raw.socket.destroy();
       return;
     }
-    const actor = req.headers["x-admin-actor"];
-    requests.push({ method: req.method, url: req.url, ...(typeof actor === "string" ? { actor: decodeURIComponent(actor) } : {}) });
+    requests.push({ method: req.method, url: req.url });
     if (req.url.startsWith("/admin/")) {
       const token = bearerToken(req.headers.authorization);
       const valid = token !== null && (await verifyInternalToken(jwtSecret, AUD_BROKER_ADMIN, token).then(() => true, () => false));

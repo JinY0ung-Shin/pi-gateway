@@ -12,6 +12,8 @@ const MIGRATIONS = [
      updated_at TEXT NOT NULL,
      updated_by TEXT NOT NULL
    )`,
+  // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
+  `ALTER TABLE disabled_tools DROP COLUMN updated_by`,
 ];
 
 export class ToolSettings {
@@ -25,10 +27,10 @@ export class ToolSettings {
     return new Set((this.db.prepare("SELECT name FROM disabled_tools").all() as { name: string }[]).map((r) => r.name));
   }
 
-  setEnabled(name: string, enabled: boolean, actor: string): void {
+  setEnabled(name: string, enabled: boolean): void {
     const { changes } = enabled
       ? this.db.prepare("DELETE FROM disabled_tools WHERE name = ?").run(name)
-      : this.db.prepare("INSERT OR IGNORE INTO disabled_tools (name, updated_at, updated_by) VALUES (?, ?, ?)").run(name, new Date().toISOString(), actor);
+      : this.db.prepare("INSERT OR IGNORE INTO disabled_tools (name, updated_at) VALUES (?, ?)").run(name, new Date().toISOString());
     if (changes > 0) this.#revision++;
   }
 

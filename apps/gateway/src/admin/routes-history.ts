@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { SessionRecord } from "../sessions/store.js";
 import { readTranscript } from "../sessions/transcript.js";
-import { actorOf } from "./auth.js";
 import type { AdminContext } from "./context.js";
 import { PlatformError } from "./errors.js";
 
@@ -20,9 +19,8 @@ export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): 
     if (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > MAX_RETENTION_DAYS) {
       throw new PlatformError(400, "invalid_retention", `days must be an integer from 0 to ${MAX_RETENTION_DAYS}`);
     }
-    const actor = actorOf(req);
-    ctx.log.info({ actor, days }, "session retention updated");
-    return sessions.setRetention(days, actor);
+    ctx.log.info({ days }, "session retention updated");
+    return sessions.setRetention(days);
   });
 
   app.get<{ Querystring: { user?: string } }>("/history", async (req) => ({

@@ -34,7 +34,6 @@ interface LlmView {
   configured: boolean;
   settings: { servers: ServerView[]; defaultModel: string } | null;
   updatedAt: string | null;
-  updatedBy: string | null;
 }
 
 interface ProbeResult {
@@ -246,7 +245,7 @@ export function LlmPage() {
       {!view.configured && <Notice tone="warn">LLM이 설정되지 않았습니다. 설정하기 전에는 /v1/responses가 503을 돌려줍니다.</Notice>}
       <p class="muted small-text">
         서버 {servers.length}대 · 모델 {modelCount}개 · 기본 모델 <span class="mono">{defaultModel || "없음"}</span>
-        {view.updatedAt && ` · 마지막 저장 ${formatTime(view.updatedAt)} (${view.updatedBy})`}
+        {view.updatedAt && ` · 마지막 저장 ${formatTime(view.updatedAt)}`}
       </p>
       {servers.map((s) => (
         <ServerCard

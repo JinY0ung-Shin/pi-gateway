@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import { actorOf } from "./auth.js";
 import type { AdminContext } from "./context.js";
 
 type NameParams = { Params: { name: string } };
@@ -12,18 +11,18 @@ export function registerPluginRoutes(app: FastifyInstance, ctx: AdminContext): v
   app.get("/marketplaces", async () => ({ marketplaces: plugins.listMarketplaces() }));
 
   app.post<{ Body: unknown }>("/marketplaces", async (req, reply) => {
-    const created = await plugins.addMarketplace(req.body, actorOf(req));
+    const created = await plugins.addMarketplace(req.body);
     return reply.code(201).send(created);
   });
 
   app.get<NameParams>("/marketplaces/:name", async (req) => plugins.getMarketplace(req.params.name));
 
   app.post<NameParams & { Body: unknown }>("/marketplaces/:name/refresh", async (req) =>
-    plugins.refreshMarketplace(req.params.name, req.body, actorOf(req)),
+    plugins.refreshMarketplace(req.params.name, req.body),
   );
 
   app.delete<NameParams>("/marketplaces/:name", async (req, reply) => {
-    await plugins.removeMarketplace(req.params.name, actorOf(req));
+    await plugins.removeMarketplace(req.params.name);
     return reply.code(204).send();
   });
 
@@ -31,22 +30,22 @@ export function registerPluginRoutes(app: FastifyInstance, ctx: AdminContext): v
   app.get("/plugins", async () => ({ plugins: plugins.listPlugins() }));
 
   app.post<{ Body: unknown }>("/plugins/install", async (req, reply) => {
-    const result = await plugins.install(req.body, actorOf(req));
+    const result = await plugins.install(req.body);
     return reply.code(201).send(result);
   });
 
   app.get<{ Params: { id: string; name: string } }>("/plugins/:id/skills/:name", async (req) => plugins.skillContent(req.params.id, req.params.name));
 
-  app.post<IdParams>("/plugins/:id/update", async (req) => plugins.update(req.params.id, actorOf(req)));
+  app.post<IdParams>("/plugins/:id/update", async (req) => plugins.update(req.params.id));
 
-  app.post<IdParams>("/plugins/:id/enable", async (req) => plugins.setEnabled(req.params.id, true, actorOf(req)));
+  app.post<IdParams>("/plugins/:id/enable", async (req) => plugins.setEnabled(req.params.id, true));
 
-  app.post<IdParams>("/plugins/:id/disable", async (req) => plugins.setEnabled(req.params.id, false, actorOf(req)));
+  app.post<IdParams>("/plugins/:id/disable", async (req) => plugins.setEnabled(req.params.id, false));
 
-  app.delete<IdParams>("/plugins/:id", async (req) => plugins.uninstall(req.params.id, actorOf(req)));
+  app.delete<IdParams>("/plugins/:id", async (req) => plugins.uninstall(req.params.id));
 
   // ── plugin MCP 기본값 ──
   app.get("/plugin-settings", async () => plugins.getSettings());
 
-  app.put<{ Body: unknown }>("/plugin-settings", async (req) => plugins.updateSettings(req.body, actorOf(req)));
+  app.put<{ Body: unknown }>("/plugin-settings", async (req) => plugins.updateSettings(req.body));
 }

@@ -159,8 +159,7 @@ apps/gateway/src/tools/
   providers/
     sandbox.ts         read, write, edit, ls, find, bash, grep
     ask-user.ts        AskUserQuestion
-    mcp-broker.ts      broker MCP 서버
-    mcp-sandbox.ts     sandbox MCP 서버
+    mcp.ts             MCP 서버 (broker·sandbox)
 ```
 
 인터페이스(`ToolProvider`, `ToolSessionContext`)와 각 필드의 뜻은 `provider.ts`의 주석에 있어요. provider는 세션마다 `createTools(ctx)`로 도구를 만들고, 파일·명령은 `ctx.sandbox`로만 다뤄요.
@@ -168,7 +167,7 @@ apps/gateway/src/tools/
 ### 순서
 
 1. `apps/gateway/src/tools/providers/<이름>.ts`에 provider를 만들어요.
-2. `apps/gateway/src/tools/registry.ts`의 `createDefaultToolProviders()` 목록에 추가해요. 목록 순서가 이름이 겹칠 때의 우선순위예요.
+2. `apps/gateway/src/tools/registry.ts`의 `createDefaultToolProviders()` 목록에 추가해요. 목록 순서가 도구 순서예요.
 3. 테스트를 추가해요. 가짜 LLM이 도구를 호출하게 하고 가짜 sandboxd에 간 요청을 확인하는 하네스가 `apps/gateway/test/helpers.ts`에 있어요.
 4. gateway를 다시 배포해요.
 

@@ -48,11 +48,11 @@ describe("PromptManager", () => {
 
   it("버전 관리: 같은 내용 422, append-only", async () => {
     h = await buildHarness();
-    const created = h.prompts.create({ name: "ops", content: "Hello {{USER}}", description: "운영" }, "jin");
+    const created = h.prompts.create({ name: "ops", content: "Hello {{USER}}", description: "운영" });
     expect(created.versions).toHaveLength(1);
-    const v2 = h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}", message: "인사 변경" }, "jin");
+    const v2 = h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}", message: "인사 변경" });
     expect(v2.version).toBe(2);
-    expect(() => h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}" }, "jin")).toThrow(
+    expect(() => h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}" })).toThrow(
       expect.objectContaining({ status: 422, code: "no_change" }),
     );
     expect(() => h.db.prepare("UPDATE prompt_versions SET content = 'x' WHERE name = 'ops'").run()).toThrow(/append-only/);
@@ -67,7 +67,7 @@ describe("PromptManager", () => {
     const start = h.prompts.live();
     expect(start.isDefault).toBe(true);
 
-    const d2 = h.prompts.deploy("ops", { version: 2 }, "jin");
+    const d2 = h.prompts.deploy("ops", { version: 2 });
     expect(d2.live.version).toBe(2);
     expect(h.prompts.snapshotForSession(input("bob"))).toBe("v2 for bob");
 

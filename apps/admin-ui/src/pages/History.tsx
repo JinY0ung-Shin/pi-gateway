@@ -17,7 +17,6 @@ interface SessionSummary {
 interface Retention {
   days: number;
   updatedAt: string | null;
-  updatedBy: string | null;
 }
 
 type Content = string | { type: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: unknown }[];
@@ -138,7 +137,7 @@ function RetentionSection() {
       </div>
       <p class="muted small-text">
         마지막 활동 뒤 이 기간이 지난 세션은 기록이 지워져 더 이상 이어갈 수 없습니다. 0이면 지우지 않습니다. workspace 파일은 남습니다.
-        {retention?.updatedAt && ` (마지막 변경 ${formatTime(retention.updatedAt)}, ${retention.updatedBy})`}
+        {retention?.updatedAt && ` (마지막 변경 ${formatTime(retention.updatedAt)})`}
       </p>
     </Section>
   );

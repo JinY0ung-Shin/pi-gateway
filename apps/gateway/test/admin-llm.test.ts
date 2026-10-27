@@ -219,7 +219,7 @@ describe("stored settings from before several servers", () => {
       models: [{ id: "m", contextWindow: 32768, maxTokens: 8192, reasoning: false, input: ["text"] }],
       defaultModel: "m",
     };
-    db.prepare("INSERT INTO llm_settings (id, settings_json, updated_at, updated_by) VALUES (1, ?, ?, ?)").run(JSON.stringify(old), "2026-10-01T00:00:00.000Z", "admin");
+    db.prepare("INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)").run(JSON.stringify(old), "2026-10-01T00:00:00.000Z");
     db.prepare("DELETE FROM schema_migrations WHERE module = 'llm' AND step = 1").run();
 
     const models = await createModelRuntime(db);

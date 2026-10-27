@@ -183,15 +183,3 @@ export class AdminAuth {
     return Boolean(row && row.revoked_at === null && Date.parse(row.expires_at) > Date.now());
   }
 }
-
-/** `X-Admin-Actor`(percent-encoded)가 있으면 그 이름, 없으면 "admin" */
-export function actorOf(req: FastifyRequest): string {
-  const raw = req.headers["x-admin-actor"];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (!value) return "admin";
-  try {
-    return decodeURIComponent(value).trim().slice(0, 120) || "admin";
-  } catch {
-    return "admin";
-  }
-}

@@ -38,11 +38,13 @@ const MIGRATIONS = [
    )`,
   // broker는 stdio 서버를 더 실행하지 않는다. 남아 있던 stdio 서버와 그 비밀키를 지운다.
   `DELETE FROM servers WHERE json_extract(config, '$.transport.type') = 'stdio'`,
+  // 감사 기록은 읽는 곳이 없어 로그("admin change")로 옮겼다.
+  `DROP TABLE audit`,
 ] as const;
 
 export interface StoredServer {
   config: McpServerConfig;
-  /** 설정이 바뀔 때마다 증가한다 (감사 기록용). */
+  /** 설정이 바뀔 때마다 증가한다 (변경 로그용). */
   revision: number;
 }
 
@@ -199,12 +201,6 @@ export class BrokerStore {
   missingSecrets(server: StoredServer): string[] {
     const present = new Set(this.listSecretMeta(server.config.id).map((s) => s.name));
     return requiredSecretNames(server.config).filter((name) => !present.has(name));
-  }
-
-  addAudit(record: { actor: string; action: string; serverId?: string; detail?: string }): void {
-    this.#db
-      .prepare("INSERT INTO audit (at, actor, action, server_id, detail) VALUES (?, ?, ?, ?, ?)")
-      .run(new Date().toISOString(), record.actor, record.action, record.serverId ?? null, record.detail ?? null);
   }
 }
 

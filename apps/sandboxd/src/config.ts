@@ -84,12 +84,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
     memoryBytes: parseBytes("SANDBOX_MEMORY", env.SANDBOX_MEMORY ?? "1g"),
     nanoCpus: Math.round(cpus * 1e9),
     pidsLimit: int(env, "SANDBOX_PIDS_LIMIT", 256, 16),
-    tmpSize: env.SANDBOX_TMP_SIZE ?? "256m",
-    shmSizeBytes: parseBytes("SANDBOX_SHM_SIZE", env.SANDBOX_SHM_SIZE ?? "64m"),
+    tmpSize: "256m",
+    shmSizeBytes: 64 * 1024 * 1024,
     idleSeconds,
     reapIntervalMs: Math.min(60, Math.max(5, Math.floor(idleSeconds / 4))) * 1000,
     containerPrefix: "pi-sbx-",
     instance: "default",
-    fsTimeoutSeconds: int(env, "SANDBOX_FS_TIMEOUT_SECONDS", 60, 1),
+    fsTimeoutSeconds: 60,
   };
 }

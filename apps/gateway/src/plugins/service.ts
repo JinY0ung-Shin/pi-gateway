@@ -11,7 +11,6 @@ import type { GatewayConfig } from "../config.js";
 import type { PluginResources, SubagentDefinition } from "../contracts.js";
 import type { Db } from "../db.js";
 import { type McpRegistryService, type McpServerEntry, policyProblems } from "../mcp-registry/service.js";
-import { normalizeActor } from "../prompts/service.js";
 import { discoverComponents, rewriteTextFiles } from "./components.js";
 import { gitFetch, normalizeGitUrl } from "./git.js";
 import { type JsonObject, readPluginManifest, safeVersion, str } from "./manifest.js";
@@ -72,7 +71,6 @@ export interface MarketplaceView {
   pluginCount: number;
   invalidEntries: number;
   refreshedAt: string;
-  addedBy: string;
 }
 
 export interface CatalogEntry {
@@ -96,7 +94,6 @@ export interface PluginView {
   source: ResolvedSource;
   installedAt: string;
   updatedAt: string;
-  installedBy: string;
   components: PluginRecord["components"];
   mcp: McpRecord[];
   /** marketplace의 지금 내용으로 다시 설치하면 받는 버전 (설치본과 다를 때만) */
@@ -233,7 +230,7 @@ export class PluginService implements PluginResources {
   }
 
   /** 저장하고, 설치된 plugin의 MCP 서버도 새 기본값으로 다시 등록한다 (관리자가 MCP 탭에서 바꾼 값은 유지한다). */
-  updateSettings(input: unknown, actorInput?: string): Promise<PluginSettings & { warnings: string[] }> {
+  updateSettings(input: unknown): Promise<PluginSettings & { warnings: string[] }> {
     const req = parse(SettingsInput, input);
     for (const [key, value] of Object.entries(req.mcpDefaults.env)) {
       const { refs, unknown } = findTemplateRefs(value);
@@ -242,14 +239,13 @@ export class PluginService implements PluginResources {
         throw badRequest(`env ${key}: sandbox servers must not use {{secret:...}} or {{ctx.header:...}}`);
       }
     }
-    const actor = normalizeActor(actorInput);
     return this.#exclusive(async () => {
       const plugins = this.store.listPlugins().filter((p) => p.mcp.length > 0);
       // 다시 등록하다 broker가 안 되면 서버 기록이 오류로 바뀐다. 아무것도 바꾸기 전에 503으로 끝낸다.
       if (plugins.some(usesBroker)) await this.#registry.assertBrokerReachable();
-      this.store.setSetting(SETTINGS_KEY, req.mcpDefaults, actor);
+      this.store.setSetting(SETTINGS_KEY, req.mcpDefaults);
       const warnings: string[] = [];
-      for (const record of plugins) warnings.push(...(await this.#remapInstalledMcp(record, actor)));
+      for (const record of plugins) warnings.push(...(await this.#remapInstalledMcp(record)));
       return { ...this.getSettings(), warnings };
     });
   }
@@ -280,9 +276,8 @@ export class PluginService implements PluginResources {
     };
   }
 
-  addMarketplace(input: unknown, actorInput?: string): Promise<MarketplaceView> {
+  addMarketplace(input: unknown): Promise<MarketplaceView> {
     const req = parse(AddMarketplaceInput, input);
-    const actor = normalizeActor(actorInput);
     return this.#exclusive(async () => {
       const url = normalizeGitUrl(req.url, this.#allowLocal);
       const { dir, commit, manifest, work } = await this.#cloneMarketplace(url, req.ref);
@@ -298,9 +293,8 @@ export class PluginService implements PluginResources {
           commitSha: commit,
           localPath,
           manifest,
-          addedBy: actor,
         });
-        this.#log.info({ marketplace: manifest.name, commit, actor }, "marketplace added");
+        this.#log.info({ marketplace: manifest.name, commit }, "marketplace added");
         return toMarketplaceView(this.store.getMarketplace(manifest.name)!);
       } finally {
         await rm(work, { recursive: true, force: true });
@@ -308,9 +302,8 @@ export class PluginService implements PluginResources {
     });
   }
 
-  refreshMarketplace(name: string, input: unknown, actorInput?: string): Promise<MarketplaceView & { warnings: string[] }> {
+  refreshMarketplace(name: string, input: unknown): Promise<MarketplaceView & { warnings: string[] }> {
     const req = parse(RefreshMarketplaceInput, input);
-    const actor = normalizeActor(actorInput);
     return this.#exclusive(async () => {
       const record = this.store.getMarketplace(name);
       if (!record) throw notFound(`marketplace '${name}' not found`);
@@ -322,12 +315,12 @@ export class PluginService implements PluginResources {
         }
         const localPath = await this.#placeMarketplace(dir, name);
         this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest });
-        this.#log.info({ marketplace: name, commit, actor }, "marketplace refreshed");
+        this.#log.info({ marketplace: name, commit }, "marketplace refreshed");
         const warnings: string[] = [];
         if (req.ref !== undefined) {
           for (const plugin of this.store.listPlugins().filter((p) => p.marketplace === name)) {
             try {
-              const result = await this.#install({ marketplace: name, plugin: plugin.name }, actor);
+              const result = await this.#install({ marketplace: name, plugin: plugin.name });
               warnings.push(...result.warnings.map((w) => `${plugin.id}: ${w}`));
             } catch (error) {
               warnings.push(`${plugin.id}: 다시 설치하지 못해 그대로 둡니다 (${describe(error)})`);
@@ -341,8 +334,7 @@ export class PluginService implements PluginResources {
     });
   }
 
-  removeMarketplace(name: string, actorInput?: string): Promise<void> {
-    const actor = normalizeActor(actorInput);
+  removeMarketplace(name: string): Promise<void> {
     return this.#exclusive(async () => {
       const record = this.store.getMarketplace(name);
       if (!record) throw notFound(`marketplace '${name}' not found`);
@@ -352,7 +344,7 @@ export class PluginService implements PluginResources {
       }
       this.store.deleteMarketplace(name);
       await rm(record.localPath, { recursive: true, force: true });
-      this.#log.info({ marketplace: name, actor }, "marketplace removed");
+      this.#log.info({ marketplace: name }, "marketplace removed");
     });
   }
 
@@ -377,52 +369,49 @@ export class PluginService implements PluginResources {
     return { content: (await readContainedFile(record.installPath, relative(record.installPath, skill.filePath))) ?? "" };
   }
 
-  install(input: unknown, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
+  install(input: unknown): Promise<{ plugin: PluginView; warnings: string[] }> {
     const req = parse(InstallInput, input);
-    const actor = normalizeActor(actorInput);
-    return this.#exclusive(() => this.#install(req, actor));
+    return this.#exclusive(() => this.#install(req));
   }
 
   /** marketplace의 현재 내용으로 다시 설치한다 (먼저 marketplace를 새로고침해야 새 버전이 보인다). */
-  update(id: string, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
+  update(id: string): Promise<{ plugin: PluginView; warnings: string[] }> {
     const record = this.store.getPlugin(id);
     if (!record) throw notFound(`plugin '${id}' not found`);
-    return this.install({ marketplace: record.marketplace, plugin: record.name }, actorInput);
+    return this.install({ marketplace: record.marketplace, plugin: record.name });
   }
 
-  setEnabled(id: string, enabled: boolean, actorInput?: string): Promise<{ plugin: PluginView; warnings: string[] }> {
-    const actor = normalizeActor(actorInput);
+  setEnabled(id: string, enabled: boolean): Promise<{ plugin: PluginView; warnings: string[] }> {
     return this.#exclusive(async () => {
       const record = this.store.getPlugin(id);
       if (!record) throw notFound(`plugin '${id}' not found`);
       // MCP 서버 상태를 먼저 바꾼다. broker 서버가 있는 plugin은 broker가 안 되면 503으로 끝나고 상태도 그대로 둔다.
-      await this.#registry.setPluginServersEnabled(id, enabled, actor, { broker: usesBroker(record) });
+      await this.#registry.setPluginServersEnabled(id, enabled, { broker: usesBroker(record) });
       this.store.setEnabled(id, enabled);
       this.store.bumpRevision();
-      this.#log.info({ plugin: id, enabled, actor }, "plugin enabled state changed");
+      this.#log.info({ plugin: id, enabled }, "plugin enabled state changed");
       return { plugin: this.getPlugin(id), warnings: [] };
     });
   }
 
-  uninstall(id: string, actorInput?: string): Promise<{ removedMcpServers: string[] }> {
-    const actor = normalizeActor(actorInput);
+  uninstall(id: string): Promise<{ removedMcpServers: string[] }> {
     return this.#exclusive(async () => {
       const record = this.store.getPlugin(id);
       if (!record) throw notFound(`plugin '${id}' not found`);
       // broker 쪽을 지우지 못하면 503으로 끝난다 (서버와 비밀키가 남은 채 plugin만 사라지지 않게 한다).
       // broker 서버가 없는 plugin은 broker에 묻지 않는다.
-      const removedMcpServers = await this.#registry.removePluginServers(id, actor, { broker: usesBroker(record) });
+      const removedMcpServers = await this.#registry.removePluginServers(id, { broker: usesBroker(record) });
       this.store.deletePlugin(id);
       this.store.bumpRevision();
       await rm(join(this.#pluginsDir, record.marketplace, record.name), { recursive: true, force: true });
-      this.#log.info({ plugin: id, actor }, "plugin uninstalled");
+      this.#log.info({ plugin: id }, "plugin uninstalled");
       return { removedMcpServers };
     });
   }
 
   // ── 내부 ───────────────────────────────────────────────────────
 
-  async #install(req: z.infer<typeof InstallInput>, actor: string): Promise<{ plugin: PluginView; warnings: string[] }> {
+  async #install(req: z.infer<typeof InstallInput>): Promise<{ plugin: PluginView; warnings: string[] }> {
     const marketplace = this.store.getMarketplace(req.marketplace);
     if (!marketplace) throw notFound(`marketplace '${req.marketplace}' not found`);
     const entry = marketplace.manifest.plugins.find((p) => p.name === req.plugin);
@@ -487,7 +476,6 @@ export class PluginService implements PluginResources {
           copySkipped: copy.skipped,
         },
         mcp: previous?.mcp ?? [],
-        installedBy: actor,
       };
       if (description && !record.manifest) record.manifest = { description };
       this.store.upsertPlugin(record);
@@ -497,7 +485,6 @@ export class PluginService implements PluginResources {
         id,
         pluginName: entry.name,
         previous: previous?.mcp ?? [],
-        actor,
       });
       this.store.setPluginMcp(id, mcp);
       this.store.bumpRevision();
@@ -507,7 +494,7 @@ export class PluginService implements PluginResources {
       for (const s of copy.skipped) warnings.push(`건너뛴 파일 ${s.path}: ${s.reason}`);
       for (const m of mcp) if (m.status !== "registered") warnings.push(`MCP 서버 ${m.name}: ${m.reason ?? m.status}`);
       warnings.push(...mcpWarnings);
-      this.#log.info({ plugin: id, version, actor, skills: found.skills.length, commands: found.commands.length, mcp: mcp.length }, "plugin installed");
+      this.#log.info({ plugin: id, version, skills: found.skills.length, commands: found.commands.length, mcp: mcp.length }, "plugin installed");
       return { plugin: this.getPlugin(id), warnings };
     } finally {
       await rm(work, { recursive: true, force: true });
@@ -563,7 +550,7 @@ export class PluginService implements PluginResources {
   }
 
   /** 설치된 사본으로 MCP 서버를 다시 매핑·등록한다 (git에서 다시 받지 않는다). */
-  async #remapInstalledMcp(record: PluginRecord, actor: string): Promise<string[]> {
+  async #remapInstalledMcp(record: PluginRecord): Promise<string[]> {
     const entry = this.store.getMarketplace(record.marketplace)?.manifest.plugins.find((p) => p.name === record.name);
     if (!entry) return [`${record.id}: marketplace에 항목이 없어 MCP 기본값을 다시 적용하지 못했습니다`];
     const dir = await realpath(record.installPath);
@@ -579,14 +566,14 @@ export class PluginService implements PluginResources {
       description: str(record.manifest ?? {}, "description") ?? entry.description,
       enabled: record.enabled,
     });
-    const { records, warnings } = await this.#registerMcp(mappedServers, { id: record.id, pluginName: record.name, previous: record.mcp, actor });
+    const { records, warnings } = await this.#registerMcp(mappedServers, { id: record.id, pluginName: record.name, previous: record.mcp });
     this.store.setPluginMcp(record.id, records);
     return warnings;
   }
 
   async #registerMcp(
     mappedServers: MappedMcpServer[],
-    ctx: { id: string; pluginName: string; previous: McpRecord[]; actor: string },
+    ctx: { id: string; pluginName: string; previous: McpRecord[] },
   ): Promise<{ records: McpRecord[]; warnings: string[] }> {
     const records: McpRecord[] = [];
     const warnings: string[] = [];
@@ -618,11 +605,11 @@ export class PluginService implements PluginResources {
       }
       const baseline = previous?.id === config.id ? (previous.baseline ?? null) : null;
       try {
-        let entry = await this.#registry.upsertPluginServer(config, ctx.actor, baseline);
+        let entry = await this.#registry.upsertPluginServer(config, baseline);
         let defaultSecrets: Record<string, string> | undefined;
         if (entry.store === "broker") {
           try {
-            ({ entry, defaultSecrets } = await this.#fillDefaultSecrets(ctx.id, entry, previous?.id === config.id ? previous.defaultSecrets : undefined, ctx.actor));
+            ({ entry, defaultSecrets } = await this.#fillDefaultSecrets(ctx.id, entry, previous?.id === config.id ? previous.defaultSecrets : undefined));
           } catch (error) {
             warnings.push(`MCP 서버 ${config.id}: 기본값으로 비밀키를 채우지 못했습니다 (${describe(error)})`);
           }
@@ -659,7 +646,7 @@ export class PluginService implements PluginResources {
     // 새 버전에서 사라진 서버는 지운다. 지우지 못하면 경고로 알린다 (조용히 넘어가지 않는다).
     for (const old of ctx.previous) {
       if (old.id && old.status === "registered" && !used.has(old.id)) {
-        await this.#registry.remove(old.id, ctx.actor).catch((error: unknown) => {
+        await this.#registry.remove(old.id).catch((error: unknown) => {
           warnings.push(`이전 버전의 MCP 서버 ${old.id}를 지우지 못했습니다: ${describe(error)}`);
         });
       }
@@ -676,7 +663,6 @@ export class PluginService implements PluginResources {
     pluginId: string,
     entry: McpServerEntry,
     previous: Record<string, string> | undefined,
-    actor: string,
   ): Promise<{ entry: McpServerEntry; defaultSecrets?: Record<string, string> }> {
     const defaults = this.getSettings().mcpDefaults.env;
     const id = entry.config.id;
@@ -689,11 +675,11 @@ export class PluginService implements PluginResources {
       if (fingerprint !== undefined && !ours) continue;
       const value = defaults[name];
       if (!value || value.includes("{{")) {
-        if (ours) await this.#registry.deleteSecret(id, name, actor);
+        if (ours) await this.#registry.deleteSecret(id, name);
         changed ||= ours;
         continue;
       }
-      await this.#registry.setSecret(id, name, { value }, actor);
+      await this.#registry.setSecret(id, name, { value });
       filled.push(name);
       changed = true;
     }
@@ -813,7 +799,6 @@ function toMarketplaceView(record: MarketplaceRecord): MarketplaceView {
     pluginCount: record.manifest.plugins.length,
     invalidEntries: record.manifest.invalid.length,
     refreshedAt: record.refreshedAt,
-    addedBy: record.addedBy,
   };
 }
 
@@ -849,7 +834,6 @@ function toPluginView(record: PluginRecord, marketplace: MarketplaceRecord | und
     source: record.source,
     installedAt: record.installedAt,
     updatedAt: record.updatedAt,
-    installedBy: record.installedBy,
     components: record.components,
     // baseline은 내부 병합용이라 응답에 넣지 않는다.
     mcp: record.mcp.map(({ baseline: _baseline, ...rest }) => rest),

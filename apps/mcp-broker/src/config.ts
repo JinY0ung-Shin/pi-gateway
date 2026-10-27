@@ -61,13 +61,13 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
     jwtSecret: jwtSecretBytes(jwtSecret),
     kek: parseKek(kek),
     limits: {
-      maxConnections: int(env, "BROKER_MAX_CONNECTIONS", 512, 1),
-      idleTtlSeconds: int(env, "BROKER_IDLE_TTL_SECONDS", 300, 5),
-      callTimeoutCapSeconds: int(env, "BROKER_CALL_TIMEOUT_CAP_SECONDS", 600, 1),
-      connectTimeoutSeconds: int(env, "BROKER_CONNECT_TIMEOUT_SECONDS", 30, 1),
-      maxResultBytes: int(env, "BROKER_MAX_RESULT_BYTES", 4 * MiB, 1024),
-      maxRequestBodyBytes: int(env, "BROKER_MAX_REQUEST_BODY_BYTES", 4 * MiB, 1024),
-      toolsCacheSeconds: int(env, "BROKER_TOOLS_CACHE_SECONDS", 60, 0),
+      maxConnections: 512,
+      idleTtlSeconds: 300,
+      callTimeoutCapSeconds: 600,
+      connectTimeoutSeconds: 30,
+      maxResultBytes: 4 * MiB,
+      maxRequestBodyBytes: 4 * MiB,
+      toolsCacheSeconds: 60,
     },
   };
 }

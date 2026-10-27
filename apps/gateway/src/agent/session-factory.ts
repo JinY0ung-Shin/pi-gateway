@@ -99,7 +99,7 @@ export async function buildAgentSession(
   // 관리 화면에서 끈 기본 도구는 이 세션과 하위 agent 모두에서 뺀다.
   const disabled = deps.toolSettings.disabled();
   const enabled = (t: ToolDefinition) => !disabled.has(t.name);
-  const { customTools: created } = await deps.tools.createSessionTools({
+  const created = await deps.tools.createSessionTools({
     principal: record.principal,
     sessionId: record.id,
     sandbox,
@@ -157,6 +157,15 @@ export async function buildAgentSession(
   return { session, sandbox };
 }
 
+/**
+ * pi 기본값(reserve 16384, 최근 20000 유지)은 큰 context에 맞춰져 있다.
+ * 32k 모델이면 절반만 차도 compaction되고 요약할 옛 대화가 거의 남지 않으므로, 작은 모델은 context의 1/4로 줄인다.
+ */
+export const compactionTokens = (contextWindow: number) => ({
+  reserveTokens: Math.min(16384, Math.floor(contextWindow / 4)),
+  keepRecentTokens: Math.min(20000, Math.floor(contextWindow / 4)),
+});
+
 async function createPiSession(
   deps: AgentFactoryDeps,
   input: { model: Model<Api>; thinkingLevel: string; loader: ResourceLoader; tools: ToolDefinition[]; sessionManager: SessionManager },
@@ -179,7 +188,7 @@ async function createPiSession(
       {
         cacheWarming: "off",
         enableInstallTelemetry: false,
-        compaction: { enabled: true },
+        compaction: { enabled: true, ...compactionTokens(input.model.contextWindow) },
         ...(deps.settingsOverrides ?? {}),
       },
       { projectTrusted: false },

@@ -39,6 +39,10 @@ const MIGRATIONS = [
    );
    INSERT INTO platform_settings (key, value_json, updated_at, updated_by)
    VALUES ('plugins.revision', '1', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'system');`,
+  // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
+  `ALTER TABLE plugin_marketplaces DROP COLUMN added_by;
+   ALTER TABLE plugins DROP COLUMN installed_by;
+   ALTER TABLE platform_settings DROP COLUMN updated_by;`,
 ] as const;
 
 export interface ResolvedSource {
@@ -87,7 +91,6 @@ export interface MarketplaceRecord {
   manifest: MarketplaceManifest;
   addedAt: string;
   refreshedAt: string;
-  addedBy: string;
 }
 
 export interface PluginRecord {
@@ -103,7 +106,6 @@ export interface PluginRecord {
   mcp: McpRecord[];
   installedAt: string;
   updatedAt: string;
-  installedBy: string;
 }
 
 interface MarketplaceRow {
@@ -115,7 +117,6 @@ interface MarketplaceRow {
   manifest_json: string;
   added_at: string;
   refreshed_at: string;
-  added_by: string;
 }
 
 interface PluginRow {
@@ -131,7 +132,6 @@ interface PluginRow {
   mcp_json: string;
   installed_at: string;
   updated_at: string;
-  installed_by: string;
 }
 
 const now = () => new Date().toISOString();
@@ -159,8 +159,8 @@ export class PluginStore {
     const at = now();
     this.#db
       .prepare(
-        `INSERT INTO plugin_marketplaces (name, url, ref, commit_sha, local_path, manifest_json, added_at, refreshed_at, added_by)
-         VALUES (@name, @url, @ref, @commit, @path, @manifest, @at, @at, @by)
+        `INSERT INTO plugin_marketplaces (name, url, ref, commit_sha, local_path, manifest_json, added_at, refreshed_at)
+         VALUES (@name, @url, @ref, @commit, @path, @manifest, @at, @at)
          ON CONFLICT(name) DO UPDATE SET url = @url, ref = @ref, commit_sha = @commit, local_path = @path,
            manifest_json = @manifest, refreshed_at = @at`,
       )
@@ -172,7 +172,6 @@ export class PluginStore {
         path: record.localPath,
         manifest: JSON.stringify(record.manifest),
         at,
-        by: record.addedBy,
       });
   }
 
@@ -196,10 +195,10 @@ export class PluginStore {
     this.#db
       .prepare(
         `INSERT INTO plugins (id, marketplace, name, version, install_path, enabled, source_json, manifest_json,
-                              components_json, mcp_json, installed_at, updated_at, installed_by)
-         VALUES (@id, @marketplace, @name, @version, @path, @enabled, @source, @manifest, @components, @mcp, @at, @at, @by)
+                              components_json, mcp_json, installed_at, updated_at)
+         VALUES (@id, @marketplace, @name, @version, @path, @enabled, @source, @manifest, @components, @mcp, @at, @at)
          ON CONFLICT(id) DO UPDATE SET version = @version, install_path = @path, enabled = @enabled, source_json = @source,
-           manifest_json = @manifest, components_json = @components, mcp_json = @mcp, updated_at = @at, installed_by = @by`,
+           manifest_json = @manifest, components_json = @components, mcp_json = @mcp, updated_at = @at`,
       )
       .run({
         id: record.id,
@@ -213,7 +212,6 @@ export class PluginStore {
         components: JSON.stringify(record.components),
         mcp: JSON.stringify(record.mcp),
         at,
-        by: record.installedBy,
       });
   }
 
@@ -236,13 +234,13 @@ export class PluginStore {
     return row ? (JSON.parse(row.value_json) as T) : fallback;
   }
 
-  setSetting(key: string, value: unknown, actor: string): void {
+  setSetting(key: string, value: unknown): void {
     this.#db
       .prepare(
-        `INSERT INTO platform_settings (key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+        `INSERT INTO platform_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
       )
-      .run(key, JSON.stringify(value), now(), actor);
+      .run(key, JSON.stringify(value), now());
   }
 
   revision(): number {
@@ -251,7 +249,7 @@ export class PluginStore {
 
   bumpRevision(): number {
     const next = this.revision() + 1;
-    this.setSetting("plugins.revision", next, "system");
+    this.setSetting("plugins.revision", next);
     return next;
   }
 }
@@ -266,7 +264,6 @@ function toMarketplace(row: MarketplaceRow): MarketplaceRecord {
     manifest: JSON.parse(row.manifest_json) as MarketplaceManifest,
     addedAt: row.added_at,
     refreshedAt: row.refreshed_at,
-    addedBy: row.added_by,
   };
 }
 
@@ -284,6 +281,5 @@ function toPlugin(row: PluginRow): PluginRecord {
     mcp: JSON.parse(row.mcp_json) as McpRecord[],
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
-    installedBy: row.installed_by,
   };
 }

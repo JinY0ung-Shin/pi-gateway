@@ -111,8 +111,7 @@ function DefaultPrompt(props: { list: PromptList; onChanged: () => Promise<void>
         {action.view}
         <p class="muted">
           배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트입니다. 현재 배포:{" "}
-          {live.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${live.name} v${live.version}`}</Badge>} ({formatTime(live.deployedAt)},{" "}
-          {live.deployedBy})
+          {live.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${live.name} v${live.version}`}</Badge>} ({formatTime(live.deployedAt)})
         </p>
         <pre class="code-block">{props.list.defaultContent}</pre>
       </Modal>
@@ -316,7 +315,6 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
             <tr>
               <th>버전</th>
               <th>메시지</th>
-              <th>작성자</th>
               <th>시각</th>
               <th />
             </tr>
@@ -328,7 +326,6 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
                   v{v.version} {detail.liveVersion === v.version && <Badge tone="green">배포 중</Badge>}
                 </td>
                 <td>{v.message || <span class="muted">-</span>}</td>
-                <td>{v.author}</td>
                 <td>{formatTime(v.createdAt)}</td>
                 <td class="actions">
                   <button class="small" onClick={() => setShown(v.version)}>
@@ -370,7 +367,6 @@ function Deployments(props: { revision: string }) {
             <th>동작</th>
             <th>배포본</th>
             <th>이전</th>
-            <th>작업자</th>
             <th>메모</th>
           </tr>
         </thead>
@@ -383,7 +379,6 @@ function Deployments(props: { revision: string }) {
               </td>
               <td>{d.name ? `${d.name} v${d.version}` : "기본 프롬프트"}</td>
               <td class="muted">{d.fromName ? `${d.fromName} v${d.fromVersion}` : "기본 프롬프트"}</td>
-              <td>{d.actor}</td>
               <td>{d.note}</td>
             </tr>
           ))}

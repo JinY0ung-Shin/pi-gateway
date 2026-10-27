@@ -76,13 +76,14 @@ const MIGRATIONS = [
   // user는 principal과 늘 같았고, prompt_ref는 읽는 곳이 없었다.
   `ALTER TABLE sessions DROP COLUMN user;
    ALTER TABLE sessions DROP COLUMN prompt_ref`,
+  // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
+  `ALTER TABLE session_retention DROP COLUMN updated_by`,
 ];
 
 /** 대화 기록 보관 기간. 마지막 활동 뒤 days일이 지나면 지운다 (0 = 지우지 않는다). */
 export interface Retention {
   days: number;
   updatedAt: string | null;
-  updatedBy: string | null;
 }
 
 function fromRow(row: Row): SessionRecord {
@@ -178,20 +179,20 @@ export class SessionStore {
   }
 
   retention(): Retention {
-    const row = this.db.prepare("SELECT days, updated_at, updated_by FROM session_retention WHERE id = 1").get() as
-      | { days: number; updated_at: string; updated_by: string }
+    const row = this.db.prepare("SELECT days, updated_at FROM session_retention WHERE id = 1").get() as
+      | { days: number; updated_at: string }
       | undefined;
-    return row ? { days: row.days, updatedAt: row.updated_at, updatedBy: row.updated_by } : { days: 0, updatedAt: null, updatedBy: null };
+    return row ? { days: row.days, updatedAt: row.updated_at } : { days: 0, updatedAt: null };
   }
 
-  setRetention(days: number, actor: string): Retention {
+  setRetention(days: number): Retention {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        `INSERT INTO session_retention (id, days, updated_at, updated_by) VALUES (1, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET days = excluded.days, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+        `INSERT INTO session_retention (id, days, updated_at) VALUES (1, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET days = excluded.days, updated_at = excluded.updated_at`,
       )
-      .run(days, now, actor);
-    return { days, updatedAt: now, updatedBy: actor };
+      .run(days, now);
+    return { days, updatedAt: now };
   }
 }

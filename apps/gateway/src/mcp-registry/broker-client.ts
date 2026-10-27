@@ -54,15 +54,15 @@ export class BrokerClient {
   }
 
   /** 만들면 201, 바꾸면 200 (둘 다 McpServerView) */
-  async putServer(config: McpServerConfig, actor: string): Promise<McpServerView> {
-    const body = await this.#admin("PUT", BROKER_ADMIN_ROUTES.server(config.id), { body: config, actor });
+  async putServer(config: McpServerConfig): Promise<McpServerView> {
+    const body = await this.#admin("PUT", BROKER_ADMIN_ROUTES.server(config.id), { body: config });
     return this.#parse(McpServerView, body);
   }
 
   /** 없으면 false */
-  async deleteServer(id: string, actor: string): Promise<boolean> {
+  async deleteServer(id: string): Promise<boolean> {
     try {
-      await this.#admin("DELETE", BROKER_ADMIN_ROUTES.server(id), { actor });
+      await this.#admin("DELETE", BROKER_ADMIN_ROUTES.server(id), );
       return true;
     } catch (error) {
       if (error instanceof BrokerError && error.status === 404) return false;
@@ -71,16 +71,16 @@ export class BrokerClient {
   }
 
   /** body는 `{ value }`. 이름과 본문은 broker가 검사한다. */
-  async putSecret(id: string, name: string, body: unknown, actor: string): Promise<void> {
-    await this.#admin("PUT", BROKER_ADMIN_ROUTES.secret(id, name), { body, actor });
+  async putSecret(id: string, name: string, body: unknown): Promise<void> {
+    await this.#admin("PUT", BROKER_ADMIN_ROUTES.secret(id, name), { body });
   }
 
-  async deleteSecret(id: string, name: string, actor: string): Promise<void> {
-    await this.#admin("DELETE", BROKER_ADMIN_ROUTES.secret(id, name), { actor });
+  async deleteSecret(id: string, name: string): Promise<void> {
+    await this.#admin("DELETE", BROKER_ADMIN_ROUTES.secret(id, name), );
   }
 
-  async test(id: string, actor: string): Promise<z.infer<typeof TestServerResponse>> {
-    const body = await this.#admin("POST", BROKER_ADMIN_ROUTES.test(id), { body: {}, actor, timeoutMs: TEST_TIMEOUT_MS });
+  async test(id: string): Promise<z.infer<typeof TestServerResponse>> {
+    const body = await this.#admin("POST", BROKER_ADMIN_ROUTES.test(id), { body: {}, timeoutMs: TEST_TIMEOUT_MS });
     return this.#parse(TestServerResponse, body);
   }
 
@@ -101,11 +101,10 @@ export class BrokerClient {
   async #admin(
     method: string,
     path: string,
-    options: { body?: unknown; actor?: string; timeoutMs?: number } = {},
+    options: { body?: unknown; timeoutMs?: number } = {},
   ): Promise<unknown> {
     const token = await signInternalToken(this.#config.jwtSecret, AUD_BROKER_ADMIN, { sub: ADMIN_PRINCIPAL }, 60);
     const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" };
-    if (options.actor) headers["x-admin-actor"] = encodeURIComponent(options.actor);
     let payload: string | undefined;
     if (options.body !== undefined) {
       headers["content-type"] = "application/json";

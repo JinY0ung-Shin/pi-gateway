@@ -19,6 +19,8 @@ const MIGRATIONS = [
    );`,
   // broker가 필수가 되어 broker id를 기억할 필요가 없다 (broker가 안 되면 sandbox 서버 생성도 503).
   `DROP TABLE mcp_broker_ids`,
+  // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
+  `ALTER TABLE mcp_sandbox_servers DROP COLUMN updated_by`,
 ] as const;
 
 interface Row {
@@ -59,17 +61,17 @@ export class SandboxServerStore {
     return rows.map((r) => this.#parse(r)).filter((c): c is McpServerConfig => c !== undefined);
   }
 
-  upsert(config: McpServerConfig, actor: string): void {
+  upsert(config: McpServerConfig): void {
     if (config.runIn !== "sandbox") throw new Error("only sandbox servers are stored in the gateway");
     const at = new Date().toISOString();
     const pluginId = config.source.kind === "plugin" ? config.source.pluginId : null;
     this.#db
       .prepare(
-        `INSERT INTO mcp_sandbox_servers (id, config_json, plugin_id, created_at, updated_at, updated_by)
-         VALUES (@id, @config, @pluginId, @at, @at, @actor)
-         ON CONFLICT(id) DO UPDATE SET config_json = @config, plugin_id = @pluginId, updated_at = @at, updated_by = @actor`,
+        `INSERT INTO mcp_sandbox_servers (id, config_json, plugin_id, created_at, updated_at)
+         VALUES (@id, @config, @pluginId, @at, @at)
+         ON CONFLICT(id) DO UPDATE SET config_json = @config, plugin_id = @pluginId, updated_at = @at`,
       )
-      .run({ id: config.id, config: JSON.stringify(config), pluginId, at, actor });
+      .run({ id: config.id, config: JSON.stringify(config), pluginId, at });
   }
 
   delete(id: string): boolean {

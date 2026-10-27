@@ -7,7 +7,7 @@ import {
   SecretName,
   verifyInternalToken,
 } from "@pi-gateway/shared";
-import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply } from "fastify";
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
@@ -16,7 +16,6 @@ import type { BrokerStore } from "./store.js";
 
 /** /mcp/servers와 겹치는 id */
 const RESERVED_IDS = new Set(["servers"]);
-const MAX_ACTOR_LENGTH = 120;
 
 function errorBody(code: string, message: string) {
   return { error: { code, message } };
@@ -30,24 +29,9 @@ function issues(error: z.ZodError): string {
     .slice(0, 2000);
 }
 
-function actorOf(req: FastifyRequest): string {
-  const raw = req.headers["x-admin-actor"];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (!value) return "admin";
-  let decoded = value;
-  try {
-    decoded = decodeURIComponent(value);
-  } catch {
-    // 인코딩되지 않은 값이면 그대로 쓴다.
-  }
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: 제어 문자를 지운다
-  const clean = decoded.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_ACTOR_LENGTH);
-  return clean || "admin";
-}
-
 /**
  * 관리 평면 — gateway의 관리 백엔드만 부른다. 별도 포트, 관리용 audience(AUD_BROKER_ADMIN)의 내부 JWT.
- * 비밀값은 어떤 응답·로그·감사 기록에도 들어가지 않는다.
+ * 설정·비밀값을 바꾸면 "admin change" 로그를 남긴다. 비밀값은 어떤 응답·로그에도 들어가지 않는다.
  */
 export function buildAdminPlane(deps: {
   config: BrokerConfig;
@@ -56,6 +40,7 @@ export function buildAdminPlane(deps: {
   log: Logger;
 }): FastifyInstance {
   const { config, store, service } = deps;
+  const changed = (action: string, serverId: string, detail?: string) => deps.log.info({ action, serverId, detail }, "admin change");
   const app = Fastify({
     loggerInstance: deps.log.child({ plane: "admin" }) as FastifyBaseLogger,
     bodyLimit: 256 * 1024,
@@ -118,22 +103,14 @@ export function buildAdminPlane(deps: {
 
     const { server, created, clearedSecrets } = store.upsertServer(cfg);
     service.forgetServer(id);
-    const actor = actorOf(req);
-    store.addAudit({
-      actor,
-      action: created ? "server.create" : "server.update",
-      serverId: id,
-      detail: `transport=${cfg.transport.type} enabled=${cfg.enabled} scope=${cfg.scope} revision=${server.revision}`,
-    });
+    changed(
+      created ? "server.create" : "server.update",
+      id,
+      `transport=${cfg.transport.type} enabled=${cfg.enabled} scope=${cfg.scope} revision=${server.revision}`,
+    );
     if (clearedSecrets.length > 0) {
       // 비밀값이 가는 곳이 바뀌었다. 새 행선지로 기존 비밀값을 보내지 않도록 다시 입력받는다.
-      store.addAudit({
-        actor,
-        action: "secret.invalidate",
-        serverId: id,
-        detail: `transport target changed; cleared secrets: ${clearedSecrets.join(", ")}`,
-      });
-      deps.log.warn({ serverId: id, secrets: clearedSecrets }, "transport target changed; stored secrets cleared");
+      changed("secret.invalidate", id, `transport target changed; cleared secrets: ${clearedSecrets.join(", ")}`);
     }
     return reply.code(created ? 201 : 200).send(service.serverView(server));
   });
@@ -142,7 +119,7 @@ export function buildAdminPlane(deps: {
     const { id } = req.params as { id: string };
     if (!store.deleteServer(id)) return reply.code(404).send(errorBody("not_found", `MCP server '${id}' not found`));
     service.forgetServer(id);
-    store.addAudit({ actor: actorOf(req), action: "server.delete", serverId: id });
+    changed("server.delete", id);
     return reply.code(204).send();
   });
 
@@ -159,12 +136,7 @@ export function buildAdminPlane(deps: {
       deps.log.warn({ serverId: id, secret: name }, "secret is shorter than 8 characters; redaction may be unreliable");
     }
     service.forgetServer(id);
-    store.addAudit({
-      actor: actorOf(req),
-      action: "secret.put",
-      serverId: id,
-      detail: `name=${name} version=${meta.version} fingerprint=${meta.fingerprint}`,
-    });
+    changed("secret.put", id, `name=${name} version=${meta.version} fingerprint=${meta.fingerprint}`);
     return reply.code(204).send();
   });
 
@@ -173,7 +145,7 @@ export function buildAdminPlane(deps: {
     if (!store.getServer(id)) return reply.code(404).send(errorBody("not_found", `MCP server '${id}' not found`));
     if (!store.deleteSecret(id, name)) return reply.code(404).send(errorBody("not_found", `secret '${name}' not found`));
     service.forgetServer(id);
-    store.addAudit({ actor: actorOf(req), action: "secret.delete", serverId: id, detail: `name=${name}` });
+    changed("secret.delete", id, `name=${name}`);
     return reply.code(204).send();
   });
 
@@ -181,12 +153,7 @@ export function buildAdminPlane(deps: {
     const server = getServerOr404((req.params as { id: string }).id, reply);
     if (!server) return reply;
     const result = await service.testServer(server);
-    store.addAudit({
-      actor: actorOf(req),
-      action: "server.test",
-      serverId: server.config.id,
-      detail: result.ok ? `ok tools=${result.tools?.length ?? 0}` : "failed",
-    });
+    changed("server.test", server.config.id, result.ok ? `ok tools=${result.tools?.length ?? 0}` : "failed");
     return result;
   });
 

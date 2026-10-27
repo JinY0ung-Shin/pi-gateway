@@ -67,7 +67,7 @@ describe("admin history", () => {
     expect(h.gateway.store.get(sid)).toBeDefined();
 
     const put = await admin("PUT", "/history/retention", { days: 2 });
-    expect(put.json).toMatchObject({ days: 2, updatedBy: expect.any(String) });
+    expect(put.json).toMatchObject({ days: 2, updatedAt: expect.any(String) });
     await h.gateway.hub.purgeExpired(Date.now() + 1 * DAY);
     expect(h.gateway.store.get(sid)).toBeDefined();
     await h.gateway.hub.purgeExpired(Date.now() + 3 * DAY);

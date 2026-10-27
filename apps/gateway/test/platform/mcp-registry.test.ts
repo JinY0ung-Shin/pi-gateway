@@ -47,7 +47,7 @@ describe("MCP registry", () => {
     let res = await h.app.inject({
       method: "PUT",
       url: "/admin/api/mcp/servers/monsemi-frontend",
-      headers: { ...adminHeaders, ...json, "x-admin-actor": encodeURIComponent("진영") },
+      headers: { ...adminHeaders, ...json },
       payload: { config: sandboxServer },
     });
     expect(res.statusCode).toBe(200);
@@ -84,8 +84,8 @@ describe("MCP registry", () => {
 
   it("검증: 저장하면 broker가 지울 비밀키를 알려준다 (실행 대상이 바뀌거나 sandbox로 옮길 때)", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
-    await h.mcp.upsert(brokerServer, "t");
-    await h.mcp.setSecret("github", "GITHUB_TOKEN", { value: SECRET }, "t");
+    await h.mcp.upsert(brokerServer);
+    await h.mcp.setSecret("github", "GITHUB_TOKEN", { value: SECRET });
     const clears = async (config: object) => (await h.mcp.validate(config)).clearsSecrets;
     expect(await clears({ ...brokerServer, displayName: "GitHub" })).toEqual([]);
     expect(await clears({ ...brokerServer, transport: { ...brokerServer.transport, url: "https://evil.example.com/mcp" } })).toEqual(["GITHUB_TOKEN"]);
@@ -129,7 +129,7 @@ describe("MCP registry", () => {
 
   it("sandbox 서버에는 비밀키를 넣을 수 없고, 연결 테스트는 정적 검사만 한다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
-    await h.mcp.upsert(sandboxServer, "t");
+    await h.mcp.upsert(sandboxServer);
     let res = await h.app.inject({
       method: "PUT",
       url: "/admin/api/mcp/servers/monsemi-frontend/secrets/X",
@@ -144,15 +144,16 @@ describe("MCP registry", () => {
 
   it("runIn을 바꾸면 다른 저장소로 옮기고, 삭제는 어느 쪽이든 찾아서 지운다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
-    await h.mcp.upsert(sandboxServer, "t");
-    const moved = await h.mcp.upsert(
-      { ...sandboxServer, runIn: "broker", transport: { type: "http", url: "https://monsemi.example.com/mcp", headers: { Authorization: "Bearer {{secret:T}}" } } },
-      "t",
-    );
+    await h.mcp.upsert(sandboxServer);
+    const moved = await h.mcp.upsert({
+      ...sandboxServer,
+      runIn: "broker",
+      transport: { type: "http", url: "https://monsemi.example.com/mcp", headers: { Authorization: "Bearer {{secret:T}}" } },
+    });
     expect(moved.store).toBe("broker");
     expect(h.mcp.store.get("monsemi-frontend")).toBeUndefined();
     expect(broker.servers.has("monsemi-frontend")).toBe(true);
-    await h.mcp.upsert(sandboxServer, "t");
+    await h.mcp.upsert(sandboxServer);
     expect(broker.servers.has("monsemi-frontend")).toBe(false);
     const res = await h.app.inject({ method: "DELETE", url: "/admin/api/mcp/servers/monsemi-frontend", headers: adminHeaders });
     expect(res.statusCode).toBe(204);
@@ -161,8 +162,8 @@ describe("MCP registry", () => {
 
   it("brokerServersFor는 내부 JWT로 broker 데이터 평면을 부르고, 실패하면 빈 목록이다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
-    await h.mcp.upsert({ ...brokerServer, id: "docs", transport: { type: "http", url: "https://docs.example.com/mcp", headers: {} } }, "t");
-    await h.mcp.upsert(brokerServer, "t"); // 비밀키가 없어서 보이지 않는다
+    await h.mcp.upsert({ ...brokerServer, id: "docs", transport: { type: "http", url: "https://docs.example.com/mcp", headers: {} } });
+    await h.mcp.upsert(brokerServer); // 비밀키가 없어서 보이지 않는다
     expect(await h.mcp.brokerServersFor("alice", "sess-1")).toEqual([{ id: "docs", timeoutSec: 120 }]);
     await broker.close();
     expect(await h.mcp.brokerServersFor("alice", "sess-1")).toEqual([]);
@@ -174,9 +175,9 @@ describe("MCP registry", () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     expect(await h.mcp.forwardHeaders()).toEqual([]);
     const foo = { ...brokerServer, id: "foo", transport: { type: "http", url: "https://foo.example.com/mcp", headers: { "X-Api-Key": "{{ctx.header:X-Foo-Token}}" } } };
-    await h.mcp.upsert(foo, "t");
+    await h.mcp.upsert(foo);
     expect(await h.mcp.forwardHeaders()).toEqual(["x-foo-token"]);
-    await h.mcp.remove("foo", "t");
+    await h.mcp.remove("foo");
     expect(await h.mcp.forwardHeaders()).toEqual([]);
   });
 
@@ -202,16 +203,16 @@ describe("MCP registry", () => {
 
   it("broker가 안 될 때 broker를 확인해야 하는 변경은 503으로 실패하고 아무것도 바꾸지 않는다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
-    await h.mcp.upsert(brokerServer, "t");
-    await h.mcp.upsert({ ...sandboxServer, id: "new-one" }, "t");
+    await h.mcp.upsert(brokerServer);
+    await h.mcp.upsert({ ...sandboxServer, id: "new-one" });
     broker.setDown(true);
     try {
       // sandbox로 옮기기: broker에 같은 id가 있는지 확인할 수 없으므로 만들지 않는다
-      await expect(h.mcp.upsert({ ...sandboxServer, id: "github" }, "t")).rejects.toMatchObject({ status: 503, code: "broker_unavailable" });
+      await expect(h.mcp.upsert({ ...sandboxServer, id: "github" })).rejects.toMatchObject({ status: 503, code: "broker_unavailable" });
       expect(h.mcp.store.get("github")).toBeUndefined();
-      await expect(h.mcp.remove("github", "t")).rejects.toMatchObject({ status: 503 });
-      await expect(h.mcp.setPluginServersEnabled("p@m", false, "t")).rejects.toMatchObject({ status: 503 });
-      await expect(h.mcp.removePluginServers("p@m", "t")).rejects.toMatchObject({ status: 503 });
+      await expect(h.mcp.remove("github")).rejects.toMatchObject({ status: 503 });
+      await expect(h.mcp.setPluginServersEnabled("p@m", false)).rejects.toMatchObject({ status: 503 });
+      await expect(h.mcp.removePluginServers("p@m")).rejects.toMatchObject({ status: 503 });
       // 새 id의 sandbox 서버도 broker에 같은 id가 있는지 확인해야 하므로 만들지 않는다
       let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/brand-new", headers: { ...adminHeaders, ...json }, payload: { config: { ...sandboxServer, id: "brand-new" } } });
       expect(res.statusCode).toBe(503);
@@ -228,8 +229,8 @@ describe("MCP registry", () => {
       // sandbox 서버 삭제도 broker 없이 된다
       expect((await h.app.inject({ method: "DELETE", url: "/admin/api/mcp/servers/new-one", headers: adminHeaders })).statusCode).toBe(204);
       // plugin 기록상 broker 서버가 없으면 broker에 묻지 않는다
-      await expect(h.mcp.setPluginServersEnabled("p@m", false, "t", { broker: false })).resolves.toBeUndefined();
-      await expect(h.mcp.removePluginServers("p@m", "t", { broker: false })).resolves.toEqual([]);
+      await expect(h.mcp.setPluginServersEnabled("p@m", false, { broker: false })).resolves.toBeUndefined();
+      await expect(h.mcp.removePluginServers("p@m", { broker: false })).resolves.toEqual([]);
       // 목록은 sandbox 서버만 보여주고 이유를 알려준다
       const list = (await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers", headers: adminHeaders })).json();
       expect(list.broker).toMatchObject({ available: false });

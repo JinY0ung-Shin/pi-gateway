@@ -2,6 +2,7 @@ import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { compactionTokens } from "../src/agent/session-factory.js";
 import { BOB_KEY, type Harness, last, startHarness } from "./helpers.js";
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
@@ -155,5 +156,12 @@ describe("concurrency and cancellation", () => {
     const ev = last(res!.events);
     expect(ev.type).toBe("response.failed");
     expect((ev.data.response as any).error.message).toBe("Gateway is shutting down");
+  });
+});
+
+describe("compaction thresholds", () => {
+  it("keep pi defaults for large models and scale down for small ones", () => {
+    expect(compactionTokens(200_000)).toEqual({ reserveTokens: 16384, keepRecentTokens: 20000 });
+    expect(compactionTokens(32768)).toEqual({ reserveTokens: 8192, keepRecentTokens: 8192 });
   });
 });

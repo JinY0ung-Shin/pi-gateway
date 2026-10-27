@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
-import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { secretVariants } from "../src/redact.js";
 import { startTestBroker, type TestBroker } from "./helpers.js";
@@ -21,20 +19,9 @@ describe("admin plane", () => {
     await tb.close();
   });
 
-  /** 감사 기록 (최근 것부터). 관리 API로는 읽지 않으므로 DB에서 바로 읽는다. */
-  const auditEvents = () => {
-    const db = new Database(join(tb.config.dataDir, "broker.db"), { readonly: true });
-    try {
-      return db.prepare("SELECT actor, action, server_id AS serverId, detail FROM audit ORDER BY id DESC").all() as {
-        actor: string;
-        action: string;
-        serverId: string | null;
-        detail: string | null;
-      }[];
-    } finally {
-      db.close();
-    }
-  };
+  /** 변경 로그 (최근 것부터) */
+  const changes = () =>
+    tb.logs.filter((l) => l.msg === "admin change").reverse() as { action: string; serverId: string; detail?: string }[];
 
   it("서버를 만들고(201) 고치고(200) 조회하고 지운다(204)", async () => {
     const created = await tb.admin("PUT", "/admin/servers/crud", httpServer("crud"));
@@ -112,8 +99,8 @@ describe("admin plane", () => {
       bodies.push((await tb.admin("POST", `/admin/servers/${id}/test`, {})).text);
       bodies.push((await tb.admin("PUT", `/admin/servers/${id}`, httpServer(id, { description: "again" }))).text);
     }
-    // 감사 기록에도 남지 않는다
-    bodies.push(JSON.stringify(auditEvents()));
+    // 로그에도 남지 않는다
+    bodies.push(JSON.stringify(tb.logs));
     const dataServers = await tb.broker.dataPlane.inject({
       method: "GET",
       url: "/mcp/servers",
@@ -139,13 +126,13 @@ describe("admin plane", () => {
     const secretNames = async (id: string) =>
       ((await tb.admin("GET", `/admin/servers/${id}`)).json().secrets as { name: string }[]).map((s) => s.name);
 
-    it("url origin이 바뀌면 지우고 감사 기록을 남긴다", async () => {
+    it("url origin이 바뀌면 지우고 로그를 남긴다", async () => {
       await setup("move-origin");
       const res = await tb.admin("PUT", "/admin/servers/move-origin", base({ Authorization: "Bearer {{secret:TOKEN}}" }, "https://attacker.example/mcp"));
       expect(res.status).toBe(200);
       expect(res.json().missingSecrets).toEqual(["TOKEN"]);
       expect(await secretNames("move-origin")).toEqual([]);
-      const events = auditEvents();
+      const events = changes();
       expect(events[0]).toMatchObject({ action: "secret.invalidate", serverId: "move-origin" });
       expect(events[0]!.detail).toContain("TOKEN");
     });
@@ -182,11 +169,11 @@ describe("admin plane", () => {
     });
   });
 
-  it("감사 기록에 행위자와 동작을 남긴다", async () => {
+  it("변경 로그에 동작을 남긴다", async () => {
     await tb.admin("PUT", "/admin/servers/audited", httpServer("audited"));
     await tb.admin("PUT", "/admin/servers/audited/secrets/TOKEN", { value: "audit-secret-value" });
-    const events = auditEvents();
-    expect(events[0]).toMatchObject({ actor: "tester", action: "secret.put", serverId: "audited" });
+    const events = changes();
+    expect(events[0]).toMatchObject({ action: "secret.put", serverId: "audited" });
     expect(events[1]).toMatchObject({ action: "server.create", serverId: "audited" });
     expect(JSON.stringify(events)).not.toContain("audit-secret-value");
   });

@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 import { LlmServer, LlmSettings, type LlmSettingsRecord, probeLlmServer, testLlmModel } from "../agent/runtime.js";
-import { actorOf } from "./auth.js";
 import type { AdminContext } from "./context.js";
 import { PlatformError } from "./errors.js";
 
@@ -14,13 +13,12 @@ export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void
   const { llm } = ctx;
 
   const view = (record: LlmSettingsRecord | null) => {
-    if (!record) return { configured: false, settings: null, updatedAt: null, updatedBy: null };
+    if (!record) return { configured: false, settings: null, updatedAt: null };
     const { servers, defaultModel } = record.settings;
     return {
       configured: true,
       settings: { servers: servers.map(({ apiKey, ...s }) => ({ ...s, apiKeySet: apiKey !== "" })), defaultModel },
       updatedAt: record.updatedAt,
-      updatedBy: record.updatedBy,
     };
   };
 
@@ -44,15 +42,14 @@ export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void
     const body = req.body ?? {};
     const servers = Array.isArray(body.servers) ? body.servers.map(withStoredKey) : body.servers;
     const settings = parse(LlmSettings, { ...body, servers }, "invalid_llm_settings");
-    const actor = actorOf(req);
     let record: LlmSettingsRecord;
     try {
-      record = await llm.update(settings, actor);
+      record = await llm.update(settings);
     } catch (err) {
       throw new PlatformError(400, "llm_register_failed", err instanceof Error ? err.message : String(err));
     }
     ctx.log.info(
-      { actor, servers: record.settings.servers.map((s) => ({ id: s.id, baseUrl: s.baseUrl, models: s.models.map((m) => m.id) })) },
+      { servers: record.settings.servers.map((s) => ({ id: s.id, baseUrl: s.baseUrl, models: s.models.map((m) => m.id) })) },
       "llm settings updated",
     );
     return view(record);

@@ -140,7 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       maxConcurrentTurns: int("MAX_CONCURRENT_TURNS", 16, env),
       maxConcurrentTurnsPerUser: int("MAX_CONCURRENT_TURNS_PER_USER", 3, env),
       queueTimeoutSeconds: int("TURN_QUEUE_TIMEOUT_SECONDS", 120, env),
-      maxQueuedTurns: int("TURN_QUEUE_MAX_WAITERS", 256, env),
+      maxQueuedTurns: 256,
       nonStreamTimeoutSeconds: int("NON_STREAM_TIMEOUT_SECONDS", 600, env),
     },
     mcp: {

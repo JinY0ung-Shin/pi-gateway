@@ -159,7 +159,7 @@ export class McpRegistryService implements McpRegistry {
   }
 
   /** 만들거나 바꾼다. runIn이 바뀌면 다른 저장소로 옮긴다. */
-  async upsert(input: unknown, actor: string): Promise<McpServerEntry> {
+  async upsert(input: unknown): Promise<McpServerEntry> {
     const parsed = McpServerConfig.safeParse(input);
     if (!parsed.success) throw badRequest(issueList(parsed.error).join("; "), parsed.error.issues);
     const config = parsed.data;
@@ -169,37 +169,37 @@ export class McpRegistryService implements McpRegistry {
       // 새 id면 broker에 같은 id가 있는지 본다 (있으면 옮기는 것이라 broker 쪽을 지운다). 이미 sandbox 서버면 묻지 않는다
       // (id는 한 저장소에만 둔다). broker가 안 되면 503이다.
       const remote = this.store.get(config.id) ? undefined : await this.#brokerEntry(config.id);
-      this.store.upsert(config, actor);
-      if (remote) await this.#deleteBrokerServer(config.id, actor);
+      this.store.upsert(config);
+      if (remote) await this.#deleteBrokerServer(config.id);
       return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
     }
-    const view = await this.#broker.putServer(config, actor);
+    const view = await this.#broker.putServer(config);
     this.#forwardHeaders = undefined;
     this.store.delete(config.id);
     return toEntry(view);
   }
 
-  async remove(id: string, actor: string): Promise<void> {
+  async remove(id: string): Promise<void> {
     // sandbox 서버의 id는 broker에 없다 (upsert가 한 저장소에만 둔다).
     if (this.store.delete(id)) return;
-    if (!(await this.#deleteBrokerServer(id, actor))) throw notFound(`MCP server '${id}' not found`);
+    if (!(await this.#deleteBrokerServer(id))) throw notFound(`MCP server '${id}' not found`);
   }
 
   /** 비밀키 이름과 값은 broker가 검사한다 (오류 메시지에 값을 넣지 않는다). */
-  async setSecret(id: string, name: string, body: unknown, actor: string): Promise<void> {
+  async setSecret(id: string, name: string, body: unknown): Promise<void> {
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets; switch the server to runIn=broker");
-    await this.#broker.putSecret(id, name, body, actor);
+    await this.#broker.putSecret(id, name, body);
   }
 
-  async deleteSecret(id: string, name: string, actor: string): Promise<void> {
+  async deleteSecret(id: string, name: string): Promise<void> {
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets");
-    await this.#broker.deleteSecret(id, name, actor);
+    await this.#broker.deleteSecret(id, name);
   }
 
-  async test(id: string, actor: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
+  async test(id: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
     const local = this.store.get(id);
     if (local) return this.#staticCheck(local);
-    return this.#broker.test(id, actor);
+    return this.#broker.test(id);
   }
 
   // ── plugin 연동 ────────────────────────────────────────────────
@@ -218,7 +218,7 @@ export class McpRegistryService implements McpRegistry {
    * plugin이 등록하는 서버. 같은 plugin이 이미 등록한 서버가 있으면, 지난번 매핑(baseline)과 비교해
    * 관리자가 실제로 바꾼 값만 유지한다 (mergeWithBaseline).
    */
-  async upsertPluginServer(mapped: McpServerConfig, actor: string, baseline: McpServerConfig | null): Promise<McpServerEntry> {
+  async upsertPluginServer(mapped: McpServerConfig, baseline: McpServerConfig | null): Promise<McpServerEntry> {
     const existing = await this.currentConfig(mapped.id);
     let next = mapped;
     if (existing) {
@@ -228,7 +228,7 @@ export class McpRegistryService implements McpRegistry {
       // 지난 매핑이 없으면 관리자가 바꾼 값을 알 수 없으므로 새 매핑을 쓴다
       if (baseline) next = mergeWithBaseline(baseline, existing, mapped);
     }
-    return this.upsert(next, actor);
+    return this.upsert(next);
   }
 
   /**
@@ -246,10 +246,10 @@ export class McpRegistryService implements McpRegistry {
     return [...local, ...remote];
   }
 
-  async setPluginServersEnabled(pluginId: string, enabled: boolean, actor: string, options: { broker?: boolean } = {}): Promise<void> {
+  async setPluginServersEnabled(pluginId: string, enabled: boolean, options: { broker?: boolean } = {}): Promise<void> {
     for (const entry of await this.pluginServers(pluginId, options)) {
       if (entry.config.enabled === enabled) continue;
-      await this.upsert({ ...entry.config, enabled }, actor);
+      await this.upsert({ ...entry.config, enabled });
     }
   }
 
@@ -257,12 +257,12 @@ export class McpRegistryService implements McpRegistry {
    * plugin이 등록한 서버를 모두 지운다. broker 쪽을 먼저 지우고, 안 되면 아무것도 지우지 않고 503.
    * broker: false면 broker에 묻지 않는다 (plugin 기록상 broker 서버가 없을 때).
    */
-  async removePluginServers(pluginId: string, actor: string, options: { broker?: boolean } = {}): Promise<string[]> {
+  async removePluginServers(pluginId: string, options: { broker?: boolean } = {}): Promise<string[]> {
     const removed: string[] = [];
     if (options.broker !== false) {
       for (const view of await this.#broker.listServers()) {
         if (view.config.source.kind === "plugin" && view.config.source.pluginId === pluginId) {
-          await this.#deleteBrokerServer(view.config.id, actor);
+          await this.#deleteBrokerServer(view.config.id);
           removed.push(view.config.id);
         }
       }
@@ -276,8 +276,8 @@ export class McpRegistryService implements McpRegistry {
 
   // ── 내부 ───────────────────────────────────────────────────────
 
-  async #deleteBrokerServer(id: string, actor: string): Promise<boolean> {
-    const deleted = await this.#broker.deleteServer(id, actor);
+  async #deleteBrokerServer(id: string): Promise<boolean> {
+    const deleted = await this.#broker.deleteServer(id);
     this.#forwardHeaders = undefined;
     return deleted;
   }

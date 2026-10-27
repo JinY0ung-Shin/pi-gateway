@@ -86,7 +86,6 @@ export const DEFAULT_OPENAI_COMPAT: Record<string, unknown> = {
 export interface LlmSettingsRecord {
   settings: LlmSettings;
   updatedAt: string;
-  updatedBy: string;
 }
 
 export type LlmModelEntry = LlmModelConfig & { server: string };
@@ -103,7 +102,7 @@ export interface GatewayModels {
   revision(): number;
   current(): LlmSettingsRecord | null;
   /** 검증하고 provider를 다시 등록한 뒤 저장한다. 등록에 실패하면 이전 설정으로 되돌리고 던진다. */
-  update(settings: LlmSettings, actor: string): Promise<LlmSettingsRecord>;
+  update(settings: LlmSettings): Promise<LlmSettingsRecord>;
 }
 
 const MIGRATIONS = [
@@ -117,6 +116,8 @@ const MIGRATIONS = [
   `UPDATE llm_settings SET settings_json = json_object(
      'servers', json_array(json_set(json_remove(settings_json, '$.defaultModel'), '$.id', 'upstream')),
      'defaultModel', json_extract(settings_json, '$.defaultModel'))`,
+  // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
+  `ALTER TABLE llm_settings DROP COLUMN updated_by`,
 ];
 
 const createRuntime = () =>
@@ -172,18 +173,18 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
   migrate(db, "llm", MIGRATIONS);
   const runtime = await createRuntime();
 
-  const row = db.prepare("SELECT settings_json, updated_at, updated_by FROM llm_settings WHERE id = 1").get() as
-    | { settings_json: string; updated_at: string; updated_by: string }
+  const row = db.prepare("SELECT settings_json, updated_at FROM llm_settings WHERE id = 1").get() as
+    | { settings_json: string; updated_at: string }
     | undefined;
   let current: LlmSettingsRecord | null = row
-    ? { settings: LlmSettings.parse(JSON.parse(row.settings_json)), updatedAt: row.updated_at, updatedBy: row.updated_by }
+    ? { settings: LlmSettings.parse(JSON.parse(row.settings_json)), updatedAt: row.updated_at }
     : null;
   if (current) await apply(runtime, current.settings, null);
   let revision = 0;
 
   const save = db.prepare(
-    `INSERT INTO llm_settings (id, settings_json, updated_at, updated_by) VALUES (1, ?, ?, ?)
-     ON CONFLICT (id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    `INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`,
   );
   const serverOf = (id: string) => current?.settings.servers.find((s) => s.models.some((m) => m.id === id));
 
@@ -198,7 +199,7 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     defaultModel: () => current?.settings.defaultModel,
     revision: () => revision,
     current: () => current,
-    async update(input, actor) {
+    async update(input) {
       const settings = LlmSettings.parse(input);
       const previous = current?.settings ?? null;
       try {
@@ -207,8 +208,8 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
         await apply(runtime, previous, settings);
         throw err;
       }
-      const next = { settings, updatedAt: new Date().toISOString(), updatedBy: actor };
-      save.run(JSON.stringify(settings), next.updatedAt, actor);
+      const next = { settings, updatedAt: new Date().toISOString() };
+      save.run(JSON.stringify(settings), next.updatedAt);
       current = next;
       revision++;
       return next;
