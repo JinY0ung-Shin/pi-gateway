@@ -66,18 +66,18 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
   const [ref, setRef] = useState("");
   const [token, setToken] = useState("");
   const [tokenUsername, setTokenUsername] = useState("");
-  /** git이 실패해 token을 물어보는 marketplace */
-  const [needsToken, setNeedsToken] = useState<string | null>(null);
+  /** git이 실패해 token을 물어보는 marketplace와 그때 바꾸려던 ref */
+  const [needsToken, setNeedsToken] = useState<{ name: string; ref?: string } | null>(null);
   const [refreshToken, setRefreshToken] = useState("");
   const [refreshUsername, setRefreshUsername] = useState("");
 
   /** token 없이 먼저 해 보고, git이 실패하면 그 줄에서 token을 받는다 (비공개 저장소) */
-  const refresh = (name: string, auth: { token?: string; tokenUsername?: string } = {}) =>
+  const refresh = (name: string, body: { ref?: string; token?: string; tokenUsername?: string } = {}) =>
     action.run(async () => {
       try {
-        await api("POST", `/marketplaces/${enc(name)}/refresh`, auth);
+        await api("POST", `/marketplaces/${enc(name)}/refresh`, body);
       } catch (error) {
-        if (error instanceof ApiError && error.code === "git_failed") setNeedsToken(name);
+        if (error instanceof ApiError && error.code === "git_failed") setNeedsToken({ name, ...(body.ref !== undefined ? { ref: body.ref } : {}) });
         throw error;
       }
       setNeedsToken(null);
@@ -148,6 +148,16 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
                   새로고침
                 </button>
                 <button
+                  class="small"
+                  disabled={action.busy}
+                  onClick={() => {
+                    const next = prompt("branch·tag (비우면 기본 브랜치)", m.ref ?? "");
+                    if (next !== null) void refresh(m.name, { ref: next.trim() });
+                  }}
+                >
+                  branch 변경
+                </button>
+                <button
                   class="small danger"
                   onClick={() =>
                     confirm(`marketplace ${m.name}을(를) 지울까요?`) &&
@@ -161,14 +171,14 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
                 </button>
               </td>
             </tr>,
-            needsToken === m.name && (
+            needsToken?.name === m.name && (
               <tr key={`${m.name}-token`}>
                 <td colSpan={6}>
                   <form
                     class="row wrap"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      void refresh(m.name, { token: refreshToken, ...(refreshUsername ? { tokenUsername: refreshUsername } : {}) });
+                      void refresh(m.name, { ...(needsToken.ref !== undefined ? { ref: needsToken.ref } : {}), token: refreshToken, ...(refreshUsername ? { tokenUsername: refreshUsername } : {}) });
                     }}
                   >
                     <span class="small-text">비공개 저장소면 token을 넣고 다시 받으세요 (저장하지 않습니다).</span>

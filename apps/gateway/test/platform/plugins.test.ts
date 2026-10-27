@@ -494,6 +494,24 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
+  it("새로고침에 ref를 주면 그 branch로 바꾸고, 빈 문자열이면 기본 브랜치로 돌아간다", async () => {
+    const fixture = buildFixture(tempDir("fixture-ref"));
+    const harness = await buildHarness();
+    try {
+      const added = await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
+      git(fixture.mkt, "checkout", "-q", "-b", "dev");
+      write(fixture.mkt, "dev.txt", "dev");
+      const dev = commitAll(fixture.mkt);
+      git(fixture.mkt, "checkout", "-q", "main");
+
+      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", { ref: "dev" }, "t")).toMatchObject({ ref: "dev", commitSha: dev });
+      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t")).toMatchObject({ ref: "dev", commitSha: dev });
+      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", { ref: "" }, "t")).toMatchObject({ ref: null, commitSha: added.commitSha });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("broker가 안 되면 끄기·제거·업데이트가 503이고 plugin과 broker 서버는 그대로다", async () => {
     const broker = await startFakeBroker();
     const fixture = buildFixture(tempDir("fixture-down"));

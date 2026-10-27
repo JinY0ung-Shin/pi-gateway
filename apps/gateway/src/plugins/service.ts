@@ -45,6 +45,8 @@ const AddMarketplaceInput = z.object({
 });
 
 const RefreshMarketplaceInput = z.object({
+  /** 주면 branch·tag를 바꾼다. 빈 문자열은 기본 브랜치. */
+  ref: z.string().max(200).optional(),
   token: z.string().max(4096).optional(),
   tokenUsername: z.string().max(100).optional(),
 });
@@ -316,13 +318,14 @@ export class PluginService implements PluginResources {
     return this.#exclusive(async () => {
       const record = this.store.getMarketplace(name);
       if (!record) throw notFound(`marketplace '${name}' not found`);
-      const { dir, commit, manifest, work } = await this.#cloneMarketplace(record.url, record.ref ?? undefined, req);
+      const ref = req.ref === undefined ? record.ref : req.ref || null;
+      const { dir, commit, manifest, work } = await this.#cloneMarketplace(record.url, ref ?? undefined, req);
       try {
         if (manifest.name !== name) {
           throw conflict("name_changed", `the repository now declares marketplace '${manifest.name}' instead of '${name}'`);
         }
         const localPath = await this.#placeMarketplace(dir, name);
-        this.store.upsertMarketplace({ ...record, commitSha: commit, localPath, manifest, addedBy: record.addedBy });
+        this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest, addedBy: record.addedBy });
         this.#log.info({ marketplace: name, commit, actor }, "marketplace refreshed");
         return toMarketplaceView(this.store.getMarketplace(name)!);
       } finally {
