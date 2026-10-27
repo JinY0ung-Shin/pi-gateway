@@ -62,8 +62,6 @@ export interface McpRecord {
   status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
   requiredSecrets: string[];
-  /** broker 서버: 등록 직후 아직 값이 없는 비밀키 */
-  missingSecrets?: string[];
   /** broker 서버: plugin MCP 기본값으로 채운 비밀키 이름 → 그때의 fingerprint (다르면 관리자가 바꾼 값) */
   defaultSecrets?: Record<string, string>;
   warnings: string[];
@@ -157,12 +155,12 @@ export class PluginStore {
     return row ? toMarketplace(row) : undefined;
   }
 
-  upsertMarketplace(record: Omit<MarketplaceRecord, "addedAt" | "refreshedAt"> & { addedAt?: string }): void {
+  upsertMarketplace(record: Omit<MarketplaceRecord, "addedAt" | "refreshedAt">): void {
     const at = now();
     this.#db
       .prepare(
         `INSERT INTO plugin_marketplaces (name, url, ref, commit_sha, local_path, manifest_json, added_at, refreshed_at, added_by)
-         VALUES (@name, @url, @ref, @commit, @path, @manifest, @addedAt, @at, @by)
+         VALUES (@name, @url, @ref, @commit, @path, @manifest, @at, @at, @by)
          ON CONFLICT(name) DO UPDATE SET url = @url, ref = @ref, commit_sha = @commit, local_path = @path,
            manifest_json = @manifest, refreshed_at = @at`,
       )
@@ -173,7 +171,6 @@ export class PluginStore {
         commit: record.commitSha,
         path: record.localPath,
         manifest: JSON.stringify(record.manifest),
-        addedAt: record.addedAt ?? at,
         at,
         by: record.addedBy,
       });
@@ -236,12 +233,7 @@ export class PluginStore {
 
   getSetting<T>(key: string, fallback: T): T {
     const row = this.#db.prepare("SELECT value_json FROM platform_settings WHERE key = ?").get(key) as { value_json: string } | undefined;
-    if (!row) return fallback;
-    try {
-      return JSON.parse(row.value_json) as T;
-    } catch {
-      return fallback;
-    }
+    return row ? (JSON.parse(row.value_json) as T) : fallback;
   }
 
   setSetting(key: string, value: unknown, actor: string): void {

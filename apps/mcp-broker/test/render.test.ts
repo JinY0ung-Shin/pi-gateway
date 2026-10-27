@@ -43,14 +43,7 @@ describe("renderTransport", () => {
       url: "https://example.com/mcp?user=alice",
       headers: { Authorization: "Bearer sekret-value", FWD: "utok-123456", THREAD: "t9", SID: "s1" },
     });
-    expect(out.credentials.sort()).toEqual(["sekret-value", "utok-123456"]);
-    expect(out.missingSecrets).toEqual([]);
-  });
-
-  it("값이 없는 비밀키를 알려준다", () => {
-    const config = http({ Authorization: "Bearer {{secret:TOKEN}}", "X-Opt": "{{ctx.header:x-missing}}" });
-    const out = renderTransport(config, { sub: "a" }, new Map());
-    expect(out.missingSecrets).toEqual(["TOKEN"]);
+    expect(out.headerCredentials).toEqual(["utok-123456"]);
   });
 });
 

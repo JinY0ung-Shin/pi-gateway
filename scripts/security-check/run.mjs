@@ -23,9 +23,8 @@
 //   --scan-secret-dir DIR  이 디렉토리의 파일 내용(비밀값)이 sandbox 어디에도 없는지 확인 (기본 /run/secrets)
 //   --out PATH             리포트 파일 (기본 stdout)
 //   --keep                 점검용 workspace(secchk-a, secchk-b)를 비우지 않는다. 컨테이너는 어느 쪽이든 유휴 시간이 지나면 정리된다
-//   --strict               경고(WARN)도 실패로 친다
 //
-// 종료 코드: 0 = 실패 없음, 1 = 실패(FAIL) 있음, 2 = 점검을 돌리지 못함
+// 종료 코드: 0 = 실패 없음, 1 = FAIL·INVALID·WARN 있음, 2 = 점검을 돌리지 못함
 
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -34,7 +33,7 @@ import { join } from "node:path";
 
 // ── 인자 ────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const opt = { url: "http://127.0.0.1:7070", internal: [], egress: null, scanDir: "/run/secrets", keep: false, strict: false, hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
+const opt = { url: "http://127.0.0.1:7070", internal: [], egress: null, scanDir: "/run/secrets", keep: false, hostIps: [], hostPorts: [22, 80, 443, 2375, 2376, 8080], lan: [] };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   const next = () => {
@@ -52,7 +51,6 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--scan-secret-dir") opt.scanDir = next();
   else if (a === "--out") opt.out = next();
   else if (a === "--keep") opt.keep = true;
-  else if (a === "--strict") opt.strict = true;
   else if (a === "--help" || a === "-h") {
     process.stdout.write(readFileSync(new URL(import.meta.url)).toString().split("\n").filter((l) => l.startsWith("//")).join("\n") + "\n");
     process.exit(0);
@@ -78,7 +76,8 @@ function token(sub) {
   return `${head}.${body}.${sig}`;
 }
 
-async function post(route, user, body) {
+/** sandboxd에 POST하고 응답 본문(텍스트)을 돌려준다 */
+async function call(route, user, body) {
   const res = await fetch(`${opt.url}${route}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token(user)}`, "content-type": "application/json" },
@@ -86,41 +85,18 @@ async function post(route, user, body) {
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`${route} → HTTP ${res.status}: ${text.slice(0, 300)}`);
+  return text;
+}
+
+async function post(route, user, body) {
+  const text = await call(route, user, body);
   return text ? JSON.parse(text) : {};
 }
 
-/** sandbox 안에서 bash 스크립트를 실행한다 */
-async function sh(user, script, timeoutSec = 60) {
-  const res = await fetch(`${opt.url}/v1/exec`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token(user)}`, "content-type": "application/json" },
-    body: JSON.stringify({ user, argv: ["bash", "-c", script], timeoutSec }),
-  });
-  if (!res.ok) throw new Error(`exec → HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+/** sandbox 안에서 명령을 실행하고 stdout을 모은다 (body: /v1/exec 요청에서 user를 뺀 것) */
+async function exec(user, body) {
   let stdout = "";
-  let stderr = "";
-  let exit = null;
-  for (const line of (await res.text()).split("\n")) {
-    if (!line) continue;
-    const ev = JSON.parse(line);
-    if (ev.type === "stdout") stdout += Buffer.from(ev.data, "base64").toString("utf8");
-    else if (ev.type === "stderr") stderr += Buffer.from(ev.data, "base64").toString("utf8");
-    else if (ev.type === "exit") exit = ev;
-    else if (ev.type === "error") throw new Error(`exec error ${ev.code}: ${ev.message}`);
-  }
-  return { stdout, stderr, code: exit?.exitCode ?? null, out: (stdout + stderr).trim() };
-}
-
-/** sandbox 안에서 python 코드를 stdin으로 넘겨 실행한다 (따옴표 문제 없이) */
-async function py(user, code, timeoutSec = 60) {
-  const res = await fetch(`${opt.url}/v1/exec`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token(user)}`, "content-type": "application/json" },
-    body: JSON.stringify({ user, argv: ["python3", "-"], stdin: Buffer.from(code).toString("base64"), timeoutSec, maxOutputBytes: 64 * 1024 * 1024 }),
-  });
-  if (!res.ok) throw new Error(`exec → HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  let stdout = "";
-  for (const line of (await res.text()).split("\n")) {
+  for (const line of (await call("/v1/exec", user, body)).split("\n")) {
     if (!line) continue;
     const ev = JSON.parse(line);
     if (ev.type === "stdout") stdout += Buffer.from(ev.data, "base64").toString("utf8");
@@ -128,6 +104,13 @@ async function py(user, code, timeoutSec = 60) {
   }
   return { stdout };
 }
+
+/** sandbox 안에서 bash 스크립트를 실행한다 */
+const sh = (user, script, timeoutSec = 60) => exec(user, { argv: ["bash", "-c", script], timeoutSec });
+
+/** sandbox 안에서 python 코드를 stdin으로 넘겨 실행한다 (따옴표 문제 없이) */
+const py = (user, code, timeoutSec = 60) =>
+  exec(user, { argv: ["python3", "-"], stdin: Buffer.from(code).toString("base64"), timeoutSec, maxOutputBytes: 64 * 1024 * 1024 });
 
 // 파일시스템(/proc, /sys, /dev 제외)과 /proc/1/environ에서 24자 이상 토큰을 찾아 sha256(전체), sha256(앞 40자)를 출력한다.
 // 토큰 문자에 "="와 "."를 넣지 않는다: KEY=value 줄에서도 value만 토큰이 되고, base64 패딩은 떨어진다.
@@ -186,23 +169,33 @@ const A = "secchk-a";
 const B = "secchk-b";
 const MARK = `pi-secchk-marker-${run}`;
 /**
+ * 대상마다 line(host, port)이 만든 셸 명령을 한 스크립트로 sandbox에서 돌리고,
+ * 각 명령이 출력한 "host:port 결과" 줄을 Map으로 돌려준다. 이상한 대상은 건너뛴다.
+ */
+async function perTarget(user, targets, secs, line) {
+  const valid = targets.filter(([h, p]) => /^[0-9A-Za-z.:-]+$/.test(h) && Number.isInteger(Number(p)));
+  if (valid.length === 0) return new Map();
+  const out = (await sh(user, valid.map(([h, p]) => line(h, p)).join("\n"), 30 + valid.length * (secs + 1))).stdout;
+  const results = new Map();
+  for (const l of out.split("\n")) {
+    const [target, value] = l.trim().split(" ");
+    if (target && value) results.set(target, value);
+  }
+  return results;
+}
+
+/**
  * sandbox 안에서 여러 대상에 직접 TCP 연결을 시도하고 상태를 돌려준다.
  * OPEN = 연결됨, REFUSED = 거절됨(RST, 네트워크로는 닿는다), FILTERED = 응답 없음(방화벽 DROP), NOROUTE = 경로 없음
  */
-async function probe(user, targets, secs = 3) {
-  const valid = targets.filter(([h, p]) => /^[0-9A-Za-z.:-]+$/.test(h) && Number.isInteger(Number(p)));
-  if (valid.length === 0) return new Map();
-  const script = valid
-    .map(([h, p]) => `err=$(timeout ${secs} bash -c 'exec 3<>/dev/tcp/${h}/${p}' 2>&1); rc=$?; if [ $rc -eq 0 ]; then s=OPEN; elif [ $rc -eq 124 ]; then s=FILTERED; elif printf '%s' "$err" | grep -qi unreachable; then s=NOROUTE; else s=REFUSED; fi; echo "${h}:${p} $s"`)
-    .join("\n");
-  const out = (await sh(user, script, 30 + valid.length * (secs + 1))).stdout;
-  const states = new Map();
-  for (const line of out.split("\n")) {
-    const [target, state] = line.trim().split(" ");
-    if (target && state) states.set(target, state);
-  }
-  return states;
-}
+const probe = (user, targets, secs = 3) =>
+  perTarget(
+    user,
+    targets,
+    secs,
+    (h, p) =>
+      `err=$(timeout ${secs} bash -c 'exec 3<>/dev/tcp/${h}/${p}' 2>&1); rc=$?; if [ $rc -eq 0 ]; then s=OPEN; elif [ $rc -eq 124 ]; then s=FILTERED; elif printf '%s' "$err" | grep -qi unreachable; then s=NOROUTE; else s=REFUSED; fi; echo "${h}:${p} $s"`,
+  );
 
 const tcp = (host, port, secs = 3) =>
   `timeout ${secs} bash -c 'exec 3<>/dev/tcp/${host}/${port}' 2>/dev/null && echo OPEN || echo CLOSED`;
@@ -214,20 +207,13 @@ const PROXY = "http://127.0.0.1:3128";
  * sandbox 안에서 egress 프록시로 각 대상에 CONNECT를 보내고 프록시의 응답 코드를 돌려준다.
  * 200 = 연결됨, 407 = 프록시가 거부함, 그 밖(502·503·000 등) = 프록시가 허용했지만 연결하지 못함(000은 응답 없음)
  */
-async function proxyCodes(user, targets, secs = 15) {
-  const valid = targets.filter(([h, p]) => /^[0-9A-Za-z.-]+$/.test(h) && Number.isInteger(Number(p)));
-  if (valid.length === 0) return new Map();
-  const script = valid
-    .map(([h, p]) => `echo "${h}:${p} $(curl -s -o /dev/null -p -x ${PROXY} --noproxy '' -w '%{http_connect}' --max-time ${secs} https://${h}:${p}/ 2>/dev/null)"`)
-    .join("\n");
-  const out = (await sh(user, script, 30 + valid.length * (secs + 1))).stdout;
-  const codes = new Map();
-  for (const line of out.split("\n")) {
-    const [target, code] = line.trim().split(" ");
-    if (target && code) codes.set(target, code);
-  }
-  return codes;
-}
+const proxyCodes = (user, targets, secs = 15) =>
+  perTarget(
+    user,
+    targets,
+    secs,
+    (h, p) => `echo "${h}:${p} $(curl -s -o /dev/null -p -x ${PROXY} --noproxy '' -w '%{http_connect}' --max-time ${secs} https://${h}:${p}/ 2>/dev/null)"`,
+  );
 
 async function main() {
   const started = new Date();
@@ -298,19 +284,8 @@ async function main() {
     .split("\n")
     .filter((l) => /^(?:[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|API_KEY|APIKEY|CREDENTIAL|KEK)[A-Z0-9_]*|ANTHROPIC_[A-Z_]+|OPENAI_[A-Z_]+)=/i.test(l));
   const probeValue = `probe-${run}`;
-  const envCtl = await fetch(`${opt.url}/v1/exec`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token(B)}`, "content-type": "application/json" },
-    body: JSON.stringify({ user: B, argv: ["bash", "-c", "cat /proc/self/environ | tr '\\0' '\\n'"], env: { PROBE_SECRET: probeValue } }),
-  }).then((r) => r.text());
-  const envCtlOut = envCtl
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
-    .filter((ev) => ev.type === "stdout")
-    .map((ev) => Buffer.from(ev.data, "base64").toString("utf8"))
-    .join("");
-  const ctl3 = envCtlOut.includes(`PROBE_SECRET=${probeValue}`);
+  const envCtl = await exec(B, { argv: ["bash", "-c", "cat /proc/self/environ | tr '\\0' '\\n'"], env: { PROBE_SECRET: probeValue } });
+  const ctl3 = envCtl.stdout.includes(`PROBE_SECRET=${probeValue}`);
   record(
     "secrets",
     "sandbox 프로세스 환경에 비밀처럼 보이는 변수가 없다 (/proc/1/environ, env)",
@@ -576,7 +551,7 @@ async function main() {
 
 function render(meta) {
   const count = (s) => results.filter((r) => r.status === s).length;
-  const failed = count("FAIL") + count("INVALID") + (opt.strict ? count("WARN") : 0);
+  const failed = count("FAIL") + count("INVALID") + count("WARN");
   const icon = { PASS: "✅ PASS", FAIL: "❌ FAIL", WARN: "⚠️ WARN", INFO: "ℹ️ INFO", INVALID: "❓ INVALID" };
   const areaName = {
     workspace: "workspace 격리",

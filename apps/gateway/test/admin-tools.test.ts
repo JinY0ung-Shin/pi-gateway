@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { registerAdminRoutes } from "../src/admin/index.js";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
 import { type Harness, startHarness } from "./helpers.js";
 
@@ -9,7 +8,6 @@ let h: Harness;
 beforeAll(async () => {
   h = await startHarness({
     env: { ADMIN_API_KEY: ADMIN_KEY },
-    overrides: { registerAdminRoutes },
     agents: [{ name: "p:scout", description: "Finds things", tools: ["Read", "Bash(git:*)"], prompt: "You are the scout." }],
   });
 });

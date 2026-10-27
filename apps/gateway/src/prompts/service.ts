@@ -1,11 +1,11 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 import type { PromptRenderInput, PromptService } from "../contracts.js";
 import { type Db, migrate } from "../db.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-prompt.js";
-import { analyzePrompt, buildPromptVars, PROMPT_VARIABLES, type PromptVariable, renderPrompt } from "./render.js";
+import { buildPromptVars, PROMPT_VARIABLES, type PromptVariable, renderPrompt, unknownVariables } from "./render.js";
 
 const MIGRATIONS = [
   `CREATE TABLE prompts (
@@ -65,13 +65,7 @@ export const CreatePromptInput = z.object({ name: PromptName, description: Descr
 export const AddVersionInput = z.object({ content: Content, message: Message });
 export const DeployInput = z.object({ version: z.number().int().min(1), note: Note });
 export const ResetInput = z.object({ note: Note });
-export const RenderInput = z.object({
-  content: z.string().max(MAX_PROMPT_CHARS).optional(),
-  name: PromptName.optional(),
-  version: z.number().int().min(1).optional(),
-  user: z.string().min(1).max(200).default("preview-user"),
-  model: z.string().max(200).optional(),
-});
+export const RenderInput = z.object({ content: z.string().max(MAX_PROMPT_CHARS).optional() });
 
 export interface PromptVersion {
   version: number;
@@ -79,24 +73,19 @@ export interface PromptVersion {
   message: string;
   author: string;
   createdAt: string;
-  sha: string;
 }
 
 export interface PromptSummary {
   name: string;
   description: string;
-  createdAt: string;
-  updatedAt: string;
   latestVersion: number;
-  versionCount: number;
-  latestAuthor: string;
-  latestSha: string;
-  charCount: number;
   liveVersion: number | null;
 }
 
-export interface PromptDetail extends Omit<PromptSummary, "latestAuthor" | "latestSha" | "charCount"> {
-  createdBy: string;
+export interface PromptDetail {
+  name: string;
+  description: string;
+  liveVersion: number | null;
   versions: PromptVersion[];
 }
 
@@ -117,12 +106,10 @@ export interface PromptDeployment {
   action: "deploy" | "rollback" | "reset";
   name: string | null;
   version: number | null;
-  sha: string | null;
   actor: string;
   note: string;
   fromName: string | null;
   fromVersion: number | null;
-  revision: string;
 }
 
 interface LiveRow {
@@ -139,7 +126,6 @@ interface VersionRow {
   message: string;
   author: string;
   created_at: string;
-  sha: string;
 }
 
 const now = () => new Date().toISOString();
@@ -148,10 +134,6 @@ const newRevision = () => randomBytes(8).toString("hex");
 export function normalizeActor(actor: string | undefined): string {
   const trimmed = (actor ?? "").trim().slice(0, 120);
   return trimmed || "admin";
-}
-
-function versionSha(name: string, version: number, content: string, author: string, createdAt: string, message: string) {
-  return createHash("sha256").update(JSON.stringify([name, version, content, author, createdAt, message])).digest("hex");
 }
 
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -199,26 +181,11 @@ export class PromptManager implements PromptService {
     const live = this.#liveRow();
     const rows = this.#db
       .prepare(
-        `SELECT p.name, p.description, p.created_at, p.updated_at,
-                v.version AS latest_version, v.author AS latest_author, v.sha AS latest_sha,
-                length(v.content) AS char_count,
-                (SELECT count(*) FROM prompt_versions c WHERE c.name = p.name) AS version_count
-           FROM prompts p
-           JOIN prompt_versions v ON v.name = p.name
-            AND v.version = (SELECT max(version) FROM prompt_versions m WHERE m.name = p.name)
-          ORDER BY p.name`,
+        `SELECT p.name, p.description, max(v.version) AS latest_version
+           FROM prompts p JOIN prompt_versions v ON v.name = p.name
+          GROUP BY p.name ORDER BY p.name`,
       )
-      .all() as {
-      name: string;
-      description: string;
-      created_at: string;
-      updated_at: string;
-      latest_version: number;
-      latest_author: string;
-      latest_sha: string;
-      char_count: number;
-      version_count: number;
-    }[];
+      .all() as { name: string; description: string; latest_version: number }[];
     return {
       live: this.live(),
       defaultContent: DEFAULT_SYSTEM_PROMPT,
@@ -226,37 +193,26 @@ export class PromptManager implements PromptService {
       prompts: rows.map((r) => ({
         name: r.name,
         description: r.description,
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
         latestVersion: r.latest_version,
-        versionCount: r.version_count,
-        latestAuthor: r.latest_author,
-        latestSha: r.latest_sha,
-        charCount: r.char_count,
         liveVersion: live.name === r.name ? live.version : null,
       })),
     };
   }
 
   get(name: string): PromptDetail {
-    const prompt = this.#db
-      .prepare("SELECT name, description, created_at, updated_at, created_by FROM prompts WHERE name = ?")
-      .get(name) as { name: string; description: string; created_at: string; updated_at: string; created_by: string } | undefined;
+    const prompt = this.#db.prepare("SELECT name, description FROM prompts WHERE name = ?").get(name) as
+      | { name: string; description: string }
+      | undefined;
     if (!prompt) throw notFound(`prompt '${name}' not found`);
     const versions = (
       this.#db
-        .prepare("SELECT version, content, message, author, created_at, sha FROM prompt_versions WHERE name = ? ORDER BY version")
+        .prepare("SELECT version, content, message, author, created_at FROM prompt_versions WHERE name = ? ORDER BY version")
         .all(name) as VersionRow[]
     ).map(toVersion);
     const live = this.#liveRow();
     return {
       name: prompt.name,
       description: prompt.description,
-      createdAt: prompt.created_at,
-      updatedAt: prompt.updated_at,
-      createdBy: prompt.created_by,
-      latestVersion: versions.at(-1)?.version ?? 0,
-      versionCount: versions.length,
       liveVersion: live.name === name ? live.version : null,
       versions,
     };
@@ -265,7 +221,7 @@ export class PromptManager implements PromptService {
   deployments(limit = 50): PromptDeployment[] {
     const rows = this.#db
       .prepare(
-        `SELECT id, at, action, name, version, sha, actor, note, from_name, from_version, revision
+        `SELECT id, at, action, name, version, actor, note, from_name, from_version
            FROM prompt_deployments ORDER BY id DESC LIMIT ?`,
       )
       .all(Math.max(1, Math.min(limit, 500))) as {
@@ -274,12 +230,10 @@ export class PromptManager implements PromptService {
       action: PromptDeployment["action"];
       name: string | null;
       version: number | null;
-      sha: string | null;
       actor: string;
       note: string;
       from_name: string | null;
       from_version: number | null;
-      revision: string;
     }[];
     return rows.map((r) => ({
       id: r.id,
@@ -287,29 +241,18 @@ export class PromptManager implements PromptService {
       action: r.action,
       name: r.name,
       version: r.version,
-      sha: r.sha,
       actor: r.actor,
       note: r.note,
       fromName: r.from_name,
       fromVersion: r.from_version,
-      revision: r.revision,
     }));
   }
 
-  /** 미리보기. content가 없으면 name/version(또는 현재 배포본)을 렌더링한다. */
-  render(input: unknown): { text: string; used: PromptVariable[]; unknown: string[]; charCount: number } {
-    const req = parse(RenderInput, input ?? {});
-    let template: string;
-    if (req.content !== undefined) template = req.content;
-    else if (req.name !== undefined) {
-      const version = req.version ?? this.get(req.name).latestVersion;
-      const row = this.#versionRow(req.name, version);
-      if (!row) throw notFound(`prompt '${req.name}' v${version} not found`);
-      template = row.content;
-    } else template = this.live().content;
-    const text = renderPrompt(template, buildPromptVars({ user: req.user, model: req.model ?? "model", now: new Date() }, this.#language));
-    const analysis = analyzePrompt(template);
-    return { text, used: analysis.used, unknown: analysis.unknown, charCount: text.length };
+  /** 미리보기. content가 없으면 현재 배포본을 렌더링한다. */
+  render(input: unknown): { text: string; unknown: string[] } {
+    const template = parse(RenderInput, input ?? {}).content ?? this.live().content;
+    const text = renderPrompt(template, buildPromptVars({ user: "preview-user", model: "model", now: new Date() }, this.#language));
+    return { text, unknown: unknownVariables(template) };
   }
 
   // ── 변경 ───────────────────────────────────────────────────────
@@ -340,36 +283,32 @@ export class PromptManager implements PromptService {
       if (!latest) throw notFound(`prompt '${name}' not found`);
       if (latest.content === req.content) throw new PlatformError(422, "no_change", "content is identical to the latest version");
       created = this.#insertVersion(name, latest.version + 1, req.content, req.message, actor, at);
-      this.#db.prepare("UPDATE prompts SET updated_at = ? WHERE name = ?").run(at, name);
     })();
     return created!;
   }
 
-  deploy(name: string, input: unknown, actorInput?: string): { deployment: PromptDeployment | null; live: LivePrompt } {
+  deploy(name: string, input: unknown, actorInput?: string): { live: LivePrompt } {
     const req = parse(DeployInput, input);
     const actor = normalizeActor(actorInput);
-    let deploymentId: number | null = null;
     this.#db.transaction(() => {
       const live = this.#liveRow();
-      const row = this.#versionRow(name, req.version);
-      if (!row) throw notFound(`prompt '${name}' v${req.version} not found`);
+      if (!this.#versionRow(name, req.version)) throw notFound(`prompt '${name}' v${req.version} not found`);
       if (live.name === name && live.version === req.version) return; // 이미 배포된 버전
       const action = live.name === name && live.version !== null && req.version < live.version ? "rollback" : "deploy";
-      deploymentId = this.#setLive(live, { name, version: req.version, sha: row.sha }, action, actor, req.note);
+      this.#setLive(live, { name, version: req.version }, action, actor, req.note);
     })();
-    return { deployment: deploymentId === null ? null : this.#deployment(deploymentId), live: this.live() };
+    return { live: this.live() };
   }
 
-  reset(input: unknown, actorInput?: string): { deployment: PromptDeployment | null; live: LivePrompt } {
+  reset(input: unknown, actorInput?: string): { live: LivePrompt } {
     const req = parse(ResetInput, input ?? {});
     const actor = normalizeActor(actorInput);
-    let deploymentId: number | null = null;
     this.#db.transaction(() => {
       const live = this.#liveRow();
       if (live.name === null) return; // 이미 기본 프롬프트
-      deploymentId = this.#setLive(live, { name: null, version: null, sha: null }, "reset", actor, req.note);
+      this.#setLive(live, { name: null, version: null }, "reset", actor, req.note);
     })();
-    return { deployment: deploymentId === null ? null : this.#deployment(deploymentId), live: this.live() };
+    return { live: this.live() };
   }
 
   // ── 내부 ───────────────────────────────────────────────────────
@@ -384,43 +323,38 @@ export class PromptManager implements PromptService {
 
   #versionRow(name: string, version: number): VersionRow | undefined {
     return this.#db
-      .prepare("SELECT version, content, message, author, created_at, sha FROM prompt_versions WHERE name = ? AND version = ?")
+      .prepare("SELECT version, content, message, author, created_at FROM prompt_versions WHERE name = ? AND version = ?")
       .get(name, version) as VersionRow | undefined;
   }
 
   #insertVersion(name: string, version: number, content: string, message: string, author: string, at: string): PromptVersion {
-    const sha = versionSha(name, version, content, author, at, message);
+    // sha 칼럼은 NOT NULL로 남아 있지만 읽는 곳이 없다.
     this.#db
       .prepare(
-        "INSERT INTO prompt_versions (name, version, content, message, author, created_at, sha) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO prompt_versions (name, version, content, message, author, created_at, sha) VALUES (?, ?, ?, ?, ?, ?, '')",
       )
-      .run(name, version, content, message, author, at, sha);
-    return { version, content, message, author, createdAt: at, sha };
+      .run(name, version, content, message, author, at);
+    return { version, content, message, author, createdAt: at };
   }
 
   #setLive(
     previous: LiveRow,
-    next: { name: string | null; version: number | null; sha: string | null },
+    next: { name: string | null; version: number | null },
     action: PromptDeployment["action"],
     actor: string,
     note: string,
-  ): number {
+  ): void {
     const at = now();
     const revision = newRevision();
     this.#db
       .prepare("UPDATE prompt_live SET name = ?, version = ?, revision = ?, deployed_at = ?, deployed_by = ? WHERE id = 1")
       .run(next.name, next.version, revision, at, actor);
-    const result = this.#db
+    this.#db
       .prepare(
-        `INSERT INTO prompt_deployments (at, action, name, version, sha, actor, note, from_name, from_version, revision)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO prompt_deployments (at, action, name, version, actor, note, from_name, from_version, revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(at, action, next.name, next.version, next.sha, actor, note, previous.name, previous.version, revision);
-    return Number(result.lastInsertRowid);
-  }
-
-  #deployment(id: number): PromptDeployment | null {
-    return this.deployments(500).find((d) => d.id === id) ?? null;
+      .run(at, action, next.name, next.version, actor, note, previous.name, previous.version, revision);
   }
 }
 
@@ -431,6 +365,5 @@ function toVersion(row: VersionRow): PromptVersion {
     message: row.message,
     author: row.author,
     createdAt: row.created_at,
-    sha: row.sha,
   };
 }

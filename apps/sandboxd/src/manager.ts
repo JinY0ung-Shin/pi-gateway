@@ -239,12 +239,6 @@ export class SandboxManager {
     if (this.reaper) clearInterval(this.reaper);
     this.reaper = undefined;
   }
-
-  /** 테스트·관리용 */
-  activity(key: string): { inflight: number; lastActive: number } | undefined {
-    const e = this.entries.get(key);
-    return e ? { inflight: e.inflight, lastActive: e.lastActive } : undefined;
-  }
 }
 
 function unavailable(op: string, err: unknown): SandboxError {

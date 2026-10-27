@@ -428,55 +428,6 @@ a:focus-visible {
   margin-bottom: 0.45rem;
 }
 
-@media (max-width: 820px) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rail {
-    position: sticky;
-    z-index: 2;
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.6rem 1rem;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-    overflow-x: auto;
-  }
-
-  .brand-sub,
-  .rail-label,
-  .rail nav::before,
-  .rail nav a::before {
-    display: none;
-  }
-
-  .rail nav,
-  .rail-group,
-  .rail ul {
-    display: flex;
-    flex-direction: row;
-    gap: 0.15rem;
-  }
-
-  .rail nav a {
-    padding: 0.3rem 0.6rem;
-    white-space: nowrap;
-  }
-
-  .rail-logout {
-    margin: 0;
-    white-space: nowrap;
-  }
-
-  .content {
-    padding: 1.1rem 1rem 2.5rem;
-  }
-}
-
 /* ── 면 ── */
 
 .card {
@@ -1126,6 +1077,53 @@ details summary {
 }
 
 @media (max-width: 820px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    position: sticky;
+    z-index: 2;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    overflow-x: auto;
+  }
+
+  .brand-sub,
+  .rail-label,
+  .rail nav::before,
+  .rail nav a::before {
+    display: none;
+  }
+
+  .rail nav,
+  .rail-group,
+  .rail ul {
+    display: flex;
+    flex-direction: row;
+    gap: 0.15rem;
+  }
+
+  .rail nav a {
+    padding: 0.3rem 0.6rem;
+    white-space: nowrap;
+  }
+
+  .rail-logout {
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .content {
+    padding: 1.1rem 1rem 2.5rem;
+  }
+
   .section {
     padding: 1rem;
   }

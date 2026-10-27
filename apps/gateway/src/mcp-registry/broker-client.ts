@@ -5,12 +5,10 @@ import {
   BROKER_ADMIN_ROUTES,
   BROKER_ROUTES,
   ListServersResponse,
-  ListToolsResponse,
   type McpServerConfig,
   McpServerView,
   signInternalToken,
   TestServerResponse,
-  type ToolSummary,
   type VisibleServer,
   VisibleServersResponse,
 } from "@pi-gateway/shared";
@@ -72,27 +70,18 @@ export class BrokerClient {
     }
   }
 
-  async putSecret(id: string, name: string, value: string, actor: string): Promise<void> {
-    await this.#admin("PUT", BROKER_ADMIN_ROUTES.secret(id, name), { body: { value }, actor });
+  /** body는 `{ value }`. 이름과 본문은 broker가 검사한다. */
+  async putSecret(id: string, name: string, body: unknown, actor: string): Promise<void> {
+    await this.#admin("PUT", BROKER_ADMIN_ROUTES.secret(id, name), { body, actor });
   }
 
   async deleteSecret(id: string, name: string, actor: string): Promise<void> {
     await this.#admin("DELETE", BROKER_ADMIN_ROUTES.secret(id, name), { actor });
   }
 
-  async test(id: string, user: string | undefined, actor: string): Promise<z.infer<typeof TestServerResponse>> {
-    const body = await this.#admin("POST", BROKER_ADMIN_ROUTES.test(id), {
-      body: user ? { user } : {},
-      actor,
-      timeoutMs: TEST_TIMEOUT_MS,
-    });
+  async test(id: string, actor: string): Promise<z.infer<typeof TestServerResponse>> {
+    const body = await this.#admin("POST", BROKER_ADMIN_ROUTES.test(id), { body: {}, actor, timeoutMs: TEST_TIMEOUT_MS });
     return this.#parse(TestServerResponse, body);
-  }
-
-  async tools(id: string, user: string | undefined): Promise<ToolSummary[]> {
-    const query = user ? `?user=${encodeURIComponent(user)}` : "";
-    const body = await this.#admin("GET", `${BROKER_ADMIN_ROUTES.tools(id)}${query}`, { timeoutMs: TEST_TIMEOUT_MS });
-    return this.#parse(ListToolsResponse, body).tools;
   }
 
   // ── 데이터 평면 ────────────────────────────────────────────────

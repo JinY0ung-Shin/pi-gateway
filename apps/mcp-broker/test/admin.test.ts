@@ -110,7 +110,6 @@ describe("admin plane", () => {
     for (const id of servers) {
       bodies.push((await tb.admin("GET", `/admin/servers/${id}`)).text);
       bodies.push((await tb.admin("POST", `/admin/servers/${id}/test`, {})).text);
-      bodies.push((await tb.admin("GET", `/admin/servers/${id}/tools?user=alice`)).text);
       bodies.push((await tb.admin("PUT", `/admin/servers/${id}`, httpServer(id, { description: "again" }))).text);
     }
     // 감사 기록에도 남지 않는다

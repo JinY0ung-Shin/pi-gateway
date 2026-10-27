@@ -2,7 +2,6 @@ import { stat } from "node:fs/promises";
 import Docker from "dockerode";
 import pino from "pino";
 import { loadConfig } from "./config.js";
-import { checkSandboxImage, ensureProxyVolume } from "./docker-setup.js";
 import { SandboxManager } from "./manager.js";
 import { DockerSandboxRuntime } from "./runtime.js";
 import { buildServer } from "./server.js";
@@ -20,10 +19,8 @@ if (!root?.isDirectory()) {
   process.exit(1);
 }
 
-const docker = new Docker({ socketPath: config.dockerSocket });
+const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 await docker.ping();
-await ensureProxyVolume(docker, config, log);
-await checkSandboxImage(docker, config, log);
 
 const workspaces = new Workspaces(config.workspacesDir);
 const manager = new SandboxManager(docker, config, workspaces, log);
@@ -32,7 +29,7 @@ manager.startReaper();
 
 const runtime = new DockerSandboxRuntime(manager, config, log);
 const app = await buildServer({ jwtSecret: config.jwtSecret, runtime, logger: log });
-await app.listen({ host: config.host, port: config.port });
+await app.listen({ host: "0.0.0.0", port: config.port });
 log.info(
   { port: config.port, image: config.image, proxyVolume: config.proxyVolume, idleSeconds: config.idleSeconds },
   "sandboxd listening",

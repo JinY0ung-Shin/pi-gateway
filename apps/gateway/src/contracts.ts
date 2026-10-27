@@ -1,6 +1,6 @@
 import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
 import type { McpServerConfig, SandboxInfo, VisibleServer } from "@pi-gateway/shared";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels } from "./agent/runtime.js";
 import type { GatewayConfig } from "./config.js";
@@ -52,8 +52,6 @@ export interface PluginResources {
   promptTemplates(): PromptTemplate[];
   /** 활성 plugin의 agent(`agents/*.md`). Agent 도구가 하위 세션으로 실행한다. */
   agents(): SubagentDefinition[];
-  /** 설치·제거·활성화가 바뀔 때마다 증가한다. */
-  revision(): number;
 }
 
 // ── MCP 서버 목록 (구현: src/mcp-registry) ──────────────────────────
@@ -108,6 +106,3 @@ export interface AdminDeps {
   /** 대화 기록 보기와 보관 기간 */
   sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;
 }
-
-/** `/admin`(정적 UI)과 `/admin/api/*`를 등록한다. server.ts가 한 번 호출한다. */
-export type RegisterAdminRoutes = (app: FastifyInstance, deps: AdminDeps) => Promise<void>;

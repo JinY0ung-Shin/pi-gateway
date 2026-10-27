@@ -18,8 +18,6 @@ export interface FakeBrokerTool {
     args: Record<string, unknown>,
     claims: VerifiedInternalClaims,
   ) => { text?: string; isError?: boolean; content?: unknown[]; rpcError?: { code: number; message: string } };
-  /** 첫 tools/call에 HTTP 404(세션 만료)로 답한다. 서버가 처리하지 않은 요청이므로 gateway가 다시 보내도 된다. */
-  notFoundOnce?: boolean;
 }
 
 export interface FakeBrokerRecord {
@@ -41,7 +39,6 @@ export async function startFakeBroker(secret: Uint8Array, servers: Record<string
   const records: FakeBrokerRecord[] = [];
   const authFailures: string[] = [];
   const executions: Record<string, number> = {};
-  const notFoundServed = new Set<string>();
 
   const auth = async (req: IncomingMessage): Promise<VerifiedInternalClaims | null> => {
     const token = bearerToken(req.headers.authorization);
@@ -97,12 +94,6 @@ export async function startFakeBroker(secret: Uint8Array, servers: Record<string
       case "tools/call": {
         const tool = tools.find((t) => t.name === msg.params?.name);
         const toolKey = `${serverId}/${String(msg.params?.name)}`;
-        if (tool?.notFoundOnce && !notFoundServed.has(toolKey)) {
-          notFoundServed.add(toolKey);
-          res.writeHead(404, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: { code: "not_found", message: "session expired" } }));
-          return;
-        }
         executions[toolKey] = (executions[toolKey] ?? 0) + 1;
         const out = tool ? tool.handler((msg.params?.arguments ?? {}) as Record<string, unknown>, claims) : { text: "unknown tool", isError: true };
         if (out.rpcError) {

@@ -474,10 +474,8 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
 function Secrets(props: { entry: McpServerEntry; required: string[]; onChanged: () => Promise<void> }) {
   const action = useAction();
   const [values, setValues] = useState<Record<string, string>>({});
-  const [extra, setExtra] = useState("");
-  const [added, setAdded] = useState<string[]>([]);
   const set = new Map((props.entry.secrets ?? []).map((s) => [s.name, s]));
-  const names = [...new Set([...props.required, ...set.keys(), ...added])].sort();
+  const names = [...new Set([...props.required, ...set.keys()])].sort();
   const id = props.entry.config.id;
   const save = (name: string) =>
     action.run(async () => {
@@ -531,19 +529,6 @@ function Secrets(props: { entry: McpServerEntry; required: string[]; onChanged: 
           })}
         </tbody>
       </table>
-      <div class="row">
-        <input class="mono" placeholder="다른 비밀키 이름" value={extra} onInput={(e) => setExtra((e.currentTarget as HTMLInputElement).value)} />
-        <button
-          class="small"
-          disabled={!/^[A-Za-z0-9_.-]{1,64}$/.test(extra)}
-          onClick={() => {
-            setAdded((a) => [...a, extra]);
-            setExtra("");
-          }}
-        >
-          추가
-        </button>
-      </div>
     </div>
   );
 }
@@ -556,7 +541,16 @@ function ToolsList(props: { id: string }) {
       <h3>도구</h3>
       {action.view}
       {tools === null ? (
-        <button class="small" onClick={() => action.run(async () => setTools((await api<{ tools: ToolSummary[] }>("GET", `/mcp/servers/${enc(props.id)}/tools`)).tools))}>
+        <button
+          class="small"
+          onClick={() =>
+            action.run(async () => {
+              const result = await testServer(props.id);
+              if (!result.ok) throw new Error(result.error ?? "연결 실패");
+              setTools(result.tools ?? []);
+            })
+          }
+        >
           도구 목록 불러오기
         </button>
       ) : (

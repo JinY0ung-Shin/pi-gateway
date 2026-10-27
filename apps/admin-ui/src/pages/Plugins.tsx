@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api, enc, errorText, formatTime } from "../api";
 import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
-import type { CatalogEntry, MarketplaceView, McpScope, McpServerList, PluginView } from "../types";
+import type { CatalogEntry, MarketplaceView, McpServerList, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
   unsupported: "지원 안 함",
@@ -456,12 +456,10 @@ function Names(props: { label: string; items: { name: string; href?: string; tit
 function McpDefaults() {
   const action = useAction();
   const [env, setEnv] = useState("");
-  const [scope, setScope] = useState<McpScope>("per-user");
   useEffect(() => {
     void action.run(async () => {
-      const s = await api<{ mcpDefaults: { env: Record<string, string>; scope: McpScope } }>("GET", "/plugin-settings");
+      const s = await api<{ mcpDefaults: { env: Record<string, string> } }>("GET", "/plugin-settings");
       setEnv(recordToLines(s.mcpDefaults.env));
-      setScope(s.mcpDefaults.scope);
     });
   }, []);
   return (
@@ -473,23 +471,13 @@ function McpDefaults() {
         MCP 서버에도 바로 적용됩니다 (MCP 탭에서 직접 바꾼 값은 그대로 둡니다).
       </p>
       {action.view}
-      <div class="grid-2">
-        <label class="field">
-          <span>env (KEY=VALUE)</span>
-          <textarea rows={4} class="mono" value={env} onInput={(e) => setEnv((e.currentTarget as HTMLTextAreaElement).value)} />
-        </label>
-        <label class="field">
-          <span>범위</span>
-          <select value={scope} onChange={(e) => setScope((e.currentTarget as HTMLSelectElement).value as McpScope)}>
-            <option value="per-user">per-user (사용자마다 프로세스, 기본)</option>
-            <option value="per-session">per-session (세션마다 프로세스)</option>
-            <option value="shared">shared</option>
-          </select>
-        </label>
-      </div>
+      <label class="field">
+        <span>env (KEY=VALUE)</span>
+        <textarea rows={4} class="mono" value={env} onInput={(e) => setEnv((e.currentTarget as HTMLTextAreaElement).value)} />
+      </label>
       <button class="primary" disabled={action.busy} onClick={() =>
           action.run(
-            () => api<{ warnings: string[] }>("PUT", "/plugin-settings", { mcpDefaults: { env: linesToRecord(env), scope } }),
+            () => api<{ warnings: string[] }>("PUT", "/plugin-settings", { mcpDefaults: { env: linesToRecord(env) } }),
             (r) => (r.warnings.length ? `저장했습니다. 확인할 점: ${r.warnings.join(" / ")}` : "저장하고 설치된 plugin의 MCP 서버에 적용했습니다"),
           )
         }>

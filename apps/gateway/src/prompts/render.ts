@@ -19,8 +19,8 @@ function timePart(now: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
 }
 
-export function buildPromptVars(input: PromptRenderInput, language: string, timeZone?: string): PromptVars {
-  const tz = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+export function buildPromptVars(input: PromptRenderInput, language: string): PromptVars {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const date = datePart(input.now, tz);
   return {
     USER: input.user,
@@ -36,14 +36,9 @@ export function renderPrompt(template: string, vars: PromptVars): string {
   return template.replace(TOKEN, (whole, name: string) => (KNOWN.has(name) ? vars[name as PromptVariable] : whole));
 }
 
-/** 템플릿 안의 변수 사용 현황 (미리보기·편집 화면용) */
-export function analyzePrompt(template: string): { used: PromptVariable[]; unknown: string[] } {
-  const used = new Set<PromptVariable>();
+/** 템플릿 안의 모르는 변수 (편집 화면 미리보기용) */
+export function unknownVariables(template: string): string[] {
   const unknown = new Set<string>();
-  for (const match of template.matchAll(TOKEN)) {
-    const name = match[1] ?? "";
-    if (KNOWN.has(name)) used.add(name as PromptVariable);
-    else unknown.add(match[0]);
-  }
-  return { used: PROMPT_VARIABLES.filter((v) => used.has(v)), unknown: [...unknown] };
+  for (const match of template.matchAll(TOKEN)) if (!KNOWN.has(match[1] ?? "")) unknown.add(match[0]);
+  return [...unknown];
 }

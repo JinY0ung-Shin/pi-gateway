@@ -27,7 +27,6 @@ export const BROKER_ADMIN_ROUTES = {
   server: (id: string) => `/admin/servers/${encodeURIComponent(id)}`,
   secret: (id: string, name: string) => `/admin/servers/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
   test: (id: string) => `/admin/servers/${encodeURIComponent(id)}/test`,
-  tools: (id: string) => `/admin/servers/${encodeURIComponent(id)}/tools`,
 } as const;
 
 export const SecretName = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
@@ -68,8 +67,7 @@ export type McpServerView = z.infer<typeof McpServerView>;
 export const ListServersResponse = z.object({ servers: z.array(McpServerView) });
 /** PUT /admin/servers/:id — 본문은 McpServerConfig (runIn은 "broker"여야 한다). 응답은 McpServerView. */
 
-/** POST /admin/servers/:id/test, GET /admin/servers/:id/tools?user= */
-export const TestServerRequest = z.object({ user: z.string().optional() });
+/** POST /admin/servers/:id/test */
 export const TestServerResponse = z.object({
   ok: z.boolean(),
   tools: z.array(ToolSummary).optional(),
@@ -77,13 +75,11 @@ export const TestServerResponse = z.object({
   durationMs: z.number(),
 });
 export type TestServerResponse = z.infer<typeof TestServerResponse>;
-export const ListToolsResponse = z.object({ tools: z.array(ToolSummary) });
 
 /** GET /mcp/servers (데이터 평면) */
 export const VisibleServer = z.object({
   id: z.string(),
   displayName: z.string().optional(),
-  description: z.string().optional(),
   timeoutSec: z.number().int(),
 });
 export type VisibleServer = z.infer<typeof VisibleServer>;

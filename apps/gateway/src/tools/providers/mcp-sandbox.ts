@@ -18,7 +18,6 @@ export function createSandboxMcpToolProvider(deps: McpProviderDeps): ToolProvide
         timeoutSec: config.timeoutSec,
         config,
         ...(config.displayName ? { displayName: config.displayName } : {}),
-        ...(config.description ? { description: config.description } : {}),
       }));
       return set.tools(handles, ctx.signal);
     },

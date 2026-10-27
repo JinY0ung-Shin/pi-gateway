@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { registerAdminRoutes } from "../src/admin/index.js";
 import { createModelRuntime } from "../src/agent/runtime.js";
 import { openDatabase } from "../src/db.js";
 import { startFakeLlm } from "./fixtures/fake-llm.js";
@@ -10,7 +9,7 @@ const admin = { authorization: `Bearer ${ADMIN_KEY}` };
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY }, overrides: { registerAdminRoutes } });
+  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY } });
 });
 afterAll(async () => {
   await h.close();

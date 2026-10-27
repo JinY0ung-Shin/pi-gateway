@@ -54,10 +54,6 @@ export class Redactor {
     this.#pattern = sorted.length > 0 ? new RegExp(sorted.map(escapeRegExp).join("|"), "g") : null;
   }
 
-  get active(): boolean {
-    return this.#pattern !== null;
-  }
-
   redact(text: string): string {
     if (!this.#pattern) return text;
     return text.replace(this.#pattern, REDACTED);

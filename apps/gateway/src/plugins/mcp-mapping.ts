@@ -2,7 +2,6 @@ import {
   atLeastScope,
   MCP_SERVER_ID_PATTERN,
   McpServerConfig,
-  type McpScope,
   requiredScope,
   requiredSecretNames,
   SANDBOX_WORKSPACE,
@@ -12,7 +11,6 @@ import { isObject, type JsonObject } from "./manifest.js";
 /** plugin이 설치하는 sandbox 실행 MCP 서버에 공통으로 넣는 값 (관리 화면에서 바꾼다) */
 export interface PluginMcpDefaults {
   env: Record<string, string>;
-  scope: McpScope;
 }
 
 export const DEFAULT_PLUGIN_MCP_DEFAULTS: PluginMcpDefaults = {
@@ -21,8 +19,6 @@ export const DEFAULT_PLUGIN_MCP_DEFAULTS: PluginMcpDefaults = {
   // gateway의 MCP_METADATA_KEYS에 THREAD_ID,ORCHESTRATOR_URL이 있어야 값이 채워진다.
   // 이 env는 그 변수 이름을 실제로 참조하는 서버에만 넣는다 (referencedDefaultEnv).
   env: { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}" },
-  // 기본 env를 쓰지 않는 서버는 사용자마다 하나의 프로세스를 쓴다. {{metadata}}를 쓰면 자동으로 per-session이 된다.
-  scope: "per-user",
 };
 
 /** 서버 설정의 command·args 중 `${CLAUDE_PLUGIN_ROOT}/…` 파일 (plugin 기준 상대 경로) */
@@ -56,7 +52,8 @@ export interface PluginMcpContext {
   /** sandbox 안에서 쓰는 plugin 데이터 디렉토리 (사용자별, workspace 안) */
   dataDir: string;
   description?: string | undefined;
-  defaults: PluginMcpDefaults;
+  /** 이 서버가 참조하는 기본 env (referencedDefaultEnv) */
+  defaultEnv: Record<string, string>;
   /** plugin이 꺼져 있으면 false (서버도 꺼진 채로 등록한다) */
   enabled: boolean;
 }
@@ -101,23 +98,20 @@ function stringRecord(value: unknown): Record<string, string> {
 /** plugin의 `.mcp.json`(또는 plugin.json mcpServers) 항목 하나를 gateway MCP 서버 설정으로 바꾼다. */
 export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpContext): MappedMcpServer {
   const warnings: string[] = [];
-  if (!isObject(raw)) return { name, requiredSecrets: [], unsupported: "server config is not an object", warnings };
+  const unsupported = (reason: string): MappedMcpServer => ({ name, requiredSecrets: [], unsupported: reason, warnings });
+  if (!isObject(raw)) return unsupported("server config is not an object");
   const cfg: JsonObject = raw;
   const declared = typeof cfg.type === "string" ? cfg.type : undefined;
   const type = declared ?? (typeof cfg.command === "string" ? "stdio" : typeof cfg.url === "string" ? "http" : undefined);
-  if (type === "sse" || type === "ws") return { name, requiredSecrets: [], unsupported: `${type} transport is not supported (streamable HTTP or stdio only)`, warnings };
-  if (type !== "stdio" && type !== "http" && type !== "streamable-http") {
-    return { name, requiredSecrets: [], unsupported: `unknown transport '${String(declared ?? "")}'`, warnings };
-  }
-  if (cfg.headersHelper !== undefined) return { name, requiredSecrets: [], unsupported: "headersHelper (command-generated headers) is not supported", warnings };
-  if (cfg.oauth !== undefined) return { name, requiredSecrets: [], unsupported: "OAuth MCP servers are not supported yet", warnings };
+  if (type === "sse" || type === "ws") return unsupported(`${type} transport is not supported (streamable HTTP or stdio only)`);
+  if (type !== "stdio" && type !== "http" && type !== "streamable-http") return unsupported(`unknown transport '${String(declared ?? "")}'`);
+  if (cfg.headersHelper !== undefined) return unsupported("headersHelper (command-generated headers) is not supported");
+  if (cfg.oauth !== undefined) return unsupported("OAuth MCP servers are not supported yet");
 
   const conv = (v: string) => convertClaudeVariables(v, ctx);
-  const id = sanitizeServerId(name) || sanitizeServerId(`${ctx.pluginName}-mcp`);
-
-  let config: McpServerConfig;
+  let placement: Record<string, unknown>;
   if (type === "stdio") {
-    if (typeof cfg.command !== "string" || !cfg.command.trim()) return { name, requiredSecrets: [], unsupported: "stdio server has no command", warnings };
+    if (typeof cfg.command !== "string" || !cfg.command.trim()) return unsupported("stdio server has no command");
     const command = conv(cfg.command);
     const args = Array.isArray(cfg.args) ? cfg.args.filter((a): a is string => typeof a === "string").map(conv) : [];
     const pluginEnv = Object.fromEntries(Object.entries(stringRecord(cfg.env)).map(([k, v]) => [k, conv(v)]));
@@ -125,44 +119,28 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     const draft = { type: "stdio" as const, command, args, env: pluginEnv, ...(cwd ? { cwd } : {}) };
     // stdio 서버는 사용자 sandbox에서만 돈다. sandbox에는 비밀키를 둘 수 없다.
     const secrets = requiredSecretNames({ transport: draft });
-    if (secrets.length > 0) {
-      return { name, requiredSecrets: [], unsupported: `stdio server needs secrets (${secrets.join(", ")}); only http servers can use secrets`, warnings };
-    }
-    const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaults.env };
+    if (secrets.length > 0) return unsupported(`stdio server needs secrets (${secrets.join(", ")}); only http servers can use secrets`);
+    const env = { ...pluginEnv, CLAUDE_PLUGIN_ROOT: ctx.root, CLAUDE_PLUGIN_DATA: ctx.dataDir, ...ctx.defaultEnv };
     if (command.startsWith("npx") || command === "uvx") warnings.push(`'${command}' downloads packages at start-up; pre-install the server instead if possible`);
     const transport = { ...draft, env };
-    // stdio 서버는 env·args가 시작 시 고정되므로 템플릿에 맞는 최소 scope가 정해진다.
-    const scope = atLeastScope(ctx.defaults.scope, requiredScope({ transport }));
-    const parsed = McpServerConfig.safeParse({
-      id,
-      displayName: `${name} (${ctx.pluginName})`,
-      ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
-      enabled: ctx.enabled,
-      runIn: "sandbox",
-      scope,
-      transport,
-      source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
-    });
-    if (!parsed.success) return { name, requiredSecrets: [], unsupported: parsed.error.issues.map((i) => i.message).join("; "), warnings };
-    config = parsed.data;
+    // 사용자마다 하나의 프로세스를 쓴다. env·args는 시작 시 고정되므로 {{metadata}} 등을 쓰면 그에 맞게 scope를 올린다.
+    placement = { runIn: "sandbox", scope: atLeastScope("per-user", requiredScope({ transport })), transport };
   } else {
-    if (typeof cfg.url !== "string") return { name, requiredSecrets: [], unsupported: "http server has no url", warnings };
+    if (typeof cfg.url !== "string") return unsupported("http server has no url");
     const headers = Object.fromEntries(Object.entries(stringRecord(cfg.headers)).map(([k, v]) => [k, conv(v)]));
     // 원격 서버는 sandbox에서 직접 부르지 않고 항상 broker가 프록시한다.
-    const parsed = McpServerConfig.safeParse({
-      id,
-      displayName: `${name} (${ctx.pluginName})`,
-      ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
-      enabled: ctx.enabled,
-      runIn: "broker",
-      scope: "shared",
-      transport: { type: "http", url: conv(cfg.url), headers },
-      source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
-    });
-    if (!parsed.success) return { name, requiredSecrets: [], unsupported: parsed.error.issues.map((i) => i.message).join("; "), warnings };
-    config = parsed.data;
+    placement = { runIn: "broker", scope: "shared", transport: { type: "http", url: conv(cfg.url), headers } };
   }
-  return { name, config, requiredSecrets: requiredSecretNames(config), warnings };
+  const parsed = McpServerConfig.safeParse({
+    id: sanitizeServerId(name) || sanitizeServerId(`${ctx.pluginName}-mcp`),
+    displayName: `${name} (${ctx.pluginName})`,
+    ...(ctx.description ? { description: ctx.description.slice(0, 1000) } : {}),
+    enabled: ctx.enabled,
+    ...placement,
+    source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
+  });
+  if (!parsed.success) return unsupported(parsed.error.issues.map((i) => i.message).join("; "));
+  return { name, config: parsed.data, requiredSecrets: requiredSecretNames(parsed.data), warnings };
 }
 
 /** `.mcp.json` 내용(`{mcpServers:{…}}` 또는 바로 이름→설정 맵)에서 서버 맵을 꺼낸다. */

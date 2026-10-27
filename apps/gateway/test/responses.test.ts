@@ -177,6 +177,13 @@ describe("continuation", () => {
     expect(changed.status).toBe(400);
     expect(changed.json.error.message).toBe("reasoning.effort is fixed when the session is created");
   });
+
+  it("continues with the session's model and ignores body.model", async () => {
+    const first = await h.post({ model: "think-model", input: "a" });
+    const next = await h.post({ model: "nope", input: "b", previous_response_id: first.json.id });
+    expect(next.status).toBe(200);
+    expect(next.json.model).toBe("think-model");
+  });
 });
 
 describe("system prompt", () => {

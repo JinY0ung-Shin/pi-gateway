@@ -1,8 +1,8 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, errorText } from "../api";
-import { Badge, Notice, Section } from "../components";
+import { api, enc } from "../api";
+import { Badge, Notice, Section, useLoad } from "../components";
 
 /**
  * 채팅 테스트. `/admin/api/chat`(= `/v1/responses`, stream)로 운영과 같은 구성(MCP·skill·plugin)에서 대화한다.
@@ -143,8 +143,7 @@ export function newTurn(role: Turn["role"], text = "", images?: string[]): Turn 
 
 export function ChatPage() {
   const saved = useRef(load()).current;
-  const [options, setOptions] = useState<ChatOptions | null>(null);
-  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const { data: options, error: optionsError } = useLoad<ChatOptions>("/chat/options");
   const [settings, setSettings] = useState<SessionSettings>(saved?.settings ?? { user: "admin", model: "", effort: "", instructions: "" });
   const [metadata, setMetadata] = useState(saved?.metadata ?? "");
   const [headers, setHeaders] = useState<Record<string, string>>(saved?.headers ?? {});
@@ -160,13 +159,8 @@ export function ChatPage() {
   const rerender = () => setTick((n) => n + 1);
 
   useEffect(() => {
-    api<ChatOptions>("GET", "/chat/options")
-      .then((o) => {
-        setOptions(o);
-        setSettings((s) => (o.models.some((m) => m.id === s.model) ? s : { ...s, model: o.defaultModel ?? "" }));
-      })
-      .catch((error) => setOptionsError(errorText(error)));
-  }, []);
+    if (options) setSettings((s) => (options.models.some((m) => m.id === s.model) ? s : { ...s, model: options.defaultModel ?? "" }));
+  }, [options]);
 
   useEffect(() => {
     if (!busy) save({ settings, metadata, headers, prevId, pending, turns: turns.current });
@@ -189,7 +183,7 @@ export function ChatPage() {
     const id = activeId.current;
     if (id) {
       try {
-        await api("POST", `/chat/${encodeURIComponent(id)}/cancel?user=${encodeURIComponent(settings.user)}`);
+        await api("POST", `/chat/${enc(id)}/cancel?user=${enc(settings.user)}`);
         return; // 스트림이 response.incomplete(user_cancelled)로 끝난다
       } catch {
         // 아직 시작 전이거나 이미 끝났다. 연결을 끊는다.
@@ -281,27 +275,22 @@ export function ChatPage() {
             }
             break;
           }
-          case "response.completed": {
-            const r = event.response;
-            setPrevId(r.id);
-            const usage = usageOf(r.usage);
-            if (usage) reply.usage = usage;
-            if (r.status === "requires_action") {
-              const call = (r.output as { type: string; call_id: string; arguments: string }[]).find((o) => o.type === "function_call");
-              if (call) setPending({ callId: call.call_id, questions: (JSON.parse(call.arguments).questions ?? []) as Question[] });
-            }
-            break;
-          }
+          case "response.completed":
           case "response.incomplete": {
             const r = event.response;
             setPrevId(r.id);
             const usage = usageOf(r.usage);
             if (usage) reply.usage = usage;
-            const reason = r.incomplete_details?.reason ?? "incomplete";
-            reply.note =
-              reason === "user_cancelled"
-                ? { tone: "warn", text: "중지했습니다. 여기까지의 내용은 기록에 남고 이어서 대화할 수 있습니다." }
-                : { tone: "warn", text: `응답이 끝까지 생성되지 않았습니다 (${reason}).` };
+            if (event.type === "response.incomplete") {
+              const reason = r.incomplete_details?.reason ?? "incomplete";
+              reply.note =
+                reason === "user_cancelled"
+                  ? { tone: "warn", text: "중지했습니다. 여기까지의 내용은 기록에 남고 이어서 대화할 수 있습니다." }
+                  : { tone: "warn", text: `응답이 끝까지 생성되지 않았습니다 (${reason}).` };
+            } else if (r.status === "requires_action") {
+              const call = (r.output as { type: string; call_id: string; arguments: string }[]).find((o) => o.type === "function_call");
+              if (call) setPending({ callId: call.call_id, questions: (JSON.parse(call.arguments).questions ?? []) as Question[] });
+            }
             break;
           }
           case "response.failed":

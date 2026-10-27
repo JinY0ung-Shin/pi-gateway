@@ -42,10 +42,8 @@ const MIGRATIONS = [
 
 export interface StoredServer {
   config: McpServerConfig;
-  /** 설정이나 비밀키가 바뀔 때마다 증가한다. 풀은 이 값이 다른 연결을 다시 쓰지 않는다. */
+  /** 설정이 바뀔 때마다 증가한다 (감사 기록용). */
   revision: number;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface SecretMeta {
@@ -59,8 +57,6 @@ interface ServerRow {
   id: string;
   config: string;
   revision: number;
-  created_at: string;
-  updated_at: string;
 }
 
 interface SecretRow {
@@ -88,8 +84,6 @@ export class BrokerStore {
     return {
       config: McpServerConfig.parse(JSON.parse(row.config)),
       revision: row.revision,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
     };
   }
 
@@ -139,12 +133,6 @@ export class BrokerStore {
     return this.#db.prepare("DELETE FROM servers WHERE id = ?").run(id).changes > 0;
   }
 
-  #bumpRevision(serverId: string): void {
-    this.#db
-      .prepare("UPDATE servers SET revision = revision + 1, updated_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), serverId);
-  }
-
   listSecretMeta(serverId: string): SecretMeta[] {
     const rows = this.#db
       .prepare("SELECT name, version, set_at, fingerprint FROM secrets WHERE server_id = ? ORDER BY name")
@@ -178,17 +166,12 @@ export class BrokerStore {
              tag = excluded.tag, fingerprint = excluded.fingerprint, set_at = excluded.set_at`,
         )
         .run(serverId, name, version, enc.iv, enc.ciphertext, enc.tag, fingerprint, setAt);
-      this.#bumpRevision(serverId);
       return { name, version, setAt, fingerprint };
     })();
   }
 
   deleteSecret(serverId: string, name: string): boolean {
-    return this.#db.transaction(() => {
-      const removed = this.#db.prepare("DELETE FROM secrets WHERE server_id = ? AND name = ?").run(serverId, name).changes > 0;
-      if (removed) this.#bumpRevision(serverId);
-      return removed;
-    })();
+    return this.#db.prepare("DELETE FROM secrets WHERE server_id = ? AND name = ?").run(serverId, name).changes > 0;
   }
 
   /** 서버의 비밀값을 복호화한다. 복호화에 실패한 값(변조·KEK 불일치)은 빠지고 failed에 이름이 담긴다. */

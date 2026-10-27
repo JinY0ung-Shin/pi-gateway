@@ -132,22 +132,14 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
   return { kind: "prompt", text, images, systemText, hasSystemItems };
 }
 
-/** reasoning.effort → pi thinking level */
+const EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** reasoning.effort → pi thinking level (이름이 같고 none만 off) */
 export function thinkingLevelFor(effort: string | null | undefined, modelReasoning: boolean): string | undefined {
   if (!effort) return undefined;
-  const map: Record<string, string> = {
-    none: "off",
-    minimal: "minimal",
-    low: "low",
-    medium: "medium",
-    high: "high",
-    xhigh: "xhigh",
-    max: "max",
-  };
-  const level = map[effort];
-  if (!level) throw badRequest(`Unsupported reasoning.effort '${effort}'`, "unsupported_reasoning_effort");
-  if (!modelReasoning) return "off";
-  return level;
+  if (!EFFORTS.has(effort)) throw badRequest(`Unsupported reasoning.effort '${effort}'`, "unsupported_reasoning_effort");
+  if (!modelReasoning || effort === "none") return "off";
+  return effort;
 }
 
 const RESPONSE_ID = /^resp_([0-9a-f-]{36})_([1-9][0-9]*)$/;

@@ -17,14 +17,12 @@ export interface GitFetchOptions extends GitAuth {
   /** 작업용 임시 디렉토리의 부모 (askpass 스크립트, 빈 HOME) */
   tmpRoot: string;
   allowLocal: boolean;
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
 }
 
 const SHA = /^[0-9a-f]{40}$/;
 const REF = /^(?!-)[A-Za-z0-9._/+-]{1,200}$/;
 const GITHUB_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-
-export class GitError extends PlatformError {}
 
 /**
  * git 원격 주소를 검사하고 정규화한다.
@@ -35,41 +33,41 @@ export class GitError extends PlatformError {}
  */
 export function normalizeGitUrl(input: string, allowLocal: boolean): string {
   const s = input.trim();
-  if (!s || s.length > 2048 || /[\0\r\n]/.test(s)) throw new GitError(400, "invalid_url", "invalid git URL");
+  if (!s || s.length > 2048 || /[\0\r\n]/.test(s)) throw new PlatformError(400, "invalid_url", "invalid git URL");
   if (GITHUB_SHORTHAND.test(s) && !s.startsWith(".")) return `https://github.com/${s.replace(/\.git$/, "")}.git`;
   if (s.startsWith("/")) {
-    if (!allowLocal) throw new GitError(400, "invalid_url", "local paths are not allowed");
+    if (!allowLocal) throw new PlatformError(400, "invalid_url", "local paths are not allowed");
     return s;
   }
-  if (/^[^/:@\s]+@[^/:\s]+:/.test(s)) throw new GitError(400, "invalid_url", "SSH URLs are not supported; use an https URL and a token");
+  if (/^[^/:@\s]+@[^/:\s]+:/.test(s)) throw new PlatformError(400, "invalid_url", "SSH URLs are not supported; use an https URL and a token");
   let url: URL;
   try {
     url = new URL(s);
   } catch {
-    throw new GitError(400, "invalid_url", "invalid git URL");
+    throw new PlatformError(400, "invalid_url", "invalid git URL");
   }
   if (url.protocol === "file:") {
-    if (!allowLocal) throw new GitError(400, "invalid_url", "file:// URLs are not allowed");
+    if (!allowLocal) throw new PlatformError(400, "invalid_url", "file:// URLs are not allowed");
     return url.toString();
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new GitError(400, "invalid_url", `unsupported git URL protocol '${url.protocol}'`);
+    throw new PlatformError(400, "invalid_url", `unsupported git URL protocol '${url.protocol}'`);
   }
   if (url.username || url.password) {
-    throw new GitError(400, "credentials_in_url", "do not put credentials in the URL; use the token field instead");
+    throw new PlatformError(400, "credentials_in_url", "do not put credentials in the URL; use the token field instead");
   }
   return url.toString();
 }
 
 export function validateRef(ref: string | undefined): string | undefined {
   if (ref === undefined || ref === "") return undefined;
-  if (!REF.test(ref) || ref.includes("..")) throw new GitError(400, "invalid_ref", "invalid git ref");
+  if (!REF.test(ref) || ref.includes("..")) throw new PlatformError(400, "invalid_ref", "invalid git ref");
   return ref;
 }
 
 export function validateSha(sha: string | undefined): string | undefined {
   if (sha === undefined || sha === "") return undefined;
-  if (!SHA.test(sha)) throw new GitError(400, "invalid_sha", "sha must be a full 40-character lowercase commit id");
+  if (!SHA.test(sha)) throw new PlatformError(400, "invalid_sha", "sha must be a full 40-character lowercase commit id");
   return sha;
 }
 
@@ -98,8 +96,8 @@ export async function gitFetch(options: GitFetchOptions): Promise<{ commit: stri
       await run(["-C", options.dest, "checkout", "-q", "--detach", sha]);
     }
     const commit = (await run(["-C", options.dest, "rev-parse", "HEAD"])).trim();
-    if (!SHA.test(commit)) throw new GitError(502, "git_failed", "could not determine the checked-out commit");
-    if (sha && commit !== sha) throw new GitError(502, "git_failed", `checked out ${commit} instead of ${sha}`);
+    if (!SHA.test(commit)) throw new PlatformError(502, "git_failed", "could not determine the checked-out commit");
+    if (sha && commit !== sha) throw new PlatformError(502, "git_failed", `checked out ${commit} instead of ${sha}`);
     return { commit };
   } finally {
     await rm(work, { recursive: true, force: true });
@@ -172,13 +170,13 @@ function runGit(args: string[], ctx: GitContext, timeoutMs: number): Promise<str
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       if (stderr.length < 20_000) stderr += chunk;
     });
-    child.on("error", (error) => reject(new GitError(500, "git_unavailable", `could not run git: ${error.message}`)));
+    child.on("error", (error) => reject(new PlatformError(500, "git_unavailable", `could not run git: ${error.message}`)));
     child.on("close", (code, signal) => {
       if (code === 0) return resolvePromise(stdout);
       let message = stderr.trim() || `git exited with ${signal ?? code}`;
       for (const secret of ctx.secrets) message = message.split(secret).join("[REDACTED]");
       const reason = signal === "SIGKILL" ? "git timed out" : `git ${args.find((a) => !a.startsWith("-")) ?? ""} failed`;
-      reject(new GitError(502, "git_failed", `${reason}: ${message.split("\n").slice(-3).join(" ")}`));
+      reject(new PlatformError(502, "git_failed", `${reason}: ${message.split("\n").slice(-3).join(" ")}`));
     });
   });
 }

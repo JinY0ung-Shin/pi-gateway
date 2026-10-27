@@ -27,7 +27,6 @@ export interface SessionRecord {
   skillNames: string[];
   pendingToolCall: PendingToolCall | null;
   createdAt: string;
-  updatedAt: string;
   lastActiveAt: string;
 }
 
@@ -44,7 +43,6 @@ interface Row {
   skill_names: string;
   pending_tool_call: string | null;
   created_at: string;
-  updated_at: string;
   last_active_at: string;
 }
 
@@ -101,7 +99,6 @@ function fromRow(row: Row): SessionRecord {
     skillNames: JSON.parse(row.skill_names) as string[],
     pendingToolCall: row.pending_tool_call ? (JSON.parse(row.pending_tool_call) as PendingToolCall) : null,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
     lastActiveAt: row.last_active_at,
   };
 }
@@ -122,7 +119,7 @@ export class SessionStore {
         `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
            append_prompt, skill_names, pending_tool_call, created_at, updated_at, last_active_at)
          VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
-           @append_prompt, @skill_names, @pending_tool_call, @created_at, @updated_at, @last_active_at)`,
+           @append_prompt, @skill_names, @pending_tool_call, @created_at, @created_at, @last_active_at)`,
       )
       .run({
         id: record.id,
@@ -137,7 +134,6 @@ export class SessionStore {
         skill_names: JSON.stringify(record.skillNames),
         pending_tool_call: record.pendingToolCall ? JSON.stringify(record.pendingToolCall) : null,
         created_at: record.createdAt,
-        updated_at: record.updatedAt,
         last_active_at: record.lastActiveAt,
       });
   }
@@ -197,9 +193,5 @@ export class SessionStore {
       )
       .run(days, now, actor);
     return { days, updatedAt: now, updatedBy: actor };
-  }
-
-  count(): number {
-    return (this.db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
   }
 }

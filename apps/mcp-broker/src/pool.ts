@@ -5,7 +5,6 @@ import type { ConnectHooks, UpstreamConnection } from "./upstream/connect.js";
 
 export interface PoolKey {
   serverId: string;
-  revision: number;
   /** "shared" | "u:<sub>" | "s:<sub>:<sid>" */
   scopeKey: string;
   /** 렌더링된 transport의 해시. 사용자 토큰이 바뀌면 다른 연결이 된다. */
@@ -49,7 +48,7 @@ export class UpstreamBackoffError extends Error {
 const MAX_BACKOFF_MS = 60_000;
 
 function entryId(key: PoolKey): string {
-  return `${key.serverId}\u0000${key.revision}\u0000${key.scopeKey}\u0000${key.renderedHash}`;
+  return `${key.serverId}\u0000${key.scopeKey}\u0000${key.renderedHash}`;
 }
 
 /**
@@ -61,25 +60,22 @@ export class UpstreamPool {
   readonly #limits: PoolLimits;
   readonly #connect: ConnectFn;
   readonly #log: Logger;
-  readonly #now: () => number;
   readonly #entries = new Map<string, Entry>();
   readonly #pending = new Map<string, Promise<Entry>>();
   readonly #failures = new Map<string, { count: number; until: number }>();
   readonly #timer: NodeJS.Timeout;
   #closing = false;
 
-  constructor(options: { limits: PoolLimits; connect: ConnectFn; log: Logger; now?: () => number; sweepIntervalMs?: number }) {
+  constructor(options: { limits: PoolLimits; connect: ConnectFn; log: Logger }) {
     this.#limits = options.limits;
     this.#connect = options.connect;
     this.#log = options.log;
-    this.#now = options.now ?? Date.now;
-    this.#timer = setInterval(() => void this.sweep(), options.sweepIntervalMs ?? 15_000);
+    this.#timer = setInterval(() => void this.sweep(), 15_000);
     this.#timer.unref();
   }
 
   async acquire(key: PoolKey, rendered: RenderedTransport): Promise<Lease> {
     if (this.#closing) throw new PoolCapacityError("broker is shutting down");
-    this.#retireStale(key.serverId, key.revision);
     const id = entryId(key);
 
     let entry = this.#entries.get(id);
@@ -87,7 +83,7 @@ export class UpstreamPool {
       entry = await (this.#pending.get(id) ?? this.#create(id, key, rendered));
     }
     entry.inflight++;
-    entry.lastUsedAt = this.#now();
+    entry.lastUsedAt = Date.now();
     return this.#lease(entry);
   }
 
@@ -96,15 +92,15 @@ export class UpstreamPool {
     return {
       client: entry.conn.client,
       cachedTools: (maxAgeMs) =>
-        entry.tools && this.#now() - entry.tools.fetchedAt <= maxAgeMs ? entry.tools.list : undefined,
+        entry.tools && Date.now() - entry.tools.fetchedAt <= maxAgeMs ? entry.tools.list : undefined,
       setTools: (tools) => {
-        entry.tools = { list: tools, fetchedAt: this.#now() };
+        entry.tools = { list: tools, fetchedAt: Date.now() };
       },
       release: () => {
         if (released) return;
         released = true;
         entry.inflight--;
-        entry.lastUsedAt = this.#now();
+        entry.lastUsedAt = Date.now();
         if (entry.retired && entry.inflight === 0) void this.#close(entry, "retired");
       },
     };
@@ -112,7 +108,7 @@ export class UpstreamPool {
 
   #create(id: string, key: PoolKey, rendered: RenderedTransport): Promise<Entry> {
     const failure = this.#failures.get(id);
-    if (failure && failure.until > this.#now()) {
+    if (failure && failure.until > Date.now()) {
       return Promise.reject(new UpstreamBackoffError(`upstream ${key.serverId} is backing off after ${failure.count} failed connects`));
     }
     this.#makeRoom(key);
@@ -138,7 +134,7 @@ export class UpstreamPool {
           conn,
           tools: undefined,
           inflight: 0,
-          lastUsedAt: this.#now(),
+          lastUsedAt: Date.now(),
           retired: false,
           closed: false,
         };
@@ -151,7 +147,7 @@ export class UpstreamPool {
         return entry;
       } catch (error) {
         const count = (this.#failures.get(id)?.count ?? 0) + 1;
-        this.#failures.set(id, { count, until: this.#now() + Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (count - 1)) });
+        this.#failures.set(id, { count, until: Date.now() + Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (count - 1)) });
         throw error;
       } finally {
         this.#pending.delete(id);
@@ -170,12 +166,6 @@ export class UpstreamPool {
         .sort((a, b) => a.lastUsedAt - b.lastUsedAt)[0];
       if (!idle) throw new PoolCapacityError(`upstream capacity reached for ${key.serverId}`);
       void this.#close(idle, "evicted for capacity");
-    }
-  }
-
-  #retireStale(serverId: string, revision: number): void {
-    for (const entry of this.#entries.values()) {
-      if (entry.key.serverId === serverId && entry.key.revision < revision) this.#retire(entry);
     }
   }
 
@@ -199,10 +189,10 @@ export class UpstreamPool {
   }
 
   async sweep(): Promise<void> {
-    const cutoff = this.#now() - this.#limits.idleTtlSeconds * 1000;
+    const cutoff = Date.now() - this.#limits.idleTtlSeconds * 1000;
     const idle = [...this.#entries.values()].filter((e) => e.inflight === 0 && e.lastUsedAt < cutoff);
     await Promise.all(idle.map((e) => this.#close(e, "idle")));
-    const now = this.#now();
+    const now = Date.now();
     for (const [id, failure] of this.#failures) if (failure.until + MAX_BACKOFF_MS < now) this.#failures.delete(id);
   }
 

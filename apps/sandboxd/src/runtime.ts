@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
+import type Docker from "dockerode";
 import {
   type AttachStart,
   type ExecEvent,
@@ -23,7 +24,6 @@ import {
   HELPER_ENV,
   SBX_FS,
   SBX_RUN,
-  type StartedExec,
   signalProcessGroup,
   startExec,
   TIMEOUT_BIN,
@@ -88,6 +88,27 @@ function isContainerGone(err: unknown): boolean {
   return status === 404 || status === 409;
 }
 
+/** process group에 SIGTERM, 5초 뒤에도 살아 있으면 SIGKILL. clear는 끝난 뒤 남은 KILL 예약을 지운다. */
+function groupKiller(container: Docker.Container, id: string) {
+  let killing = false;
+  let timer: NodeJS.Timeout | undefined;
+  return {
+    get killing() {
+      return killing;
+    },
+    kill: () => {
+      if (killing) return;
+      killing = true;
+      void signalProcessGroup(container, id, "TERM");
+      timer = setTimeout(() => void signalProcessGroup(container, id, "KILL"), KILL_GRACE_MS);
+      timer.unref();
+    },
+    clear: () => {
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
 export class DockerSandboxRuntime implements SandboxRuntime {
   constructor(
     private readonly manager: SandboxManager,
@@ -111,16 +132,15 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     return this.manager.list();
   }
 
-  /** lease를 얻고 exec를 시작한다. 컨테이너가 없어졌으면 한 번 다시 만든다. */
-  private async startWithLease(
-    principal: string,
-    build: () => { argv: string[]; cwd: string; env: Record<string, string>; stdin: boolean },
-  ): Promise<{ lease: Lease; started: StartedExec }> {
+  /**
+   * lease를 얻어 fn을 실행한다. 컨테이너가 없어졌으면 한 번 다시 만들고 재시도한다.
+   * 성공하면 lease를 쥔 채로 돌려준다 (release는 호출자가 한다).
+   */
+  private async withLease<T>(principal: string, fn: (container: Docker.Container) => Promise<T>): Promise<{ lease: Lease; result: T }> {
     for (let attempt = 0; ; attempt++) {
       const lease = await this.manager.acquire(principal);
       try {
-        const started = await startExec(lease.container, build());
-        return { lease, started };
+        return { lease, result: await fn(lease.container) };
       } catch (err) {
         lease.invalidate();
         lease.release();
@@ -134,12 +154,14 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     const execId = randomUUID();
     // sbx-run의 자체 시간 제한은 sandboxd가 죽었을 때를 위한 안전장치라서 조금 늦게 잡는다
     const fallbackTimeout = params.timeoutSec ? params.timeoutSec + 5 : 0;
-    const { lease, started } = await this.startWithLease(principal, () => ({
-      argv: [SBX_RUN, "exec", execId, String(fallbackTimeout), sandboxCwd(params.cwd), "--", ...params.argv],
-      cwd: "/",
-      env: params.env,
-      stdin: params.stdin !== undefined,
-    }));
+    const { lease, result: started } = await this.withLease(principal, (container) =>
+      startExec(container, {
+        argv: [SBX_RUN, "exec", execId, String(fallbackTimeout), sandboxCwd(params.cwd), "--", ...params.argv],
+        cwd: "/",
+        env: params.env,
+        stdin: params.stdin !== undefined,
+      }),
+    );
     const { exec, socket } = started;
     const container = lease.container;
     const log = this.log;
@@ -150,19 +172,10 @@ export class DockerSandboxRuntime implements SandboxRuntime {
         const startedAt = Date.now();
         let total = 0;
         let truncated = false;
-        let killing = false;
         let timedOut = false;
-        let killTimer: NodeJS.Timeout | undefined;
         let timeoutTimer: NodeJS.Timeout | undefined;
-
-        const kill = () => {
-          if (killing) return;
-          killing = true;
-          void signalProcessGroup(container, execId, "TERM");
-          killTimer = setTimeout(() => void signalProcessGroup(container, execId, "KILL"), KILL_GRACE_MS);
-          killTimer.unref();
-        };
-        const onAbort = () => kill();
+        const killer = groupKiller(container, execId);
+        const onAbort = () => killer.kill();
 
         try {
           onEvent({ type: "started", execId });
@@ -186,10 +199,10 @@ export class DockerSandboxRuntime implements SandboxRuntime {
           if (params.timeoutSec) {
             timeoutTimer = setTimeout(() => {
               timedOut = true;
-              kill();
+              killer.kill();
             }, params.timeoutSec * 1000);
           }
-          if (signal.aborted) kill();
+          if (signal.aborted) killer.kill();
           else signal.addEventListener("abort", onAbort, { once: true });
 
           try {
@@ -201,7 +214,7 @@ export class DockerSandboxRuntime implements SandboxRuntime {
             socket.destroy();
           }
           const code = await waitExitCode(exec).catch(() => null);
-          const { exitCode, signal: sig } = decodeExit(code, killing);
+          const { exitCode, signal: sig } = decodeExit(code, killer.killing);
           onEvent({
             type: "exit",
             exitCode,
@@ -215,8 +228,7 @@ export class DockerSandboxRuntime implements SandboxRuntime {
           onEvent({ type: "error", code: "internal", message: "exec failed" });
         } finally {
           if (timeoutTimer) clearTimeout(timeoutTimer);
-          // 끝난 뒤의 KILL 예약은 필요 없다
-          if (killTimer) clearTimeout(killTimer);
+          killer.clear();
           signal.removeEventListener("abort", onAbort);
           lease.release();
         }
@@ -231,40 +243,29 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     opts: { stdin?: Buffer; maxBytes: number },
   ): Promise<{ header: Record<string, unknown>; rest: Buffer }> {
     const argv = [TIMEOUT_BIN, "-k", "5", String(this.config.fsTimeoutSeconds), SBX_FS, ...args];
-    for (let attempt = 0; ; attempt++) {
-      const lease = await this.manager.acquire(principal);
-      let result;
-      try {
-        const collectOpts: Parameters<typeof execCollect>[2] = { maxBytes: opts.maxBytes, cwd: SANDBOX_WORKSPACE, env: HELPER_ENV };
-        if (opts.stdin !== undefined) collectOpts.stdin = opts.stdin;
-        result = await execCollect(lease.container, argv, collectOpts);
-      } catch (err) {
-        lease.invalidate();
-        if (attempt === 0 && isContainerGone(err)) continue;
-        throw new SandboxError("sandbox_unavailable", `exec failed: ${errorMessage(err)}`);
-      } finally {
-        lease.release();
-      }
-      if (result.exitCode === 124 || result.exitCode === 137) {
-        throw new SandboxError("timeout", `file operation timed out after ${this.config.fsTimeoutSeconds}s`);
-      }
-      if (result.overflow) throw new SandboxError("too_large", "file operation output is too large");
-      const nl = result.stdout.indexOf(0x0a);
-      if (nl < 0) {
-        const stderr = result.stderr.toString("utf8").trim().slice(0, 500);
-        throw new SandboxError("internal", `sbx-fs gave no result (exit ${result.exitCode}): ${stderr}`);
-      }
-      let header: Record<string, unknown>;
-      try {
-        header = JSON.parse(result.stdout.subarray(0, nl).toString("utf8")) as Record<string, unknown>;
-      } catch {
-        throw new SandboxError("internal", "sbx-fs gave an invalid result");
-      }
-      if (header.ok !== true) {
-        throw new SandboxError(toErrorCode(header.code), typeof header.message === "string" ? header.message : "failed");
-      }
-      return { header, rest: result.stdout.subarray(nl + 1) };
+    const collectOpts: Parameters<typeof execCollect>[2] = { maxBytes: opts.maxBytes, cwd: SANDBOX_WORKSPACE, env: HELPER_ENV };
+    if (opts.stdin !== undefined) collectOpts.stdin = opts.stdin;
+    const { lease, result } = await this.withLease(principal, (container) => execCollect(container, argv, collectOpts));
+    lease.release();
+    if (result.exitCode === 124 || result.exitCode === 137) {
+      throw new SandboxError("timeout", `file operation timed out after ${this.config.fsTimeoutSeconds}s`);
     }
+    if (result.overflow) throw new SandboxError("too_large", "file operation output is too large");
+    const nl = result.stdout.indexOf(0x0a);
+    if (nl < 0) {
+      const stderr = result.stderr.toString("utf8").trim().slice(0, 500);
+      throw new SandboxError("internal", `sbx-fs gave no result (exit ${result.exitCode}): ${stderr}`);
+    }
+    let header: Record<string, unknown>;
+    try {
+      header = JSON.parse(result.stdout.subarray(0, nl).toString("utf8")) as Record<string, unknown>;
+    } catch {
+      throw new SandboxError("internal", "sbx-fs gave an invalid result");
+    }
+    if (header.ok !== true) {
+      throw new SandboxError(toErrorCode(header.code), typeof header.message === "string" ? header.message : "failed");
+    }
+    return { header, rest: result.stdout.subarray(nl + 1) };
   }
 
   async fsRead(principal: string, path: string, maxBytes: number): Promise<FsReadResponse> {
@@ -317,16 +318,16 @@ export class DockerSandboxRuntime implements SandboxRuntime {
 
   async attach(principal: string, params: AttachParams, io: AttachIO): Promise<AttachProcess> {
     const procId = randomUUID();
-    const { lease, started } = await this.startWithLease(principal, () => ({
-      argv: [SBX_RUN, "exec", procId, "0", sandboxCwd(params.cwd), "--", ...params.argv],
-      cwd: "/",
-      env: params.env,
-      stdin: true,
-    }));
+    const { lease, result: started } = await this.withLease(principal, (container) =>
+      startExec(container, {
+        argv: [SBX_RUN, "exec", procId, "0", sandboxCwd(params.cwd), "--", ...params.argv],
+        cwd: "/",
+        env: params.env,
+        stdin: true,
+      }),
+    );
     const { exec, socket } = started;
-    const container = lease.container;
-    let killing = false;
-    let killTimer: NodeJS.Timeout | undefined;
+    const killer = groupKiller(lease.container, procId);
     const demux = new Demuxer((stream, chunk) => {
       if (stream === "stdout") io.onStdout(Buffer.from(chunk));
       else io.onStderr(Buffer.from(chunk));
@@ -338,9 +339,9 @@ export class DockerSandboxRuntime implements SandboxRuntime {
         });
         socket.destroy();
         const code = await waitExitCode(exec).catch(() => null);
-        return decodeExit(code, killing);
+        return decodeExit(code, killer.killing);
       } finally {
-        if (killTimer) clearTimeout(killTimer);
+        killer.clear();
         lease.release();
       }
     })();
@@ -351,13 +352,7 @@ export class DockerSandboxRuntime implements SandboxRuntime {
       },
       pause: () => socket.pause(),
       resume: () => socket.resume(),
-      terminate: () => {
-        if (killing) return;
-        killing = true;
-        void signalProcessGroup(container, procId, "TERM");
-        killTimer = setTimeout(() => void signalProcessGroup(container, procId, "KILL"), KILL_GRACE_MS);
-        killTimer.unref();
-      },
+      terminate: killer.kill,
       done,
     };
   }

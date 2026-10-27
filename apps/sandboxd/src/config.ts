@@ -2,11 +2,9 @@ import { isAbsolute } from "node:path";
 import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 
 export interface SandboxdConfig {
-  host: string;
   port: number;
   logLevel: string;
   jwtSecret: Uint8Array;
-  dockerSocket: string;
   image: string;
   /**
    * egress 프록시의 unix socket이 있는 Docker 볼륨 (docker-compose.yml의 proxy-sock과 같은 이름).
@@ -19,8 +17,8 @@ export interface SandboxdConfig {
   workspacesDir: string;
   /** Docker 호스트에서의 같은 디렉토리 (bind mount source) */
   workspacesHostDir: string;
-  /** 비우면 /opt/plugins를 mount하지 않는다 */
-  pluginsHostDir: string | undefined;
+  /** Docker 호스트의 plugin 디렉토리 (sandbox의 /opt/plugins, 읽기 전용) */
+  pluginsHostDir: string;
   memoryBytes: number;
   nanoCpus: number;
   pidsLimit: number;
@@ -66,7 +64,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
 
   const workspacesDir = absolute("WORKSPACES_DIR", env.WORKSPACES_DIR);
   const workspacesHostDir = absolute("WORKSPACES_HOST_DIR", env.WORKSPACES_HOST_DIR ?? workspacesDir);
-  const pluginsHostDir = env.PLUGINS_HOST_DIR ? absolute("PLUGINS_HOST_DIR", env.PLUGINS_HOST_DIR) : undefined;
+  const pluginsHostDir = absolute("PLUGINS_HOST_DIR", env.PLUGINS_HOST_DIR);
 
   const cpus = Number(env.SANDBOX_CPUS ?? "1");
   if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 64) throw new Error("SANDBOX_CPUS must be between 0 and 64");
@@ -74,11 +72,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
   const idleSeconds = int(env, "SANDBOX_IDLE_SECONDS", 900, 10);
 
   return {
-    host: env.HOST ?? "0.0.0.0",
     port: int(env, "PORT", 7070, 1),
     logLevel: env.LOG_LEVEL ?? "info",
     jwtSecret: jwtSecretBytes(secret),
-    dockerSocket: env.DOCKER_SOCKET ?? "/var/run/docker.sock",
     image: env.SANDBOX_IMAGE ?? "pi-gateway/sandbox:latest",
     proxyVolume: "pi-gateway-proxy-sock",
     runtime: env.SANDBOX_RUNTIME || undefined,

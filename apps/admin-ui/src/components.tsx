@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { api, errorText } from "./api";
 
 /** 메뉴·로그인 화면 상단의 이름 */
 export function Brand() {
@@ -94,6 +95,44 @@ export function Modal(props: { title: ComponentChildren; actions?: ComponentChil
       </div>
     </dialog>
   );
+}
+
+/**
+ * 관리 API GET 결과. path가 바뀌면 비우고 다시 부르고, everyMs를 주면 그 간격으로 다시 부른다.
+ * 실패하면 error에 담고, 이전 data는 그대로 둔다 (새로고침 실패를 경고로만 보일 수 있게).
+ */
+export function useLoad<T>(path: string, everyMs?: number) {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const reload = async () => {
+    try {
+      setData(await api<T>("GET", path));
+      setError(null);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api<T>("GET", path).then(
+        (next) => {
+          if (!alive) return;
+          setData(next);
+          setError(null);
+        },
+        (err) => alive && setError(errorText(err)),
+      );
+    setData(null);
+    setError(null);
+    void load();
+    const timer = everyMs ? setInterval(load, everyMs) : undefined;
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [path]);
+  return { data, error, reload };
 }
 
 /** 비동기 작업 상태 (진행 중 표시, 결과·오류 메시지) */

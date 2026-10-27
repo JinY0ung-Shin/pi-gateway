@@ -2,11 +2,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Logger } from "pino";
-import { registerAdminRoutes as defaultRegisterAdminRoutes } from "./admin/index.js";
 import { createModelRuntime, type GatewayModels } from "./agent/runtime.js";
 import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
-import type { McpRegistry, PluginResources, PromptService, RegisterAdminRoutes } from "./contracts.js";
+import type { McpRegistry, PluginResources, PromptService } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
 import { cancelResponse, createResponse, previewSession, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
@@ -33,20 +32,16 @@ export interface GatewayOverrides {
   prompts?: PromptService;
   plugins?: PluginResources;
   mcpRegistry?: McpRegistry;
-  registerAdminRoutes?: RegisterAdminRoutes;
   /** pi settings 덮어쓰기 (테스트에서 retry를 끄는 등) */
   piSettings?: Record<string, unknown>;
   /** 유휴 세션 정리 주기 (0이면 시작하지 않음) */
   reaperIntervalMs?: number;
-  /** 세션을 만들 때 MCP 서버 하나의 도구 목록을 기다리는 최대 시간 (테스트용) */
-  mcpListTimeoutMs?: number;
 }
 
 export interface Gateway {
   app: FastifyInstance;
   hub: SessionHub;
   store: SessionStore;
-  tools: ToolRegistry;
   models: GatewayModels;
   limiter: TurnLimiter;
   close(): Promise<void>;
@@ -68,7 +63,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     mcpRegistry,
     broker: config.broker,
     mcpCache: new McpToolCache(),
-    ...(overrides.mcpListTimeoutMs ? { mcpListTimeoutMs: overrides.mcpListTimeoutMs } : {}),
   });
   const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));
   const toolSettings = new ToolSettings(db);
@@ -76,8 +70,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   const store = new SessionStore(db);
   const hub = new SessionHub({
     store,
-    config,
-    tools,
     log: logger.child({ component: "sessions" }),
     factory: {
       config,
@@ -135,7 +127,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         forwardHeaders: () => mcpRegistry.forwardHeaders(),
       },
     },
-    registerAdminRoutes: overrides.registerAdminRoutes ?? defaultRegisterAdminRoutes,
   });
 
   const interval = overrides.reaperIntervalMs ?? 30_000;
@@ -145,7 +136,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     app,
     hub,
     store,
-    tools,
     models,
     limiter,
     async close() {

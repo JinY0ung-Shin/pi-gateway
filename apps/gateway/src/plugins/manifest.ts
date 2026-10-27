@@ -4,53 +4,15 @@ import { readContainedFile } from "./safe-copy.js";
 export type JsonObject = Record<string, unknown>;
 
 /**
- * BOM, 주석, 끝 쉼표를 허용하는 JSON 파서. marketplace 파일 일부가 엄격한 JSON이 아니다.
+ * BOM을 허용하는 JSON 파서.
  * 파서 오류 메시지에는 입력 일부가 들어가므로 쓰지 않고, 파일의 상대 경로만 알려준다.
  */
-export function parseJsonLenient(text: string, what: string): unknown {
-  const clean = text.replace(/^﻿/, "");
+export function parseJson(text: string, what: string): unknown {
   try {
-    return JSON.parse(clean);
+    return JSON.parse(text.replace(/^﻿/, ""));
   } catch {
-    try {
-      return JSON.parse(stripTrailingCommas(stripComments(clean)));
-    } catch {
-      throw badRequest(`${what} is not valid JSON`);
-    }
+    throw badRequest(`${what} is not valid JSON`);
   }
-}
-
-function stripComments(text: string): string {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    const next = text[i + 1];
-    if (inString) {
-      out += ch;
-      if (ch === "\\") {
-        out += next ?? "";
-        i++;
-      } else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-    } else if (ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-      out += "\n";
-    } else if (ch === "/" && next === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i++;
-    } else out += ch;
-  }
-  return out;
-}
-
-function stripTrailingCommas(text: string): string {
-  return text.replace(/,(\s*[}\]])/g, "$1");
 }
 
 export function isObject(value: unknown): value is JsonObject {
@@ -74,7 +36,7 @@ export async function readPluginManifest(pluginDir: string): Promise<JsonObject 
   const path = ".claude-plugin/plugin.json";
   const text = await readContainedFile(pluginDir, path, { optional: true });
   if (text === undefined) return undefined;
-  const parsed = parseJsonLenient(text, path);
+  const parsed = parseJson(text, path);
   if (!isObject(parsed)) throw badRequest(`${path} must be a JSON object`);
   return parsed;
 }

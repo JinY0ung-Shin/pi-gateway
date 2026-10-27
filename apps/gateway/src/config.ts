@@ -1,4 +1,3 @@
-import { isIP } from "node:net";
 import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 import { z } from "zod";
 
@@ -59,21 +58,6 @@ export interface GatewayConfig {
   trustProxy: false | string[];
 }
 
-/** "10.0.0.0/8", "192.168.1.5", "fd00::/8" 형식을 읽는다. 잘못되면 null. */
-function parseCidr(value: string): { address: string; prefix: number; family: "ipv4" | "ipv6" } | null {
-  const parts = value.trim().split("/");
-  if (parts.length > 2) return null;
-  const [address, prefixText] = parts;
-  if (!address) return null;
-  const version = isIP(address);
-  if (version === 0) return null;
-  const max = version === 4 ? 32 : 128;
-  if (prefixText !== undefined && !/^\d{1,3}$/.test(prefixText)) return null;
-  const prefix = prefixText === undefined ? max : Number(prefixText);
-  if (prefix > max) return null;
-  return { address, prefix, family: version === 4 ? "ipv4" : "ipv6" };
-}
-
 function parseTrustProxy(raw: string | undefined): false | string[] {
   const value = (raw ?? "").trim();
   if (value === "" || value === "false" || value === "0") return false;
@@ -81,14 +65,8 @@ function parseTrustProxy(raw: string | undefined): false | string[] {
   if (value === "true" || /^\d+$/.test(value)) {
     throw new Error(`TRUST_PROXY must be false or the proxy addresses as a comma list of IPs/CIDRs, e.g. "172.18.0.1" (got '${value}')`);
   }
-  const entries = value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const entry of entries) {
-    if (!parseCidr(entry)) throw new Error(`TRUST_PROXY has an invalid entry '${entry}' (use proxy IPs/CIDRs)`);
-  }
-  return entries;
+  // 잘못된 IP/CIDR은 Fastify(proxy-addr)가 서버를 만들 때 거부한다.
+  return list(value);
 }
 
 const int = (name: string, fallback: number, env: NodeJS.ProcessEnv): number => {

@@ -13,7 +13,6 @@ export interface McpProviderDeps {
   registry: McpRegistry;
   broker: GatewayConfig["broker"];
   cache: McpToolCache;
-  listTimeoutMs?: number;
 }
 
 export function connectionSets() {
@@ -41,6 +40,5 @@ export function newSet(deps: McpProviderDeps, ctx: ToolSessionContext): McpConne
     requestContext: ctx.requestContext,
     cache: deps.cache,
     log: ctx.log,
-    ...(deps.listTimeoutMs ? { listTimeoutMs: deps.listTimeoutMs } : {}),
   });
 }

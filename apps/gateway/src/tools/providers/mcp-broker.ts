@@ -17,7 +17,6 @@ export function createBrokerMcpToolProvider(deps: McpProviderDeps): ToolProvider
         id: s.id,
         timeoutSec: s.timeoutSec,
         ...(s.displayName ? { displayName: s.displayName } : {}),
-        ...(s.description ? { description: s.description } : {}),
       }));
       return set.tools(handles, ctx.signal);
     },

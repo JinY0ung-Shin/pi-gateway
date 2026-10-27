@@ -30,9 +30,9 @@ function preparePath(def: ToolDefinition, map: (path: string) => string): ToolDe
   };
 }
 
-/** `~` 경로를 sandbox HOME으로 바꾼다 (ls, find, grep). */
+/** `~` 경로를 sandbox HOME으로 바꾼다 (ls, find). grep은 execute에서 sandbox 경로로 바꾼다. */
 function withHomeMapping(def: ToolDefinition): ToolDefinition {
-  return { ...def, prepareArguments: preparePath(def, (p) => mapHomePath(p) as string) };
+  return { ...def, prepareArguments: preparePath(def, mapHomePath) };
 }
 
 /**
@@ -45,7 +45,7 @@ function withNamespace(def: ToolDefinition, ns: PathNamespace): ToolDefinition {
     ...def,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const args = params as Record<string, unknown>;
-      const wrapped = typeof args?.path === "string" ? { ...args, path: ns.wrap(args.path, SANDBOX_WORKSPACE) } : args;
+      const wrapped = typeof args?.path === "string" ? { ...args, path: ns.wrap(args.path) } : args;
       try {
         const result = await def.execute(toolCallId, wrapped as never, signal, onUpdate ? (u) => onUpdate(ns.strip(u)) : undefined, ctx);
         return ns.strip(result);
@@ -61,7 +61,7 @@ export function createSandboxToolProvider(): ToolProvider {
     id: "sandbox",
     async createTools(ctx) {
       const ns = new PathNamespace();
-      const fs = createRemoteFs(ctx.sandbox, { unwrap: (p) => ns.unwrap(p) });
+      const fs = createRemoteFs(ctx.sandbox, (p) => ns.unwrap(p));
       const cwd = SANDBOX_WORKSPACE;
       return [
         withNamespace(createReadToolDefinition(cwd, { operations: fs.read }) as ToolDefinition, ns),
@@ -70,7 +70,7 @@ export function createSandboxToolProvider(): ToolProvider {
         withHomeMapping(createLsToolDefinition(cwd, { operations: fs.ls }) as ToolDefinition),
         withHomeMapping(createFindToolDefinition(cwd, { operations: fs.find }) as ToolDefinition),
         createSandboxBashTool(ctx.sandbox),
-        withHomeMapping(createSandboxGrepTool(ctx.sandbox)),
+        createSandboxGrepTool(ctx.sandbox),
       ];
     },
   };

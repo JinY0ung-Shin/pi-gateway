@@ -71,7 +71,7 @@ export class SandboxClient {
     this.jwtSecret = options.jwtSecret;
   }
 
-  for(principal: string, sessionId?: string): SandboxHandle {
+  for(principal: string, sessionId: string): SandboxHandle {
     return new SandboxHandle(this, principal, sessionId);
   }
 
@@ -105,14 +105,11 @@ export class SandboxHandle {
   constructor(
     private readonly client: SandboxClient,
     readonly principal: string,
-    readonly sessionId: string | undefined,
+    readonly sessionId: string,
   ) {}
 
   private async authHeader(): Promise<string> {
-    const token = await signInternalToken(this.client.jwtSecret, AUD_SANDBOXD, {
-      sub: this.principal,
-      ...(this.sessionId ? { sid: this.sessionId } : {}),
-    });
+    const token = await signInternalToken(this.client.jwtSecret, AUD_SANDBOXD, { sub: this.principal, sid: this.sessionId });
     return `Bearer ${token}`;
   }
 
@@ -206,38 +203,31 @@ export class SandboxHandle {
     }
   }
 
-  async readFile(path: string, maxBytes?: number, signal?: AbortSignal): Promise<{ size: number; content: Buffer; truncated: boolean }> {
-    const body = await this.postJson<{ size: number; content: string; truncated: boolean }>(
-      SANDBOXD_ROUTES.fsRead,
-      { path, ...(maxBytes !== undefined ? { maxBytes } : {}) },
-      signal,
-    );
-    return { size: body.size, content: Buffer.from(body.content, "base64"), truncated: body.truncated };
+  async readFile(path: string, maxBytes: number): Promise<{ content: Buffer; truncated: boolean }> {
+    const body = await this.postJson<{ content: string; truncated: boolean }>(SANDBOXD_ROUTES.fsRead, { path, maxBytes });
+    return { content: Buffer.from(body.content, "base64"), truncated: body.truncated };
   }
 
-  async writeFile(path: string, content: Buffer | string, signal?: AbortSignal): Promise<{ size: number }> {
+  async writeFile(path: string, content: Buffer | string, signal?: AbortSignal): Promise<void> {
     const data = typeof content === "string" ? Buffer.from(content, "utf8") : content;
-    return this.postJson(SANDBOXD_ROUTES.fsWrite, { path, content: data.toString("base64"), mkdirs: true }, signal);
+    await this.post(SANDBOXD_ROUTES.fsWrite, { path, content: data.toString("base64"), mkdirs: true }, signal);
   }
 
   async stat(path: string, signal?: AbortSignal): Promise<FsStatResponse> {
     return this.postJson(SANDBOXD_ROUTES.fsStat, { path }, signal);
   }
 
-  async list(path: string, signal?: AbortSignal): Promise<FsListResponse["entries"]> {
-    const body = await this.postJson<FsListResponse>(SANDBOXD_ROUTES.fsList, { path }, signal);
+  async list(path: string): Promise<FsListResponse["entries"]> {
+    const body = await this.postJson<FsListResponse>(SANDBOXD_ROUTES.fsList, { path });
     return body.entries;
   }
 
-  async mkdir(path: string, signal?: AbortSignal): Promise<void> {
-    await this.post(SANDBOXD_ROUTES.fsMkdir, { path, recursive: true }, signal);
+  async mkdir(path: string): Promise<void> {
+    await this.post(SANDBOXD_ROUTES.fsMkdir, { path, recursive: true });
   }
 
-  async glob(
-    input: { cwd: string; pattern: string; ignore?: string[]; limit?: number },
-    signal?: AbortSignal,
-  ): Promise<FsGlobResponse> {
-    return this.postJson(SANDBOXD_ROUTES.fsGlob, input, signal);
+  async glob(input: { cwd: string; pattern: string; ignore?: string[]; limit?: number }): Promise<FsGlobResponse> {
+    return this.postJson(SANDBOXD_ROUTES.fsGlob, input);
   }
 
   /**

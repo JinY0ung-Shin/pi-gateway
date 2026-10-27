@@ -1,10 +1,10 @@
 import {
   atLeastScope,
-  collectTemplateRefs,
   type McpScope,
   type McpServerConfig,
   type RequestContext,
   renderTemplate,
+  requiredHeaderNames,
   requiredScope,
   type TemplateValues,
 } from "@pi-gateway/shared";
@@ -24,10 +24,8 @@ export interface RenderedTransport {
 
 export interface RenderResult {
   transport: RenderedTransport;
-  /** 이 연결에 들어간 자격증명 값 (비밀키와 전달된 사용자 헤더). 결과를 가릴 때 쓴다. */
-  credentials: string[];
-  /** 값이 없는 비밀키 자리표시자 이름 (있으면 연결하면 안 된다) */
-  missingSecrets: string[];
+  /** 이 연결에 들어간 사용자 헤더 값. 결과를 가릴 때 쓴다 (비밀키 값은 #prepare가 모두 넣는다). */
+  headerCredentials: string[];
 }
 
 export class ConfigError extends Error {
@@ -62,37 +60,17 @@ export function scopeKey(scope: McpScope, identity: Identity): string {
 }
 
 export function renderTransport(config: McpServerConfig, identity: Identity, secrets: Map<string, string>): RenderResult {
-  const credentials = new Set<string>();
-  const missingSecrets = new Set<string>();
-  const values: TemplateValues = {
-    user: identity.sub,
-    secret: (name) => {
-      const value = secrets.get(name);
-      if (value === undefined) missingSecrets.add(name);
-      else credentials.add(value);
-      return value;
-    },
-  };
+  const values: TemplateValues = { user: identity.sub, secret: (name) => secrets.get(name) };
   if (identity.sid !== undefined) values.session = identity.sid;
   if (identity.ctx?.headers) values.headers = identity.ctx.headers;
   if (identity.ctx?.metadata) values.metadata = identity.ctx.metadata;
 
-  for (const ref of collectTemplateRefs(config).refs) {
-    if (ref.kind === "header") {
-      const value = identity.ctx?.headers?.[ref.name];
-      if (value) credentials.add(value);
-    }
-  }
-
-  const render = (input: string): string => renderTemplate(input, values).value;
+  const headerCredentials = requiredHeaderNames(config).flatMap((name) => identity.ctx?.headers?.[name] || []);
+  const render = (input: string): string => renderTemplate(input, values);
 
   const t = config.transport;
   if (t.type !== "http") throw new ConfigError("broker servers must use the http transport");
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(t.headers)) headers[k] = render(v);
-  return {
-    transport: { url: render(t.url), headers },
-    credentials: [...credentials],
-    missingSecrets: [...missingSecrets].sort(),
-  };
+  return { transport: { url: render(t.url), headers }, headerCredentials };
 }

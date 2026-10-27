@@ -74,7 +74,7 @@ describe("admin auth", () => {
     const cookie = setCookie.split(";")[0]!;
 
     const session = await h.app.inject({ method: "GET", url: "/admin/api/session", headers: { cookie } });
-    expect(session.json()).toMatchObject({ authenticated: true, via: "cookie" });
+    expect(session.json()).toEqual({ authenticated: true });
 
     const csrf = await h.app.inject({
       method: "POST",

@@ -42,11 +42,6 @@ describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () =>
     expect(host.Devices).toEqual([]);
   });
 
-  it("plugins 경로가 없으면 workspace와 프록시 socket만 mount한다", () => {
-    const s = buildContainerSpec(testConfig({ pluginsHostDir: undefined }), key);
-    expect(s.HostConfig!.Mounts!.map((m) => m.Target)).toEqual(["/workspace", "/run/pi-proxy"]);
-  });
-
   it("자원 제한과 /tmp tmpfs", () => {
     expect(host.Memory).toBe(512 * 1024 * 1024);
     expect(host.MemorySwap).toBe(host.Memory);
@@ -114,15 +109,16 @@ describe("config", () => {
   it("비밀키와 절대 경로를 요구한다", () => {
     expect(() => loadConfig({ WORKSPACES_DIR: "/w" })).toThrow(/SANDBOXD_JWT_SECRET/);
     expect(() => loadConfig({ SANDBOXD_JWT_SECRET: SECRET_TEXT, WORKSPACES_DIR: "rel" })).toThrow(/absolute/);
-    const c = loadConfig({ SANDBOXD_JWT_SECRET: SECRET_TEXT, WORKSPACES_DIR: "/w/", SANDBOX_IDLE_SECONDS: "60" });
+    expect(() => loadConfig({ SANDBOXD_JWT_SECRET: SECRET_TEXT, WORKSPACES_DIR: "/w" })).toThrow(/PLUGINS_HOST_DIR/);
+    const c = loadConfig({ SANDBOXD_JWT_SECRET: SECRET_TEXT, WORKSPACES_DIR: "/w/", PLUGINS_HOST_DIR: "/p", SANDBOX_IDLE_SECONDS: "60" });
     expect(c.workspacesDir).toBe("/w");
     expect(c.workspacesHostDir).toBe("/w");
-    expect(c.pluginsHostDir).toBeUndefined();
+    expect(c.pluginsHostDir).toBe("/p");
     expect(c.reapIntervalMs).toBe(15_000);
   });
 
   it("짧은 비밀키는 거부한다", () => {
-    expect(() => loadConfig({ SANDBOXD_JWT_SECRET: "short", WORKSPACES_DIR: "/w" })).toThrow(/32 bytes/);
+    expect(() => loadConfig({ SANDBOXD_JWT_SECRET: "short", WORKSPACES_DIR: "/w", PLUGINS_HOST_DIR: "/p" })).toThrow(/32 bytes/);
   });
 });
 

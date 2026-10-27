@@ -11,10 +11,10 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: AdminContext): void
 
   app.get("/mcp/servers", async () => mcp.list());
 
-  app.post<{ Body: { config?: unknown } }>("/mcp/validate", async (req) => mcp.validate(req.body?.config ?? req.body));
+  app.post<{ Body: { config?: unknown } }>("/mcp/validate", async (req) => mcp.validate(req.body?.config));
 
   app.put<IdParams & { Body: { config?: unknown } }>("/mcp/servers/:id", async (req) => {
-    const raw = (req.body?.config ?? req.body) as Record<string, unknown> | undefined;
+    const raw = req.body?.config as Record<string, unknown> | undefined;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw badRequest("body must be an MCP server config object");
     if (raw.id !== undefined && raw.id !== req.params.id) throw badRequest("config.id must match the URL");
     return mcp.upsert({ ...raw, id: req.params.id }, actorOf(req));
@@ -36,12 +36,5 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: AdminContext): void
     return reply.code(204).send();
   });
 
-  app.post<IdParams & { Body: { user?: unknown } }>("/mcp/servers/:id/test", async (req) => {
-    const user = typeof req.body?.user === "string" && req.body.user ? req.body.user : undefined;
-    return mcp.test(req.params.id, user, actorOf(req));
-  });
-
-  app.get<IdParams & { Querystring: { user?: string } }>("/mcp/servers/:id/tools", async (req) => ({
-    tools: await mcp.tools(req.params.id, req.query.user || undefined),
-  }));
+  app.post<IdParams>("/mcp/servers/:id/test", async (req) => mcp.test(req.params.id, actorOf(req)));
 }

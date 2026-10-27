@@ -11,7 +11,9 @@ import {
   findLiteralCredentials,
   jwtSecretBytes,
   McpServerConfig,
+  PutSecretRequest,
   requiredSecretNames,
+  SecretName,
   transportTarget,
   verifyInternalToken,
 } from "@pi-gateway/shared";
@@ -253,10 +255,13 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     secrets.delete(req.params.id);
     return reply.code(204).send();
   });
-  app.put<{ Params: { id: string; name: string }; Body: { value?: string } }>("/admin/servers/:id/secrets/:name", async (req, reply) => {
+  app.put<{ Params: { id: string; name: string }; Body: unknown }>("/admin/servers/:id/secrets/:name", async (req, reply) => {
+    if (!SecretName.safeParse(req.params.name).success) return bad(reply, "bad secret name");
+    const body = PutSecretRequest.safeParse(req.body);
+    if (!body.success) return bad(reply, "bad secret body");
     if (!servers.has(req.params.id)) return reply.code(404).send({ error: { code: "not_found", message: "no such server" } });
     const set = secrets.get(req.params.id) ?? new Map<string, string>();
-    set.set(req.params.name, String(req.body?.value));
+    set.set(req.params.name, body.data.value);
     secrets.set(req.params.id, set);
     return reply.code(204).send();
   });
@@ -268,7 +273,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     if (!servers.has(req.params.id)) return reply.code(404).send({ error: { code: "not_found", message: "no such server" } });
     return { ok: true, tools: [{ name: "search", description: "검색" }], durationMs: 3 };
   });
-  app.get<{ Params: { id: string } }>("/admin/servers/:id/tools", async () => ({ tools: [{ name: "search", description: "검색" }] }));
 
   app.get("/mcp/servers", async (req, reply) => {
     const token = bearerToken(req.headers.authorization);

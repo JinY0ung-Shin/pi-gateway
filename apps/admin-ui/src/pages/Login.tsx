@@ -1,25 +1,18 @@
 import { useState } from "preact/hooks";
-import { api, errorText } from "../api";
-import { Brand, Notice } from "../components";
+import { api } from "../api";
+import { Brand, useAction } from "../components";
 
 export function Login(props: { onLogin: () => void }) {
   const [key, setKey] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const action = useAction();
 
-  const submit = async (e: Event) => {
+  const submit = (e: Event) => {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
+    void action.run(async () => {
       await api("POST", "/login", { apiKey: key });
       setKey("");
       props.onLogin();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
   return (
@@ -31,9 +24,9 @@ export function Login(props: { onLogin: () => void }) {
           <span>관리자 키</span>
           <input type="password" autocomplete="current-password" value={key} onInput={(e) => setKey((e.currentTarget as HTMLInputElement).value)} autofocus required />
         </label>
-        {error && <Notice tone="error">{error}</Notice>}
-        <button class="primary" type="submit" disabled={busy || !key}>
-          {busy ? "확인 중…" : "로그인"}
+        {action.view}
+        <button class="primary" type="submit" disabled={action.busy || !key}>
+          {action.busy ? "확인 중…" : "로그인"}
         </button>
       </form>
     </div>

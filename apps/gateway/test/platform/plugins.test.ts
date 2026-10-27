@@ -1,13 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { convertCommandBody } from "../../src/plugins/commands.js";
 import { discoverComponents } from "../../src/plugins/components.js";
 import { parseMarkdownFrontmatter } from "../../src/plugins/frontmatter.js";
-import { normalizeGitUrl } from "../../src/plugins/git.js";
-import { parseJsonLenient } from "../../src/plugins/manifest.js";
-import { parseMarketplaceManifest } from "../../src/plugins/marketplace.js";
+import { gitFetch, normalizeGitUrl } from "../../src/plugins/git.js";
+import { parseJson } from "../../src/plugins/manifest.js";
 import { convertClaudeVariables } from "../../src/plugins/mcp-mapping.js";
 import { readContainedFile, safeCopyTree } from "../../src/plugins/safe-copy.js";
 import { PluginService } from "../../src/plugins/service.js";
@@ -28,6 +27,12 @@ import {
   tempDir,
   testBrokerEnv,
 } from "./helpers.js";
+
+// 어느 호스트로 token을 보내는지 보려고 감싼다 (동작은 그대로)
+vi.mock("../../src/plugins/git.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/plugins/git.js")>();
+  return { ...actual, gitFetch: vi.fn(actual.gitFetch) };
+});
 
 function write(root: string, rel: string, content: string): void {
   const path = join(root, rel);
@@ -189,19 +194,18 @@ describe("plugin installer (fixture marketplace)", () => {
 
     const detail = (await api("GET", "/admin/api/marketplaces/defect-agent-plugins")).json();
     const byName = Object.fromEntries(detail.plugins.map((p: { name: string }) => [p.name, p]));
-    expect(byName["npm-thing"]).toMatchObject({ supported: false, sourceType: "npm" });
-    expect(byName["remote"]).toMatchObject({ supported: true, sourceType: "url", installed: null });
+    expect(byName["npm-thing"]).toMatchObject({ supported: false, source: "npm (지원 안 함)" });
+    expect(byName["remote"]).toMatchObject({ supported: true, installed: null });
   });
 
   it("defect-agent-frontend: skill·command·sandbox MCP로 바뀌고 plugin 코드는 실행되지 않는다", async () => {
     let res = await api("PUT", "/admin/api/plugin-settings", {
       mcpDefaults: {
         env: { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}", SERVICE_URL: "http://orchestrator:9000" },
-        scope: "per-user",
       },
     });
     expect(res.statusCode).toBe(200);
-    res = await api("PUT", "/admin/api/plugin-settings", { mcpDefaults: { env: { X: "{{secret:A}}" }, scope: "per-session" } });
+    res = await api("PUT", "/admin/api/plugin-settings", { mcpDefaults: { env: { X: "{{secret:A}}" } } });
     expect(res.statusCode).toBe(400);
 
     const revisionBefore = h.plugins.revision();
@@ -477,7 +481,7 @@ describe("plugin 업데이트·broker 장애", () => {
       await harness.mcp.upsert({ ...current, transport: { ...current.transport, env: { ...current.transport.env, ORCHESTRATOR_URL: "http://admin:9000" } } }, "admin");
 
       const env = { THREAD_ID: "{{metadata:THREAD_ID}}", ORCHESTRATOR_URL: "{{metadata:ORCHESTRATOR_URL}}", SERVICE_URL: "http://orchestrator:9000", UNUSED: "x" };
-      const { warnings } = await harness.plugins.updateSettings({ mcpDefaults: { env, scope: "per-user" } }, "t");
+      const { warnings } = await harness.plugins.updateSettings({ mcpDefaults: { env } }, "t");
       expect(warnings).toEqual([]);
       const after = harness.mcp.store.get("monsemi-frontend")!;
       if (after.transport.type !== "stdio") throw new Error("stdio expected");
@@ -498,14 +502,14 @@ describe("plugin 업데이트·broker 장애", () => {
     const broker = await startFakeBroker();
     const harness = await buildHarness({ env: brokerEnv(broker.url) });
     const docsToken = () => broker.secrets.get("remote-docs")?.get("DOCS_TOKEN");
-    const setDefaults = (env: Record<string, string>) => harness.plugins.updateSettings({ mcpDefaults: { env, scope: "per-user" } }, "t");
+    const setDefaults = (env: Record<string, string>) => harness.plugins.updateSettings({ mcpDefaults: { env } }, "t");
     try {
       await harness.plugins.addMarketplace({ url: fixture.mkt }, "t");
       await setDefaults({ DOCS_TOKEN: "default-docs-1" });
       const { warnings } = await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "secret-tools" }, "t");
       expect(docsToken()).toBe("default-docs-1");
       expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
-      expect(harness.plugins.getPlugin("secret-tools@defect-agent-plugins").mcp.find((m) => m.name === "remote-docs")?.missingSecrets).toEqual([]);
+      expect((await harness.mcp.list()).servers.find((s) => s.config.id === "remote-docs")?.missingSecrets).toEqual([]);
 
       // 기본값을 바꾸면 따라가고, 기본값에서 빼면 채웠던 값을 지운다
       await setDefaults({ DOCS_TOKEN: "default-docs-2" });
@@ -573,6 +577,21 @@ describe("plugin 업데이트·broker 장애", () => {
       expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", {}, "t")).toMatchObject({ ref: "dev", commitSha: dev, warnings: [] });
       expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", { ref: "" }, "t")).toMatchObject({ ref: null, commitSha: added.commitSha });
       expect(harness.plugins.getPlugin(ID).version).toBe("1.9.0");
+    } finally {
+      await harness.close();
+      await broker.close();
+    }
+  });
+
+  it("입력한 token은 marketplace와 다른 곳의 plugin source로 보내지 않는다", async () => {
+    const fixture = buildFixture(tempDir("fixture-token-host"));
+    const broker = await startFakeBroker();
+    const harness = await buildHarness({ env: brokerEnv(broker.url) });
+    try {
+      await harness.plugins.addMarketplace({ url: `file://${fixture.mkt}` }, "t");
+      vi.mocked(gitFetch).mockClear();
+      await harness.plugins.install({ marketplace: "defect-agent-plugins", plugin: "remote", token: TOKEN }, "t");
+      expect(vi.mocked(gitFetch).mock.calls.map(([options]) => [options.url, options.token])).toEqual([[fixture.remote, undefined]]);
     } finally {
       await harness.close();
       await broker.close();
@@ -782,14 +801,13 @@ describe("plugin helpers", () => {
   });
 
   it("JSON 오류 메시지에는 입력 일부가 들어가지 않는다", () => {
-    expect(() => parseJsonLenient('{"a": "SECRET-EXCERPT', "x/plugin.json")).toThrow(/^x\/plugin\.json is not valid JSON$/);
+    expect(() => parseJson('{"a": "SECRET-EXCERPT', "x/plugin.json")).toThrow(/^x\/plugin\.json is not valid JSON$/);
   });
 
   it("staging의 링크된 SKILL.md는 건너뛰고, 링크된 .mcp.json·밖을 가리키는 mcpServers 파일은 설치를 거절한다", async () => {
     const outside = tempDir("staging-outside");
     writeFileSync(join(outside, "SKILL.md"), "---\nname: stolen\ndescription: outside\n---\n");
     writeFileSync(join(outside, "servers.json"), '{"mcpServers":{}}');
-    const entry = parseMarketplaceManifest({ name: "m", plugins: [{ name: "p", source: "./p" }] }).plugins[0]!;
     const make = () => {
       const staging = tempDir("staging");
       mkdirSync(join(staging, "skills", "ok"), { recursive: true });
@@ -798,7 +816,7 @@ describe("plugin helpers", () => {
       symlinkSync(join(outside, "SKILL.md"), join(staging, "skills", "evil", "SKILL.md"));
       return staging;
     };
-    const base = { finalDir: "/opt/plugins/m/p/1", pluginName: "p", manifest: undefined, entry, dataDir: "/d" };
+    const base = { finalDir: "/opt/plugins/m/p/1", pluginName: "p", manifest: { name: "p" }, dataDir: "/d" };
 
     const found = await discoverComponents({ ...base, stagingDir: make() });
     expect(found.skills.map((s) => s.name)).toEqual(["p:ok"]);

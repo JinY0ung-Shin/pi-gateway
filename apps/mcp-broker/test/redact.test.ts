@@ -42,7 +42,6 @@ describe("Redactor", () => {
 
   it("너무 짧은 값은 건너뛴다 (결과를 망가뜨리지 않으려고)", () => {
     const short = new Redactor(["abc"]);
-    expect(short.active).toBe(false);
     expect(short.redact("abc abc")).toBe("abc abc");
   });
 

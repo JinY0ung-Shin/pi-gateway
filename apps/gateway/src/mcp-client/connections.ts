@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DEFAULT_MAX_BYTES, formatSize, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { McpClient, McpHttpError, McpSessionExpiredError, StreamableHttpTransport, type Tool, toLlmContent } from "@earendil-works/pi-mcp";
+import { McpClient, StreamableHttpTransport, type Tool, toLlmContent } from "@earendil-works/pi-mcp";
 import {
   AUD_BROKER,
   isToolAllowed,
@@ -75,7 +75,6 @@ export interface McpServerHandle {
   kind: "broker" | "sandbox";
   id: string;
   displayName?: string;
-  description?: string;
   timeoutSec: number;
   /** sandbox 서버의 설정 (broker 서버는 broker가 설정을 가진다) */
   config?: McpServerConfig;
@@ -113,8 +112,6 @@ export interface McpConnectionDeps {
   requestContext: () => RequestContext;
   cache: McpToolCache;
   log: Logger;
-  /** 서버 하나의 도구 목록을 기다리는 최대 시간 (기본 MCP_LIST_TIMEOUT_MS) */
-  listTimeoutMs?: number;
 }
 
 /** tool_execution_update의 details. SSE `response.tool_progress`(source=mcp)로 바뀐다. */
@@ -130,15 +127,15 @@ function configHash(config: McpServerConfig): string {
   return createHash("sha256").update(JSON.stringify(config.transport)).digest("hex").slice(0, 16);
 }
 
-/** 세션을 만들 때 서버 하나의 도구 목록을 기다리는 최대 시간. 넘으면 그 서버는 이번 세션에서 빠진다. */
-export const MCP_LIST_TIMEOUT_MS = 15_000;
+/** 세션을 만들 때 서버 하나의 도구 목록을 기다리는 최대 시간 (서버 timeout이 더 짧으면 그것). 넘으면 그 서버는 이번 세션에서 빠진다. */
+const MCP_LIST_TIMEOUT_MS = 15_000;
 
 /** promise를 signal과 경쟁시킨다 (promise 자체는 취소되지 않는다). */
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(new Error("aborted"));
+  if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error("aborted"));
+    const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (v) => {
@@ -151,35 +148,6 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
       },
     );
   });
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  return Promise.race([
-    promise.finally(() => timer && clearTimeout(timer)),
-    new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
-    }),
-  ]);
-}
-
-const NOT_CONNECTED_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"]);
-
-/**
- * 요청이 서버에 전달되지 않은 것이 확실한 오류인가 (그때만 다시 보낸다).
- * - 세션 만료·404: 서버(broker)가 요청을 처리하지 않고 거절했다.
- * - 연결 자체가 안 됨(ECONNREFUSED 등): 요청이 나가지 않았다.
- * 시간 초과, JSON-RPC 오류, 처리 중 연결 끊김은 서버가 이미 실행했을 수 있으므로 다시 보내지 않는다.
- */
-export function wasNotDispatched(err: unknown): boolean {
-  if (err instanceof McpSessionExpiredError) return true;
-  // broker는 모르는·꺼진 서버 요청을 upstream에 보내지 않고 404로 거절한다.
-  if (err instanceof McpHttpError && err.status === 404) return true;
-  for (let e: unknown = err, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
-    const code = (e as { code?: unknown }).code;
-    if (typeof code === "string" && NOT_CONNECTED_CODES.has(code)) return true;
-  }
-  return false;
 }
 
 export class McpConnectionSet {
@@ -197,13 +165,10 @@ export class McpConnectionSet {
   async tools(servers: McpServerHandle[], signal?: AbortSignal): Promise<ToolDefinition[]> {
     const sorted = [...servers].sort((a, b) => a.id.localeCompare(b.id));
     const listed = await Promise.allSettled(
-      sorted.map((server) =>
-        withTimeout(
-          raceAbort(this.listTools(server, signal), signal),
-          Math.min(this.deps.listTimeoutMs ?? MCP_LIST_TIMEOUT_MS, requestTimeoutMs(server)),
-          `tools/list of ${server.id}`,
-        ),
-      ),
+      sorted.map((server) => {
+        const deadline = AbortSignal.timeout(Math.min(MCP_LIST_TIMEOUT_MS, requestTimeoutMs(server)));
+        return this.listTools(server, signal ? AbortSignal.any([signal, deadline]) : deadline);
+      }),
     );
     const definitions: ToolDefinition[] = [];
     const seen = new Set<string>();
@@ -235,12 +200,12 @@ export class McpConnectionSet {
     return server.config!.scope === "per-session" ? `${base}:${this.deps.sessionId}` : base;
   }
 
-  private async listTools(server: McpServerHandle, signal?: AbortSignal): Promise<Tool[]> {
+  private async listTools(server: McpServerHandle, signal: AbortSignal): Promise<Tool[]> {
     const key = server.kind === "sandbox" ? this.cacheKey(server) : undefined;
     const cached = key ? this.deps.cache.get(key) : undefined;
     if (cached) return cached;
     const client = await this.client(server, signal);
-    const tools = await client.listTools({ timeoutMs: requestTimeoutMs(server), ...(signal ? { signal } : {}) });
+    const tools = await client.listTools({ timeoutMs: requestTimeoutMs(server), signal });
     if (key) this.deps.cache.set(key, tools);
     return tools;
   }
@@ -294,7 +259,7 @@ export class McpConnectionSet {
       const metadata = this.deps.requestContext().metadata;
       // sandbox 서버에는 비밀·헤더 자리표시자가 없다 (설정 검증에서 거른다). 사용자·세션·metadata만 채운다.
       const values = { user: this.deps.principal, session: this.deps.sessionId, ...(metadata ? { metadata } : {}) };
-      const render = (v: string) => renderTemplate(v, values).value;
+      const render = (v: string) => renderTemplate(v, values);
       const stdio = config.transport;
       // 명령 이름은 시스템 디렉토리에서만 찾아 절대 경로로 띄운다 (workspace에 심은 같은 이름의 실행 파일 무시).
       const command = await resolveSandboxCommand(this.deps.sandbox, render(stdio.command));
@@ -329,38 +294,28 @@ export class McpConnectionSet {
       parameters: toParameters(tool.inputSchema) as never,
       execute: async (toolCallId, params, signal, onUpdate) => {
         const args = (params ?? {}) as Record<string, unknown>;
-        const call = async () => {
-          let client = await this.client(server, signal);
-          // 이미 끊긴 연결이면 보내기 전에 새로 연결한다 (아직 아무것도 보내지 않았으므로 안전하다).
-          if (client.connectionState !== "connected") {
-            this.drop(server);
-            client = await this.client(server, signal);
-          }
-          return client.callTool(tool.name, args, {
-            ...(signal ? { signal } : {}),
-            timeoutMs: requestTimeoutMs(server),
-            onProgress: (p) => {
-              const details: McpProgressDetails = {
-                mcpProgress: {
-                  progress: p.progress,
-                  ...(p.total !== undefined ? { total: p.total } : {}),
-                  ...(p.message ? { message: p.message } : {}),
-                },
-              };
-              const text = p.message ?? `Progress ${p.progress}${p.total === undefined ? "" : `/${p.total}`}`;
-              onUpdate?.({ content: [{ type: "text", text }], details });
-            },
-          });
-        };
-        let result;
-        try {
-          result = await call();
-        } catch (err) {
-          // 부작용이 두 번 일어나지 않도록, 요청이 나가지 않은 것이 확실할 때만 한 번 다시 보낸다.
-          if (signal?.aborted || this.closed || !wasNotDispatched(err)) throw err;
+        let client = await this.client(server, signal);
+        // 이미 끊긴 연결이면 보내기 전에 새로 연결한다 (아직 아무것도 보내지 않았으므로 안전하다).
+        // 보낸 요청은 다시 보내지 않는다 (부작용이 두 번 일어날 수 있다).
+        if (client.connectionState !== "connected") {
           this.drop(server);
-          result = await call();
+          client = await this.client(server, signal);
         }
+        const result = await client.callTool(tool.name, args, {
+          ...(signal ? { signal } : {}),
+          timeoutMs: requestTimeoutMs(server),
+          onProgress: (p) => {
+            const details: McpProgressDetails = {
+              mcpProgress: {
+                progress: p.progress,
+                ...(p.total !== undefined ? { total: p.total } : {}),
+                ...(p.message ? { message: p.message } : {}),
+              },
+            };
+            const text = p.message ?? `Progress ${p.progress}${p.total === undefined ? "" : `/${p.total}`}`;
+            onUpdate?.({ content: [{ type: "text", text }], details });
+          },
+        });
         // MCP 서버가 준 이미지는 pi가 gateway에서 디코딩한다. 그 전에 크기를 확인한다.
         const content = await this.spillLongText(guardImageBlocks(toLlmContent(result), `${server.id}/${tool.name}`), toolCallId, signal);
         return {

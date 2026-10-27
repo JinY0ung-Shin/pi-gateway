@@ -38,9 +38,9 @@ describe("1. a stalled sandbox attach cannot hang a turn", () => {
   beforeAll(async () => {
     h = await startHarness({
       fakeSandbox: { stallAttach: true },
-      overrides: { mcpListTimeoutMs: 1500 },
       sandboxServers: [
-        McpServerConfig.parse({ id: "stuck", runIn: "sandbox", scope: "per-session", transport: { type: "stdio", command: process.execPath, args: ["x.js"] } }),
+        // 도구 목록 대기 시간은 서버 timeout(1초)을 넘지 않는다
+        McpServerConfig.parse({ id: "stuck", runIn: "sandbox", scope: "per-session", timeoutSec: 1, transport: { type: "stdio", command: process.execPath, args: ["x.js"] } }),
       ],
     });
   });
@@ -79,14 +79,13 @@ describe("1. a stalled sandbox attach cannot hang a turn", () => {
   });
 });
 
-describe("2. MCP tools/call is only retried when the request was not dispatched", () => {
+describe("2. MCP tools/call is never retried", () => {
   let h: Harness;
   beforeAll(async () => {
     h = await startHarness({
       brokerServers: {
         jira: [
           { name: "create_issue", handler: () => ({ rpcError: { code: -32603, message: "upstream failed (ref abc)" } }) },
-          { name: "flaky", notFoundOnce: true, handler: () => ({ text: "created once" }) },
         ],
       },
     });
@@ -100,14 +99,6 @@ describe("2. MCP tools/call is only retried when the request was not dispatched"
     const res = await h.stream({ input: "file a ticket" });
     expect(h.broker!.executions["jira/create_issue"]).toBe(1);
     expect(ofType(res.events, "response.tool_result")[0]!.data.is_error).toBe(true);
-  });
-
-  it("a session-expired (404) answer is retried once on a fresh connection", async () => {
-    h.llm.enqueue({ toolCalls: [{ id: "c2", name: "mcp__jira__flaky", arguments: {} }] }, { text: "done" });
-    const res = await h.stream({ input: "flaky" });
-    const result = ofType(res.events, "response.tool_result")[0]!.data;
-    expect(result).toMatchObject({ is_error: false, content: "created once" });
-    expect(h.broker!.executions["jira/flaky"]).toBe(1);
   });
 });
 

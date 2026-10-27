@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { createSyntheticSourceInfo, type PromptTemplate, type Skill } from "@earendil-works/pi-coding-agent";
-import { findTemplateRefs, McpScope, SANDBOX_HOME } from "@pi-gateway/shared";
+import { findTemplateRefs, SANDBOX_HOME } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
@@ -28,6 +28,7 @@ import {
   type MappedMcpServer,
   mapPluginMcpServer,
   pluginEntryFiles,
+  type PluginMcpContext,
   type PluginMcpDefaults,
   referencedDefaultEnv,
   sanitizeServerId,
@@ -61,7 +62,6 @@ const InstallInput = z.object({
 const SettingsInput = z.object({
   mcpDefaults: z.object({
     env: z.record(envKey, z.string().max(4096)),
-    scope: McpScope,
   }),
 });
 
@@ -74,11 +74,9 @@ export interface MarketplaceView {
   url: string;
   ref: string | null;
   commitSha: string;
-  description?: string;
   owner?: string;
   pluginCount: number;
   invalidEntries: number;
-  addedAt: string;
   refreshedAt: string;
   addedBy: string;
 }
@@ -88,10 +86,7 @@ export interface CatalogEntry {
   description?: string;
   /** marketplace.json 항목에 적힌 버전 (설치본의 plugin.json 버전과 다를 수 있다) */
   listedVersion?: string;
-  category?: string;
-  tags: string[];
   source: string;
-  sourceType: string;
   supported: boolean;
   installed: { id: string; version: string; enabled: boolean; update?: { version: string } } | null;
 }
@@ -165,7 +160,7 @@ export class PluginService implements PluginResources {
   readonly #workDir: string;
   readonly #marketplacesDir: string;
   readonly #allowLocal: boolean;
-  readonly #gitTimeoutMs: number;
+  readonly #gitTimeoutMs: number | undefined;
   readonly #gitToken: string | undefined;
   #cache: ResourceCache | undefined;
   #queue: Promise<unknown> = Promise.resolve();
@@ -178,7 +173,7 @@ export class PluginService implements PluginResources {
     this.#workDir = join(config.dataDir, "plugin-work");
     this.#marketplacesDir = join(config.dataDir, "plugin-marketplaces");
     this.#allowLocal = options.allowLocalSources ?? false;
-    this.#gitTimeoutMs = options.gitTimeoutMs ?? 120_000;
+    this.#gitTimeoutMs = options.gitTimeoutMs;
     this.#gitToken = config.pluginGitToken;
   }
 
@@ -271,23 +266,19 @@ export class PluginService implements PluginResources {
     return this.store.listMarketplaces().map(toMarketplaceView);
   }
 
-  getMarketplace(name: string): MarketplaceView & { plugins: CatalogEntry[]; invalid: MarketplaceManifest["invalid"] } {
+  getMarketplace(name: string): MarketplaceView & { plugins: CatalogEntry[] } {
     const record = this.store.getMarketplace(name);
     if (!record) throw notFound(`marketplace '${name}' not found`);
     const installed = new Map(this.store.listPlugins().filter((p) => p.marketplace === name).map((p) => [p.name, p]));
     return {
       ...toMarketplaceView(record),
-      invalid: record.manifest.invalid,
       plugins: record.manifest.plugins.map((entry) => {
         const plugin = installed.get(entry.name);
         return {
           name: entry.name,
           ...(entry.description ? { description: entry.description } : {}),
           ...(entry.version ? { listedVersion: entry.version } : {}),
-          ...(entry.category ? { category: entry.category } : {}),
-          tags: entry.tags,
           source: describeSource(entry.source),
-          sourceType: entry.source.type === "unsupported" ? entry.source.kind : entry.source.type,
           supported: entry.source.type !== "unsupported",
           installed: plugin ? { id: plugin.id, version: plugin.version, enabled: plugin.enabled, ...updateOf(plugin, record) } : null,
         };
@@ -336,7 +327,7 @@ export class PluginService implements PluginResources {
           throw conflict("name_changed", `the repository now declares marketplace '${manifest.name}' instead of '${name}'`);
         }
         const localPath = await this.#placeMarketplace(dir, name);
-        this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest, addedBy: record.addedBy });
+        this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest });
         this.#log.info({ marketplace: name, commit, actor }, "marketplace refreshed");
         const warnings: string[] = [];
         if (req.ref !== undefined) {
@@ -466,24 +457,23 @@ export class PluginService implements PluginResources {
       const dataDir = pluginDataDir(marketplace.name, entry.name);
 
       const copy = await safeCopyTree(sourceDir, staging);
-      const found = await discoverComponents({ stagingDir: staging, finalDir, pluginName: entry.name, manifest, entry, dataDir });
+      const found = await discoverComponents({ stagingDir: staging, finalDir, pluginName: entry.name, manifest: manifest ?? entry.raw, dataDir });
       await rewriteTextFiles(found, staging, finalDir, dataDir);
 
       const enabled = previous?.enabled ?? true;
       const description = str(manifest ?? {}, "description") ?? entry.description;
       // MCP 매핑을 먼저 한다. MCP 서버를 등록하려면 broker가 있어야 하므로(id가 broker 서버와 겹치는지 본다),
       // 연결되지 않으면 아무것도 바꾸기 전에 503으로 끝낸다.
-      const mappedServers = await this.#mapServers(found.mcpServers, {
-        id,
+      const mappedServers = await this.#mapServers(found.mcpServers, staging, {
+        pluginId: id,
         pluginName: entry.name,
         version,
         root: finalDir,
         dataDir,
         description,
         enabled,
-        read: (rel) => readContainedFile(staging, rel, { optional: true }).catch(() => undefined),
       });
-      const needsBroker = mappedServers.some((m) => m.mapped.config !== undefined) || (previous ? usesBroker(previous) : false);
+      const needsBroker = mappedServers.some((m) => m.config !== undefined) || (previous ? usesBroker(previous) : false);
       if (needsBroker) await this.#registry.assertBrokerReachable();
       await this.#swapInto(staging, pluginDir, versionDir);
       await pointCurrentAt(pluginDir, version);
@@ -510,6 +500,7 @@ export class PluginService implements PluginResources {
       if (description && !record.manifest) record.manifest = { description };
       this.store.upsertPlugin(record);
 
+      // 등록하다 broker가 끊겨 멈춰도 plugin 기록은 남도록 MCP 기록은 등록 뒤에 따로 쓴다 (관리 화면에서 제거할 수 있게).
       const { records: mcp, warnings: mcpWarnings } = await this.#registerMcp(mappedServers, {
         id,
         pluginName: entry.name,
@@ -522,15 +513,7 @@ export class PluginService implements PluginResources {
 
       warnings.push(...found.warnings);
       for (const s of copy.skipped) warnings.push(`건너뛴 파일 ${s.path}: ${s.reason}`);
-      for (const m of mcp) {
-        if (m.status !== "registered") warnings.push(`MCP 서버 ${m.name}: ${m.reason ?? m.status}`);
-        else if ((m.missingSecrets ?? m.requiredSecrets).length > 0) {
-          warnings.push(
-            `MCP 서버 ${m.id}: 비밀키 ${(m.missingSecrets ?? m.requiredSecrets).join(", ")}를 관리 화면에서 입력해야 합니다` +
-              (previous ? " (접속 대상이 바뀌면 broker가 저장된 비밀키를 지웁니다)" : ""),
-          );
-        }
-      }
+      for (const m of mcp) if (m.status !== "registered") warnings.push(`MCP 서버 ${m.name}: ${m.reason ?? m.status}`);
       warnings.push(...mcpWarnings);
       this.#log.info({ plugin: id, version, actor, skills: found.skills.length, commands: found.commands.length, mcp: mcp.length }, "plugin installed");
       return { plugin: this.getPlugin(id), warnings };
@@ -565,8 +548,8 @@ export class PluginService implements PluginResources {
       tmpRoot: work,
       allowLocal: this.#allowLocal,
       timeoutMs: this.#gitTimeoutMs,
-      // 설정된 token은 marketplace와 같은 호스트에만 보낸다 (marketplace.json이 가리키는 다른 서버로 새지 않게)
-      token: auth.token ?? (sameHost(url, marketplace.url) ? this.#gitToken : undefined),
+      // token(입력한 것이든 설정된 것이든)은 marketplace와 같은 호스트에만 보낸다 (marketplace.json이 가리키는 다른 서버로 새지 않게)
+      token: sameHost(url, marketplace.url) ? (auth.token ?? this.#gitToken) : undefined,
       username: auth.tokenUsername,
     });
     const pins = { ...(source.ref ? { ref: source.ref } : {}), ...(source.sha ? { sha: source.sha } : {}), listedVersion: entry.version ?? null };
@@ -577,36 +560,14 @@ export class PluginService implements PluginResources {
     return { dir: dest, resolved: { type: source.type, display, url, commit, ...pins } };
   }
 
-  /** plugin의 MCP 서버 설정을 gateway 설정으로 바꾼다 (아직 등록하지 않는다). */
-  async #mapServers(
-    servers: Record<string, unknown>,
-    ctx: {
-      id: string;
-      pluginName: string;
-      version: string;
-      root: string;
-      dataDir: string;
-      description: string | undefined;
-      enabled: boolean;
-      /** plugin 기준 상대 경로의 파일 내용 (참조 검사용) */
-      read: (rel: string) => Promise<string | undefined>;
-    },
-  ): Promise<{ name: string; mapped: MappedMcpServer }[]> {
-    const defaults = this.getSettings().mcpDefaults;
-    const out: { name: string; mapped: MappedMcpServer }[] = [];
+  /** plugin의 MCP 서버 설정을 gateway 설정으로 바꾼다 (아직 등록하지 않는다). dir은 진입 파일을 읽을 plugin 사본이다. */
+  async #mapServers(servers: Record<string, unknown>, dir: string, ctx: Omit<PluginMcpContext, "defaultEnv">): Promise<MappedMcpServer[]> {
+    const { env } = this.getSettings().mcpDefaults;
+    const read = (rel: string) => readContainedFile(dir, rel, { optional: true }).catch(() => undefined);
+    const out: MappedMcpServer[] = [];
     for (const [name, raw] of Object.entries(servers).sort(([a], [b]) => a.localeCompare(b))) {
-      const texts = (await Promise.all(pluginEntryFiles(raw).map((rel) => ctx.read(rel)))).filter((t): t is string => t !== undefined);
-      const mapped = mapPluginMcpServer(name, raw, {
-        pluginId: ctx.id,
-        pluginName: ctx.pluginName,
-        version: ctx.version,
-        root: ctx.root,
-        dataDir: ctx.dataDir,
-        description: ctx.description,
-        defaults: { env: referencedDefaultEnv(raw, defaults.env, texts), scope: defaults.scope },
-        enabled: ctx.enabled,
-      });
-      out.push({ name, mapped });
+      const texts = (await Promise.all(pluginEntryFiles(raw).map(read))).filter((t): t is string => t !== undefined);
+      out.push(mapPluginMcpServer(name, raw, { ...ctx, defaultEnv: referencedDefaultEnv(raw, env, texts) }));
     }
     return out;
   }
@@ -617,23 +578,16 @@ export class PluginService implements PluginResources {
     if (!entry) return [`${record.id}: marketplace에 항목이 없어 MCP 기본값을 다시 적용하지 못했습니다`];
     const dir = await realpath(record.installPath);
     const dataDir = pluginDataDir(record.marketplace, record.name);
-    const found = await discoverComponents({
-      stagingDir: dir,
-      finalDir: record.installPath,
-      pluginName: record.name,
-      manifest: await readPluginManifest(dir),
-      entry,
-      dataDir,
-    });
-    const mappedServers = await this.#mapServers(found.mcpServers, {
-      id: record.id,
+    const manifest = (await readPluginManifest(dir)) ?? entry.raw;
+    const found = await discoverComponents({ stagingDir: dir, finalDir: record.installPath, pluginName: record.name, manifest, dataDir });
+    const mappedServers = await this.#mapServers(found.mcpServers, dir, {
+      pluginId: record.id,
       pluginName: record.name,
       version: record.version,
       root: record.installPath,
       dataDir,
       description: str(record.manifest ?? {}, "description") ?? entry.description,
       enabled: record.enabled,
-      read: (rel) => readContainedFile(dir, rel, { optional: true }).catch(() => undefined),
     });
     const { records, warnings } = await this.#registerMcp(mappedServers, { id: record.id, pluginName: record.name, previous: record.mcp, actor });
     this.store.setPluginMcp(record.id, records);
@@ -641,13 +595,14 @@ export class PluginService implements PluginResources {
   }
 
   async #registerMcp(
-    mappedServers: { name: string; mapped: MappedMcpServer }[],
+    mappedServers: MappedMcpServer[],
     ctx: { id: string; pluginName: string; previous: McpRecord[]; actor: string },
   ): Promise<{ records: McpRecord[]; warnings: string[] }> {
     const records: McpRecord[] = [];
     const warnings: string[] = [];
     const used = new Set<string>();
-    for (const { name, mapped } of mappedServers) {
+    for (const mapped of mappedServers) {
+      const { name } = mapped;
       if (!mapped.config) {
         records.push({ name, status: "unsupported", reason: mapped.unsupported ?? "unsupported", requiredSecrets: [], warnings: mapped.warnings });
         continue;
@@ -682,13 +637,19 @@ export class PluginService implements PluginResources {
             warnings.push(`MCP 서버 ${config.id}: 기본값으로 비밀키를 채우지 못했습니다 (${describe(error)})`);
           }
         }
+        const missing = entry.missingSecrets ?? mapped.requiredSecrets;
+        if (missing.length > 0) {
+          warnings.push(
+            `MCP 서버 ${config.id}: 비밀키 ${missing.join(", ")}를 관리 화면에서 입력해야 합니다` +
+              (previous ? " (접속 대상이 바뀌면 broker가 저장된 비밀키를 지웁니다)" : ""),
+          );
+        }
         records.push({
           name,
           id: config.id,
           runIn: config.runIn,
           status: "registered",
           requiredSecrets: mapped.requiredSecrets,
-          ...(entry.missingSecrets ? { missingSecrets: entry.missingSecrets } : {}),
           ...(defaultSecrets ? { defaultSecrets } : {}),
           warnings: mapped.warnings,
           baseline: config,
@@ -863,11 +824,9 @@ function toMarketplaceView(record: MarketplaceRecord): MarketplaceView {
     url: record.url,
     ref: record.ref,
     commitSha: record.commitSha,
-    ...(record.manifest.description ? { description: record.manifest.description } : {}),
     ...(record.manifest.owner ? { owner: record.manifest.owner } : {}),
     pluginCount: record.manifest.plugins.length,
     invalidEntries: record.manifest.invalid.length,
-    addedAt: record.addedAt,
     refreshedAt: record.refreshedAt,
     addedBy: record.addedBy,
   };

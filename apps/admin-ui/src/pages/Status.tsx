@@ -1,32 +1,9 @@
-import { useEffect, useState } from "preact/hooks";
-import { api, errorText, formatBytes, formatTime } from "../api";
-import { Badge, Notice, Section } from "../components";
+import { formatBytes, formatTime } from "../api";
+import { Badge, Notice, Section, useLoad } from "../components";
 import type { ServiceCheck, StatusView } from "../types";
 
 export function StatusPage() {
-  const [status, setStatus] = useState<StatusView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const next = await api<StatusView>("GET", "/status");
-        if (alive) {
-          setStatus(next);
-          setError(null);
-        }
-      } catch (err) {
-        if (alive) setError(errorText(err));
-      }
-    };
-    void load();
-    const timer = setInterval(load, 10_000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
+  const { data: status, error } = useLoad<StatusView>("/status", 10_000);
 
   if (error && !status) return <Notice tone="error">{error}</Notice>;
   if (!status) return <p class="muted">불러오는 중…</p>;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction } from "../components";
+import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
 
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
@@ -148,8 +148,8 @@ function readablePaths(message: string, servers: ServerForm[]): string {
 const defaultMaxTokens = (contextWindow: number) => Math.max(256, Math.min(8192, Math.floor(contextWindow / 4)));
 
 export function LlmPage() {
+  const { data: loaded, error: loadError } = useLoad<LlmView>("/llm");
   const [view, setView] = useState<LlmView | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [servers, setServers] = useState<ServerForm[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
   const [savedSnapshot, setSavedSnapshot] = useState("");
@@ -180,10 +180,8 @@ export function LlmPage() {
   };
 
   useEffect(() => {
-    api<LlmView>("GET", "/llm")
-      .then(show)
-      .catch((error) => setLoadError(errorText(error)));
-  }, []);
+    if (loaded) show(loaded);
+  }, [loaded]);
 
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
   if (!view) return <p class="muted">불러오는 중…</p>;

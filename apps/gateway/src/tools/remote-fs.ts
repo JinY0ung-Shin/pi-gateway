@@ -56,9 +56,17 @@ export function toFsError(err: unknown, syscall: string, path: string): Error {
   }
 }
 
+/** `@` 접두사를 떼고 `~`를 sandbox HOME으로 바꾼다 (pi는 gateway의 os.homedir()로 펼치므로 그 전에). */
+export function mapHomePath(path: string): string {
+  const p = path.startsWith("@") ? path.slice(1) : path;
+  if (p === "~") return SANDBOX_HOME;
+  if (p.startsWith("~/")) return posix.join(SANDBOX_HOME, p.slice(2));
+  return p;
+}
+
 /** 모델이 준 경로를 sandbox 안의 절대 경로로: `@` 접두사, `~`, `file://`, 상대 경로를 처리한다. */
-export function resolveSandboxPath(path: string, cwd: string = SANDBOX_WORKSPACE): string {
-  let p = path.startsWith("@") ? path.slice(1) : path;
+export function resolveSandboxPath(path: string, cwd: string): string {
+  let p = mapHomePath(path);
   if (p.startsWith("file://")) {
     try {
       p = fileURLToPath(p);
@@ -66,31 +74,20 @@ export function resolveSandboxPath(path: string, cwd: string = SANDBOX_WORKSPACE
       /* 그대로 둔다 */
     }
   }
-  if (p === "~") p = SANDBOX_HOME;
-  else if (p.startsWith("~/")) p = posix.join(SANDBOX_HOME, p.slice(2));
   return posix.resolve(cwd, p);
-}
-
-/** `~` 경로만 sandbox HOME으로 바꾼다 (pi는 gateway의 os.homedir()로 펼치므로 그 전에). */
-export function mapHomePath(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  const v = value.startsWith("@") ? value.slice(1) : value;
-  if (v === "~") return SANDBOX_HOME;
-  if (v.startsWith("~/")) return posix.join(SANDBOX_HOME, v.slice(2));
-  return value;
 }
 
 /** 세션별 경로 이름공간 (위 설명 참고) */
 export class PathNamespace {
   readonly prefix: string;
 
-  constructor(key: string = randomBytes(8).toString("hex")) {
-    this.prefix = `${NAMESPACE_ROOT}/${key}`;
+  constructor() {
+    this.prefix = `${NAMESPACE_ROOT}/${randomBytes(8).toString("hex")}`;
   }
 
   /** 모델 경로 → pi에 보여줄 경로 */
-  wrap(path: string, cwd: string = SANDBOX_WORKSPACE): string {
-    return this.prefix + resolveSandboxPath(path, cwd);
+  wrap(path: string): string {
+    return this.prefix + resolveSandboxPath(path, SANDBOX_WORKSPACE);
   }
 
   /** pi가 넘긴 경로 → sandbox 경로. 이름공간 밖의 경로는 그대로 둔다. */
@@ -122,13 +119,8 @@ export interface RemoteFs {
   find: FindOperations;
 }
 
-export interface RemoteFsOptions {
-  /** pi가 넘긴 경로를 sandbox 경로로 바꾼다 (PathNamespace.unwrap) */
-  unwrap?: (path: string) => string;
-}
-
-export function createRemoteFs(sandbox: SandboxHandle, options: RemoteFsOptions = {}): RemoteFs {
-  const unwrap = options.unwrap ?? ((p: string) => p);
+/** unwrap: pi가 넘긴 경로를 sandbox 경로로 바꾼다 (PathNamespace.unwrap) */
+export function createRemoteFs(sandbox: SandboxHandle, unwrap: (path: string) => string): RemoteFs {
   // access → detectImageMimeType → readFile 순서로 불리므로, 한 번 읽은 내용을 잠시 보관해 왕복을 줄인다.
   const readCache = new Map<string, CacheEntry>();
   const kindCache = new Map<string, { at: number; isDir: boolean | null }>();

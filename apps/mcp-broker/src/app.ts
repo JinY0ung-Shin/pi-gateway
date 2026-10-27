@@ -6,20 +6,16 @@ import { buildAdminPlane } from "./admin-plane.js";
 import type { BrokerConfig } from "./config.js";
 import { SecretCipher } from "./crypto.js";
 import { buildDataPlane } from "./data-plane.js";
-import { type Db, openDatabase } from "./db.js";
+import { openDatabase } from "./db.js";
 import { UpstreamPool } from "./pool.js";
 import { BrokerService } from "./service.js";
 import { BrokerStore } from "./store.js";
 import { connectUpstream } from "./upstream/connect.js";
 
 export interface Broker {
-  config: BrokerConfig;
-  store: BrokerStore;
-  service: BrokerService;
   pool: UpstreamPool;
   dataPlane: FastifyInstance;
   adminPlane: FastifyInstance;
-  log: Logger;
   /** graceMs가 지나도 끝나지 않은 HTTP 연결은 강제로 끊는다. */
   close(graceMs?: number): Promise<void>;
 }
@@ -32,10 +28,10 @@ export function createLogger(level: string): Logger {
   });
 }
 
-export function createBroker(config: BrokerConfig, options: { log?: Logger; db?: Db } = {}): Broker {
+export function createBroker(config: BrokerConfig, options: { log?: Logger } = {}): Broker {
   const log = options.log ?? createLogger(config.logLevel);
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-  const db = options.db ?? openDatabase(join(config.dataDir, "broker.db"));
+  const db = openDatabase(join(config.dataDir, "broker.db"));
   const store = new BrokerStore(db, new SecretCipher(config.kek));
   const pool = new UpstreamPool({
     limits: config.limits,
@@ -48,13 +44,9 @@ export function createBroker(config: BrokerConfig, options: { log?: Logger; db?:
 
   let closed = false;
   return {
-    config,
-    store,
-    service,
     pool,
     dataPlane,
     adminPlane,
-    log,
     async close(graceMs = 5000) {
       if (closed) return;
       closed = true;

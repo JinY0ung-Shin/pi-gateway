@@ -2,13 +2,11 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  readonly details: unknown;
 
-  constructor(message: string, status: number, code: string, details?: unknown) {
+  constructor(message: string, status: number, code: string) {
     super(message);
     this.status = status;
     this.code = code;
-    this.details = details;
   }
 }
 
@@ -40,9 +38,9 @@ export async function api<T = unknown>(method: "GET" | "POST" | "PUT" | "PATCH" 
     data = undefined;
   }
   if (!res.ok) {
-    const err = (data as { error?: { message?: string; code?: string; details?: unknown } } | undefined)?.error;
+    const err = (data as { error?: { message?: string; code?: string } } | undefined)?.error;
     if (res.status === 401 && path !== "/login") onUnauthorized();
-    throw new ApiError(err?.message ?? `HTTP ${res.status}`, res.status, err?.code ?? "error", err?.details);
+    throw new ApiError(err?.message ?? `HTTP ${res.status}`, res.status, err?.code ?? "error");
   }
   return data as T;
 }

@@ -5,14 +5,13 @@ import {
   McpServerConfig,
   PutSecretRequest,
   SecretName,
-  TestServerRequest,
   verifyInternalToken,
 } from "@pi-gateway/shared";
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
-import { AdminUpstreamError, type BrokerService } from "./service.js";
+import type { BrokerService } from "./service.js";
 import type { BrokerStore } from "./store.js";
 
 /** /mcp/servers와 겹치는 id */
@@ -181,9 +180,7 @@ export function buildAdminPlane(deps: {
   app.post("/admin/servers/:id/test", async (req, reply) => {
     const server = getServerOr404((req.params as { id: string }).id, reply);
     if (!server) return reply;
-    const parsed = TestServerRequest.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send(errorBody("invalid_request", issues(parsed.error)));
-    const result = await service.testServer(server, parsed.data.user);
+    const result = await service.testServer(server);
     store.addAudit({
       actor: actorOf(req),
       action: "server.test",
@@ -191,18 +188,6 @@ export function buildAdminPlane(deps: {
       detail: result.ok ? `ok tools=${result.tools?.length ?? 0}` : "failed",
     });
     return result;
-  });
-
-  app.get("/admin/servers/:id/tools", async (req, reply) => {
-    const server = getServerOr404((req.params as { id: string }).id, reply);
-    if (!server) return reply;
-    const user = (req.query as { user?: string }).user;
-    try {
-      return { tools: await service.adminTools(server, user || undefined) };
-    } catch (error) {
-      const message = error instanceof AdminUpstreamError ? error.message : "upstream error";
-      return reply.code(502).send(errorBody("upstream_error", message));
-    }
   });
 
   return app;

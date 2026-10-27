@@ -1,7 +1,7 @@
 # pi-gateway 운영 가이드
 
-설치, 비밀값, sandbox 도구 추가, 네트워크 차단 규칙, 보안 점검, 용량 참고값을 다룬다.
-구조와 보안 경계는 [README](../README.md)를 본다.
+설치, 비밀값, sandbox 도구 추가, 네트워크 차단 규칙, 보안 점검을 다룬다.
+보안 경계와 API는 [README](../README.md)를 본다.
 
 > 이 문서의 수치는 개발 머신(WSL2, Docker 29.1.3)에서 잰 참고값이다. 운영 용량은 운영 서버에서 다시 확인한다.
 
@@ -9,9 +9,9 @@
 
 | 서비스 | 이미지 | 네트워크 | 하는 일 | 가진 비밀 |
 |---|---|---|---|---|
-| `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 관리 화면, pi 세션 | LLM 키, 내부 JWT 키, 관리 키 |
+| `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 인증, pi 세션(agent loop), plugin 설치, 프롬프트, 관리 화면 | LLM 키, 내부 JWT 키, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
-| `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시 | MCP 비밀키, KEK |
+| `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시. 비밀키가 필요한 원격 HTTP 서버만 맡고 프로세스(stdio 서버)는 실행하지 않는다 | MCP 비밀키, KEK |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
 | `pi-sbx-<key>` | `pi-gateway/sandbox` (uid 1000) | 없음 (`network_mode: none`) | 사용자별 sandbox. sandboxd가 필요할 때 만들고 유휴 시 지운다 | 없음 |
@@ -88,7 +88,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 기동 순서는 다음과 같다.
 1. `sandbox-image` 빌드가 끝나고, `egress-proxy`가 healthy가 된다.
-2. `sandboxd`가 시작된다. 이때 프록시 socket 볼륨을 확인하고, 남아 있던 sandbox를 채택한다.
+2. `sandboxd`가 시작된다. 이때 남아 있던 sandbox를 채택한다.
 3. `mcp-broker`가 시작된다.
 4. `gateway`가 시작된다.
 
@@ -146,7 +146,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/api_key` | 10001 | gateway | 서비스 키 (`body.user`를 믿는다, BFF용). 빈 파일이면 끈다 |
 | `gateway/user_api_keys` | 10001 | gateway | `{"사용자":"키"}`. 키가 사용자를 정한다 |
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |
-| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token. 관리 화면에서 token을 넣지 않으면 이 값을 쓴다 (marketplace와 같은 호스트에만 보낸다). 빈 파일이면 쓰지 않는다 |
+| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token. 관리 화면에서 token을 넣지 않으면 이 값을 쓴다. token은 관리 화면에서 넣은 것이든 이 값이든 marketplace와 같은 호스트에만 보낸다. 빈 파일이면 쓰지 않는다 |
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
@@ -178,7 +178,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 - `pip install`과 `npm install -g`는 agent의 workspace(`/workspace/.home`) 안에 설치된다.
 - 사용자마다 따로이고, 재시작해도 남는다.
 
-**관리자가 미리 넣는 경우**: 모든 사용자가 같이 쓰는 도구는 기본 이미지를 `FROM`으로 쓰는 파생 이미지에 시스템 경로로 설치하고, `.env`의 `SANDBOX_IMAGE`로 지정한 뒤 `docker compose up -d sandboxd`와 `docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)`로 적용한다 (workspace는 남는다). 마지막 `USER`는 `1000:1000`이어야 하고, `/usr/local/bin/sbx-run`·`sbx-fs`·`sbx-proxy-bridge`와 `/usr/local/lib/pi-sbx`는 그대로 둔다. 설치 뒤 setuid/setgid 비트를 지우고(`find / -xdev -perm /6000 -type f -exec chmod a-s {} +`), 비밀값은 넣지 않는다.
+**관리자가 미리 넣는 경우**: 모든 사용자가 같이 쓰는 도구는 기본 이미지를 `FROM`으로 쓰는 파생 이미지에 시스템 경로로 설치하고, `.env`의 `SANDBOX_IMAGE`로 지정한 뒤 `docker compose up -d sandboxd`로 적용한다. 실행 중인 sandbox에 바로 적용하려면 [§3.5](#35-중지재시작업데이트)처럼 지운다 (workspace는 남는다). 마지막 `USER`는 `1000:1000`이어야 하고, `/usr/local/bin/sbx-run`·`sbx-fs`·`sbx-proxy-bridge`와 `/usr/local/lib/pi-sbx`는 그대로 둔다. 설치 뒤 setuid/setgid 비트를 지우고(`find / -xdev -perm /6000 -type f -exec chmod a-s {} +`), 비밀값은 넣지 않는다.
 
 ```dockerfile
 FROM pi-gateway/sandbox:latest
@@ -263,18 +263,19 @@ docker run --rm --runtime=runsc pi-gateway/sandbox:latest uname -r   # 호스트
 SANDBOX_RUNTIME=runsc
 SANDBOX_PIDS_LIMIT=4096
 docker compose up -d sandboxd
-docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
 ```
+
+실행 중인 sandbox는 지워야 runsc로 다시 만들어진다 ([§3.5](#35-중지재시작업데이트)).
 
 - `--host-uds=open`: sandbox의 유일한 바깥 출구는 egress 프록시의 unix socket이다 ([§6](#6-네트워크-차단-규칙)). runsc는 기본으로 호스트 unix socket 연결을 막으므로, 빠지면 모든 바깥 요청이 끊긴다. 열리는 것은 sandbox에 mount된 socket(프록시 socket)뿐이다.
 - `--oci-seccomp`: runsc는 기본으로 Docker의 seccomp 프로필을 sandbox 안에 걸지 않는다. 빠지면 sandbox 안에서 user namespace를 만들 수 있어 보안 점검이 FAIL이다.
 - `SANDBOX_PIDS_LIMIT`: gVisor 커널의 호스트 스레드와 stub 프로세스도 이 제한에 들어간다. 256이면 fd·rg처럼 스레드를 많이 쓰는 도구에서 sandbox가 통째로 죽는다 (`WaitPID ... failed: EOF`). 4096에서 시작해 운영에서 `pids.peak`를 보고 맞춘다 (cgroup v2, systemd 드라이버):
   `cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <sandbox 컨테이너>).scope/pids.peak`
-- 파일 조작이 한 번에 약 60ms 느려지고, sandbox마다 메모리가 약 17MB 더 든다 ([§9](#9-용량-참고값)).
+- 개발 머신에서 재 보면 파일 조작이 한 번에 약 60ms 느려지고, sandbox마다 메모리가 약 17MB 더 든다.
 - 기본 platform(systrap)이 `failed to create a syscall thread`로 죽는 커널(예: WSL2 개발 머신)에서는 개발용으로만 runtimeArgs에 `--platform=ptrace`를 더한다 (느리다).
-- 되돌리기: `.env`의 `SANDBOX_RUNTIME`을 비우고, `docker compose up -d sandboxd`와 위의 `docker rm -f` 명령을 실행한다.
+- 되돌리기: `.env`의 `SANDBOX_RUNTIME`을 비우고 `docker compose up -d sandboxd`를 실행한 뒤 sandbox를 지운다 ([§3.5](#35-중지재시작업데이트)).
 
-적용한 뒤 보안 점검([§8](#8-보안-점검))을 `--strict`로 다시 돌린다.
+적용한 뒤 보안 점검([§8](#8-보안-점검))을 다시 돌린다.
 
 ## 8. 보안 점검
 
@@ -290,7 +291,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)
 docker compose exec -T sandboxd node --input-type=module - \
   --host-ip "$(hostname -I | awk '{print $1}')" --host-ports 22,80,443,2375,2376,8080 \
   < scripts/security-check/run.mjs > security-report.md
-echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
+echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 ```
 
 **2) 비밀 파일 권한 점검: `scripts/security-check/check-secret-files.sh`**
@@ -332,29 +333,10 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID 있음, 2 = 실행 실패
 - 차단 항목마다 **대조군**이 있다. 같은 방법으로 일부러 만든 "보여야 하는 것"이 실제로 보이는지 확인한다.
   - 대조군이 실패하면 그 항목은 `INVALID`이고 실패로 센다. 검사 방법이 틀려서 통과하는 일을 막기 위해서다.
 - sandbox의 `/etc/resolv.conf`에는 Docker가 호스트의 nameserver·search domain을 그대로 넣는다. sandbox에는 네트워크가 없어 그 주소로 갈 수는 없지만 사내 DNS 주소는 보인다. 운영 서버에서 돌린 리포트의 "/etc 내용" 상세에서 무엇이 보이는지 확인한다.
-- `WARN`은 허용 목록이 호스트 주소를 열어 둔 항목이다. `--strict`를 주면 실패로 센다. 운영에서는 `--strict`를 권장한다.
+- `WARN`(허용 목록이 호스트 주소를 열어 둔 항목 등)도 실패로 센다.
 - 기타 옵션: `--internal 이름:포트`(내부 서비스 추가), `--keep`(점검용 workspace 보존).
 
-## 9. 용량 참고값
-
-개발 머신에서 잰 값이다. 운영 서버에서는 다시 확인한다.
-
-| 항목 | 값 |
-|---|---|
-| 유휴 sandbox 컨테이너 | 약 13–15MB (containerd-shim 약 11MB 포함) |
-| 컨테이너 생성 | 약 0.4초 (첫 도구 호출 때 한 번) |
-| docker exec 한 번 | 약 40–50ms (runc exec 비용) |
-| sandboxd 파일 조작 | 약 60ms |
-| pi 세션 | 대화 기록 크기 정도 (120KB 기록 → 약 0.1MB, 1MB 기록 → 약 1.1MB) |
-| gateway 프로세스 기본 | 약 135MB |
-
-gVisor(`SANDBOX_RUNTIME=runsc`)면 sandbox마다 메모리가 약 17MB 더 들고(유휴 cgroup 기준 1.3MB → 18.5MB), 파일 조작은 약 120ms, 컨테이너 생성은 약 0.45초다. 쓰고 난 메모리는 호스트로 돌아온다. 개발 머신에서 ptrace platform으로 잰 값이라 운영(systrap)에서 다시 잰다.
-
-**용량 계산**: 동시에 활동하는 사용자 수 × (sandbox 오버헤드 + agent가 돌리는 프로그램) + gateway 기본 + 세션 수 × 기록 크기.
-
-컨테이너별 상한은 `SANDBOX_MEMORY`, `SANDBOX_CPUS`, `SANDBOX_PIDS_LIMIT`로 건다.
-
-## 10. 운영 메모
+## 9. 운영 메모
 
 **로그**
 - `docker compose logs -f sandboxd gateway mcp-broker egress-proxy`
@@ -385,7 +367,7 @@ gVisor(`SANDBOX_RUNTIME=runsc`)면 sandbox마다 메모리가 약 17MB 더 들�
 
 | 증상 | 원인과 조치 |
 |---|---|
-| sandboxd 로그에 `sandbox image not found` | `docker compose build sandbox-image` |
+| 도구 호출이 `sandbox_unavailable`이고 sandboxd 로그에 `No such image` | sandbox 이미지가 없다. `docker compose build sandbox-image` |
 | `permission denied ... docker.sock` | `.env`의 `DOCKER_GID`가 `stat -c %g /var/run/docker.sock` 값과 다르다 |
 | `WORKSPACES_DIR does not exist`, bind mount 오류 | `$PI_GATEWAY_HOME/workspaces`가 없거나 소유자가 1000이 아니다 (`setup-host.sh`) |
 | 도구 호출이 `sandbox_unavailable` | `docker compose logs sandboxd`로 Docker API 오류를 본다 |
@@ -396,8 +378,3 @@ gVisor(`SANDBOX_RUNTIME=runsc`)면 sandbox마다 메모리가 약 17MB 더 들�
 | sandbox에서 바깥 요청이 `407`로 실패한다 | 허용 목록에 없는 목적지다 (도메인은 정확히 같은 이름, 포트를 적었다면 그 포트만). 이유는 `docker compose logs egress-proxy`의 `decision_reason`. 열어야 하면 `SANDBOX_EGRESS_ALLOW`에 넣는다 ([§6](#6-네트워크-차단-규칙)) |
 | sandbox에서 모든 바깥 요청이 바로 끊긴다 (curl `(56) Recv failure: Connection reset by peer`) | egress-proxy가 멈췄다. `docker compose ps egress-proxy`, `docker compose logs egress-proxy` (설정 값이 잘못되면 시작하지 않는다) |
 | 특정 도구만 바깥에 나가지 못한다 (`Could not resolve host`) | 그 도구가 `HTTP(S)_PROXY` env를 따르지 않는다. sandbox에는 DNS가 없다. 도구의 프록시 설정에 `http://127.0.0.1:3128`을 넣는다 |
-
-## 11. mcp-broker
-
-- **비밀키가 필요한 MCP 서버**: 원격 HTTP(streamable HTTP) 서버만 broker에 등록한다. broker가 `{{secret:NAME}}` 값을 헤더·URL에 붙여 프록시한다. broker는 프로세스(stdio 서버)를 실행하지 않는다.
-- **비밀키 없는 MCP 서버** (예: monsemi-frontend): broker가 아니라 사용자 sandbox 안에서 stdio로 돈다. 관리 화면에서 `runIn: sandbox`로 등록한다.

@@ -1,26 +1,13 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, enc, errorText, formatTime } from "../api";
-import { Badge, Modal, Notice, Section, useAction } from "../components";
+import { api, enc, formatTime } from "../api";
+import { Badge, Modal, Notice, Section, useAction, useLoad } from "../components";
 import type { PromptDeployment, PromptDetail, PromptList, SessionPreview } from "../types";
 
 type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" } | { kind: "full" };
 
 export function PromptsPage() {
-  const [list, setList] = useState<PromptList | null>(null);
+  const { data: list, error: loadError, reload } = useLoad<PromptList>("/prompts");
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const reload = async () => {
-    try {
-      setList(await api<PromptList>("GET", "/prompts"));
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(errorText(error));
-    }
-  };
-  useEffect(() => {
-    void reload();
-  }, []);
 
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
   if (!list) return <p class="muted">불러오는 중…</p>;

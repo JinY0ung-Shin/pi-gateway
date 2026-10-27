@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { badRequest } from "../admin/errors.js";
-import { isObject, type JsonObject, parseJsonLenient, readPluginManifest, safeName, str } from "./manifest.js";
+import { isObject, type JsonObject, parseJson, readPluginManifest, safeName, str } from "./manifest.js";
 import { isInside, readContainedFile } from "./safe-copy.js";
 
 /** 설치에 쓸 수 있는 source. npm·archive·command는 v1에서 지원하지 않는다. */
@@ -21,17 +21,12 @@ export interface MarketplaceEntry {
    * undefined면 이 값을 읽기 전에 받은 marketplace다.
    */
   pluginVersion?: string | null;
-  category?: string;
-  tags: string[];
   source: PluginSource;
-  /** 기본값 true */
-  strict: boolean;
   raw: JsonObject;
 }
 
 export interface MarketplaceManifest {
   name: string;
-  description?: string;
   owner?: string;
   pluginRoot?: string;
   plugins: MarketplaceEntry[];
@@ -43,7 +38,7 @@ export async function readMarketplaceManifest(root: string): Promise<Marketplace
   const path = ".claude-plugin/marketplace.json";
   const text = await readContainedFile(root, path, { optional: true });
   if (text === undefined) throw badRequest(`the repository has no ${path}`);
-  const manifest = parseMarketplaceManifest(parseJsonLenient(text, path));
+  const manifest = parseMarketplaceManifest(parseJson(text, path));
   for (const entry of manifest.plugins) {
     if (entry.source.type !== "relative") continue;
     // 읽지 못하는 plugin은 설치할 때 오류가 나므로 여기서는 버전만 비워 둔다
@@ -70,10 +65,8 @@ export function parseMarketplaceManifest(json: unknown): MarketplaceManifest {
       invalid.push({ index, reason: error instanceof Error ? error.message : String(error) });
     }
   });
-  const description = str(json, "description") ?? str(metadata, "description");
   return {
     name,
-    ...(description ? { description } : {}),
     ...(owner ? { owner } : {}),
     ...(pluginRoot ? { pluginRoot } : {}),
     plugins,
@@ -86,16 +79,11 @@ function parseEntry(raw: unknown): MarketplaceEntry {
   const name = safeName(raw.name, "plugin name");
   const description = str(raw, "description");
   const version = str(raw, "version");
-  const category = str(raw, "category");
-  const tags = Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === "string") : [];
   return {
     name,
     ...(description ? { description } : {}),
     ...(version ? { version } : {}),
-    ...(category ? { category } : {}),
-    tags,
     source: parseSource(raw.source),
-    strict: raw.strict !== false,
     raw,
   };
 }

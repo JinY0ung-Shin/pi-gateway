@@ -4,16 +4,13 @@ import {
   atLeastScope,
   findLiteralCredentials,
   McpServerConfig,
-  PutSecretRequest,
   requiredHeaderNames,
   requiredScope,
   requiredSecretNames,
-  SecretName,
   type McpServerStatus,
   type McpServerView,
   type SecretInfo,
   type TestServerResponse,
-  type ToolSummary,
   transportTarget,
   type VisibleServer,
 } from "@pi-gateway/shared";
@@ -48,8 +45,8 @@ export interface McpServerList {
 const SANDBOX_CREDENTIAL_HINT =
   "sandbox 서버의 env는 agent에게 보이므로 자격증명을 넣을 수 없습니다. 자격증명이 필요한 서버는 HTTP로 띄워 runIn=broker로 등록하고 {{secret:NAME}}을 쓰세요";
 
-function issuesMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`).join("; ");
+function issueList(error: z.ZodError): string[] {
+  return error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`);
 }
 
 /** 스키마 밖의 규칙. upsert와 validate가 같은 규칙을 쓴다. */
@@ -150,7 +147,7 @@ export class McpRegistryService implements McpRegistry {
   async validate(input: unknown): Promise<{ ok: boolean; errors: string[]; requiredSecrets: string[]; clearsSecrets: string[] }> {
     const result = McpServerConfig.safeParse(input);
     if (!result.success) {
-      return { ok: false, errors: result.error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`), requiredSecrets: [], clearsSecrets: [] };
+      return { ok: false, errors: issueList(result.error), requiredSecrets: [], clearsSecrets: [] };
     }
     const config = result.data;
     const errors = policyProblems(config);
@@ -164,7 +161,7 @@ export class McpRegistryService implements McpRegistry {
   /** 만들거나 바꾼다. runIn이 바뀌면 다른 저장소로 옮긴다. */
   async upsert(input: unknown, actor: string): Promise<McpServerEntry> {
     const parsed = McpServerConfig.safeParse(input);
-    if (!parsed.success) throw badRequest(issuesMessage(parsed.error), parsed.error.issues);
+    if (!parsed.success) throw badRequest(issueList(parsed.error).join("; "), parsed.error.issues);
     const config = parsed.data;
     const problems = policyProblems(config);
     if (problems.length > 0) throw badRequest(problems.join("; "), problems);
@@ -188,34 +185,21 @@ export class McpRegistryService implements McpRegistry {
     if (!(await this.#deleteBrokerServer(id, actor))) throw notFound(`MCP server '${id}' not found`);
   }
 
-  async setSecret(id: string, name: unknown, body: unknown, actor: string): Promise<void> {
-    const secretName = SecretName.safeParse(name);
-    if (!secretName.success) throw badRequest("secret name must match [A-Za-z0-9_.-]{1,64}");
-    const parsed = PutSecretRequest.safeParse(body);
-    // 값 자체는 오류 메시지에 넣지 않는다.
-    if (!parsed.success) throw badRequest("body must be { value: string } (1..65536 chars)");
+  /** 비밀키 이름과 값은 broker가 검사한다 (오류 메시지에 값을 넣지 않는다). */
+  async setSecret(id: string, name: string, body: unknown, actor: string): Promise<void> {
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets; switch the server to runIn=broker");
-    await this.#broker.putSecret(id, secretName.data, parsed.data.value, actor);
+    await this.#broker.putSecret(id, name, body, actor);
   }
 
-  async deleteSecret(id: string, name: unknown, actor: string): Promise<void> {
-    const secretName = SecretName.safeParse(name);
-    if (!secretName.success) throw badRequest("secret name must match [A-Za-z0-9_.-]{1,64}");
+  async deleteSecret(id: string, name: string, actor: string): Promise<void> {
     if (this.store.get(id)) throw badRequest("sandbox servers cannot hold secrets");
-    await this.#broker.deleteSecret(id, secretName.data, actor);
+    await this.#broker.deleteSecret(id, name, actor);
   }
 
-  async test(id: string, user: string | undefined, actor: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
+  async test(id: string, actor: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
     const local = this.store.get(id);
     if (local) return this.#staticCheck(local);
-    return this.#broker.test(id, user, actor);
-  }
-
-  async tools(id: string, user: string | undefined): Promise<ToolSummary[]> {
-    if (this.store.get(id)) {
-      throw new PlatformError(400, "not_available", "sandbox servers start on first use in a session; tools cannot be listed here");
-    }
-    return this.#broker.tools(id, user);
+    return this.#broker.test(id, actor);
   }
 
   // ── plugin 연동 ────────────────────────────────────────────────

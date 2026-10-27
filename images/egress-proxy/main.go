@@ -2,7 +2,7 @@
 //
 // Stripe Smokescreen(고정 버전)을 라이브러리로 쓰는 얇은 실행 파일이다.
 //
-//   - unix socket(PROXY_SOCKET, 기본 /run/pi-proxy/proxy.sock)에서만 듣는다. TCP 포트는 열지 않는다.
+//   - unix socket(/run/pi-proxy/proxy.sock)에서만 듣는다. TCP 포트는 열지 않는다.
 //     sandbox 컨테이너는 network_mode none이고, 안의 sbx-proxy-bridge가 127.0.0.1:3128을 이 socket으로 잇는다.
 //
 //   - HTTP CONNECT(HTTPS 등)와 절대 URI의 일반 HTTP 요청을 받는다.
@@ -153,15 +153,11 @@ func (d allowDecider) Decide(args acl.DecideArgs) (acl.Decision, error) {
 	return acl.Decision{Result: acl.Deny, Reason: "not in SANDBOX_EGRESS_ALLOW"}, nil
 }
 
-func socketPath() string {
-	if p := os.Getenv("PROXY_SOCKET"); p != "" {
-		return p
-	}
-	return "/run/pi-proxy/proxy.sock"
-}
+// sandbox가 mount하는 proxy-sock 볼륨 안의 socket
+const socketPath = "/run/pi-proxy/proxy.sock"
 
 func run() error {
-	path := socketPath()
+	path := socketPath
 	allow, err := parseAllow()
 	if err != nil {
 		return err
@@ -213,7 +209,7 @@ func run() error {
 }
 
 func healthcheck() int {
-	c, err := net.DialTimeout("unix", socketPath(), 2*time.Second)
+	c, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "unhealthy:", err)
 		return 1

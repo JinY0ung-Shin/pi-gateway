@@ -94,14 +94,13 @@ describe("MCP server config", () => {
     expect(result.success).toBe(false);
   });
 
-  it("renderTemplate은 값을 채우고 빠진 것을 알려준다", () => {
+  it("renderTemplate은 값을 채우고 빠진 것은 비운다", () => {
     const out = renderTemplate("Bearer {{secret:A}} for {{user}} {{ctx.header:X-T}} {{metadata:m}}", {
       user: "alice",
       secret: (n) => (n === "A" ? "s3cr3t" : undefined),
       headers: { "x-t": "h" },
     });
-    expect(out.value).toBe("Bearer s3cr3t for alice h ");
-    expect(out.missing).toEqual(["{{metadata:m}}"]);
+    expect(out).toBe("Bearer s3cr3t for alice h ");
   });
 
   it("도구 이름은 64자 이하의 안전한 문자만 쓴다", () => {

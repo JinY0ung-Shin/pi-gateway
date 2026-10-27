@@ -223,38 +223,25 @@ export interface TemplateValues {
   secret?: (name: string) => string | undefined;
 }
 
-/** 자리표시자를 값으로 바꾼다. 값이 없는 자리표시자는 빈 문자열로 바꾸고 `missing`에 담는다. */
-export function renderTemplate(value: string, values: TemplateValues): { value: string; missing: string[] } {
-  const missing: string[] = [];
-  const rendered = value.replace(ANY_TEMPLATE, (whole, body: string) => {
+/** 자리표시자를 값으로 바꾼다. 값이 없는 자리표시자는 빈 문자열로 바꾼다. */
+export function renderTemplate(value: string, values: TemplateValues): string {
+  return value.replace(ANY_TEMPLATE, (_whole, body: string) => {
     const ref = parseRef(body);
-    let out: string | undefined;
     switch (ref?.kind) {
       case "user":
-        out = values.user;
-        break;
+        return values.user;
       case "session":
-        out = values.session;
-        break;
+        return values.session ?? "";
       case "secret":
-        out = values.secret?.(ref.name);
-        break;
+        return values.secret?.(ref.name) ?? "";
       case "header":
-        out = values.headers?.[ref.name];
-        break;
+        return values.headers?.[ref.name] ?? "";
       case "metadata":
-        out = values.metadata?.[ref.key];
-        break;
+        return values.metadata?.[ref.key] ?? "";
       default:
-        out = undefined;
+        return "";
     }
-    if (out === undefined) {
-      missing.push(whole);
-      return "";
-    }
-    return out;
   });
-  return { value: rendered, missing };
 }
 
 // ── 리터럴 자격증명 검사 ────────────────────────────────────────────

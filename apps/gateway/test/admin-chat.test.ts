@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { registerAdminRoutes } from "../src/admin/index.js";
 import { type Harness, last, parseSse, startHarness } from "./helpers.js";
 
 const ADMIN_KEY = "admin-key-for-tests-0123456789";
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY }, overrides: { registerAdminRoutes } });
+  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY } });
 });
 afterAll(async () => {
   await h.close();

@@ -83,7 +83,7 @@ COPY --from=build-gateway /app/packages/shared/dist packages/shared/dist
 COPY --from=build-gateway /app/apps/gateway/package.json apps/gateway/
 COPY --from=build-gateway /app/apps/gateway/dist apps/gateway/dist
 COPY --from=build-gateway /app/apps/gateway/public apps/gateway/public
-ENV DATA_DIR=/data PLUGINS_DIR=/opt/plugins HOME=/tmp
+ENV HOME=/tmp
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
@@ -116,7 +116,7 @@ COPY --from=deps-broker /app/node_modules node_modules
 COPY --from=build-broker /app/packages/shared/dist packages/shared/dist
 COPY --from=build-broker /app/apps/mcp-broker/package.json apps/mcp-broker/
 COPY --from=build-broker /app/apps/mcp-broker/dist apps/mcp-broker/dist
-ENV DATA_DIR=/data HOME=/tmp
+ENV HOME=/tmp
 EXPOSE 7080 7081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.BROKER_PORT||7080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"

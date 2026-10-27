@@ -12,7 +12,7 @@ import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError }
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore } from "../sessions/store.js";
-import { emptyUsage, functionCallItem, ResponseEventMapper } from "./mapper.js";
+import { emptyUsage, functionCallItem, ResponseEventMapper, type ResponseUsage } from "./mapper.js";
 import { type ParsedInput, parseInput, parseRequest, parseResponseId, type ResponseCreateRequest, responseId, thinkingLevelFor } from "./request.js";
 import { SseWriter } from "./sse.js";
 import { executeTurn, rewindTurn, type TurnOutcome } from "./turn.js";
@@ -57,17 +57,21 @@ async function requestContext(headers: IncomingHttpHeaders, metadata: Record<str
   return ctx;
 }
 
+interface NewSession {
+  model: string;
+  thinkingLevel: string | undefined;
+}
+
 interface TurnPlan {
   sessionId: string;
-  isNew: boolean;
   /** 사용자 id */
   principal: string;
   prev: string | null;
   prevTurn: number;
   body: ResponseCreateRequest;
   input: ParsedInput;
-  model: string;
-  thinkingLevel: string | undefined;
+  /** 새 세션일 때만. 이어지는 세션은 세션의 모델을 쓴다. */
+  newSession: NewSession | null;
 }
 
 export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDeps): void {
@@ -142,21 +146,22 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     sessionId = randomUUID();
   }
 
-  // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
+  let newSession: NewSession | null = null;
   if (prev) {
+    // lock 밖에서 먼저 확인한다 (다른 사용자의 세션이면 기다리지 않고 바로 404).
     const record = deps.store.get(sessionId);
     if (!record || record.principal !== principal) throw notFoundSession(prev);
     if (prevTurn > record.turn) throw notFound(`previous_response_id '${prev}' references a future turn`);
+  } else {
+    const defaultModel = deps.models.defaultModel();
+    if (!defaultModel) throw apiError(503, "LLM is not configured. Set it on the LLM page of the admin UI.", { type: "server_error", code: "llm_not_configured" });
+    const model = body.model ?? defaultModel;
+    const modelConfig = deps.models.config(model);
+    if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
+    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning) };
   }
 
-  const defaultModel = deps.models.defaultModel();
-  if (!defaultModel) throw apiError(503, "LLM is not configured. Set it on the LLM page of the admin UI.", { type: "server_error", code: "llm_not_configured" });
-  const model = body.model ?? defaultModel;
-  const modelConfig = deps.models.config(model);
-  if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
-  const thinkingLevel = thinkingLevelFor(body.reasoning?.effort, modelConfig.reasoning);
-
-  const plan: TurnPlan = { sessionId, isNew: !prev, principal, prev, prevTurn, body, input, model, thinkingLevel };
+  const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession };
 
   // 클라이언트가 연결을 끊으면 실행을 멈춘다.
   const abort = new AbortController();
@@ -174,9 +179,8 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     throw err;
   }
   try {
-    // 기다리는 동안 종료가 시작됐을 수 있다.
-    if (deps.hub.isShuttingDown) throw shuttingDownError();
     return await deps.hub.locks.run(sessionId, () => {
+      // 기다리는 동안 종료가 시작됐을 수 있다.
       if (deps.hub.isShuttingDown) throw shuttingDownError();
       return runLocked(deps, req, reply, plan, abort);
     });
@@ -204,7 +208,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined }, null));
 }
 
-function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal" | "model" | "thinkingLevel">, instructions: string | null): SessionRecord {
+function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
   const now = new Date();
   const promptText = deps.prompts.snapshotForSession({ user: plan.principal, model: plan.model, now });
   const append: string[] = [];
@@ -225,7 +229,6 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     skillNames: deps.plugins.skills().map((s) => s.name),
     pendingToolCall: null,
     createdAt: iso,
-    updatedAt: iso,
     lastActiveAt: iso,
   };
 }
@@ -244,9 +247,13 @@ async function runLocked(
   abort: AbortController,
 ): Promise<unknown> {
   let record: SessionRecord;
-  if (plan.isNew) {
-    requireImageInput(deps, plan.model, plan.input);
-    record = newRecord(deps, plan, plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null));
+  if (plan.newSession) {
+    requireImageInput(deps, plan.newSession.model, plan.input);
+    record = newRecord(
+      deps,
+      { sessionId: plan.sessionId, principal: plan.principal, ...plan.newSession },
+      plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null),
+    );
     deps.store.insert(record);
   } else {
     const found = deps.store.get(plan.sessionId);
@@ -262,8 +269,6 @@ async function runLocked(
         `Stale previous_response_id: only the latest response (${responseId(record.id, record.turn)}) can be continued`,
       );
     }
-    if (plan.prevTurn > record.turn) throw notFound(`previous_response_id '${plan.prev}' references a future turn`);
-    // plan.thinkingLevel은 body.model(없으면 기본 모델) 기준이라, 세션 모델로 다시 계산해 비교한다.
     const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel.reasoning);
     if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
       throw badRequest("reasoning.effort is fixed when the session is created");
@@ -289,7 +294,7 @@ async function runLocked(
   try {
     live = await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, plan.body.metadata, deps));
   } catch (err) {
-    if (plan.isNew) await deps.hub.discardLocked(record.id);
+    if (plan.newSession) await deps.hub.discardLocked(record.id);
     if (err instanceof SessionTranscriptMissingError) {
       await deps.hub.discardLocked(record.id);
       throw notFoundSession(plan.prev!);
@@ -311,6 +316,15 @@ async function runLocked(
   const metadata = plan.body.metadata ?? {};
   const createdAt = Math.floor(Date.now() / 1000);
   const base = { id: respId, object: "response", created_at: createdAt, model: record.model };
+  const body = (status: string, output: unknown[], usage: ResponseUsage, extra: Record<string, unknown> = {}) => ({
+    ...base,
+    status,
+    output,
+    usage,
+    metadata,
+    ...extra,
+  });
+  const failed = (error: { code: string; message: string } | undefined) => body("failed", [], emptyUsage(), { error });
   const log = deps.log.child({ session: record.id, turn });
   const leafBefore = live.agent.session.sessionManager.getLeafId();
 
@@ -343,7 +357,7 @@ async function runLocked(
       return;
     }
     // 실패·중단된 턴은 commit하지 않고, 대화 기록에서도 지운다 (같은 previous_response_id로 다시 시도할 수 있다).
-    if (plan.isNew) {
+    if (plan.newSession) {
       await deps.hub.discardLocked(record.id);
       return;
     }
@@ -367,16 +381,14 @@ async function runLocked(
     } catch (err) {
       // hijack 이후라 Fastify 오류 처리기를 쓸 수 없다. 스트림 안에서 실패로 끝낸다.
       log.error({ err }, "stream turn crashed");
-      sse.send("response.failed", {
-        response: { ...base, status: "failed", output: [], usage: emptyUsage(), metadata, error: { code: "server_error", message: "Internal server error" } },
-      });
+      sse.send("response.failed", { response: failed({ code: "server_error", message: "Internal server error" }) });
     } finally {
       sse.end();
     }
     return reply;
 
     async function streamTurn(): Promise<void> {
-      const inProgress = { ...base, status: "in_progress", output: [], usage: emptyUsage(), metadata };
+      const inProgress = body("in_progress", [], emptyUsage());
       sse.send("response.created", { response: inProgress });
       sse.send("response.in_progress", { response: inProgress });
       sse.startKeepalive(deps.config.sse.keepaliveSeconds * 1000, () => mapper.heartbeat());
@@ -388,47 +400,31 @@ async function runLocked(
         case "incomplete":
           mapper.finalize(outcome.status);
           sse.send(outcome.status === "completed" ? "response.completed" : "response.incomplete", {
-            response: {
-              ...base,
-              status: outcome.status,
-              output: mapper.items,
-              usage: mapper.usage(),
-              metadata,
-              ...(outcome.incompleteReason ? { incomplete_details: { reason: outcome.incompleteReason } } : {}),
-            },
+            response: body(
+              outcome.status,
+              mapper.items,
+              mapper.usage(),
+              outcome.incompleteReason ? { incomplete_details: { reason: outcome.incompleteReason } } : {},
+            ),
           });
           break;
         case "requires_action": {
           mapper.closeOpenItems();
           const item = functionCallItem(outcome.pending!);
           sse.send("response.output_item.added", { response_id: respId, item });
-          sse.send("response.completed", {
-            response: { ...base, status: "requires_action", output: [item], usage: mapper.usage(), metadata },
-          });
+          sse.send("response.completed", { response: body("requires_action", [item], mapper.usage()) });
           break;
         }
         case "failed":
+        case "aborted":
+          // aborted는 보통 클라이언트가 연결을 끊은 경우라 보낼 곳이 없다 (닫힌 스트림에는 send가 아무것도 쓰지 않는다).
+          // gateway 종료로 중단됐고 연결이 살아 있으면 실패로 알린다.
           mapper.closeOpenItems("incomplete");
           sse.send("response.failed", {
-            response: { ...base, status: "failed", output: [], usage: emptyUsage(), metadata, error: outcome.error },
+            response: failed(
+              outcome.error ?? { code: "server_error", message: deps.hub.isShuttingDown ? "Gateway is shutting down" : "Turn was interrupted" },
+            ),
           });
-          break;
-        case "aborted":
-          // 보통은 클라이언트가 연결을 끊은 경우라 보낼 곳이 없다.
-          // gateway 종료로 중단됐고 연결이 살아 있으면 실패로 알린다.
-          if (!sse.isClosed) {
-            mapper.closeOpenItems("incomplete");
-            sse.send("response.failed", {
-              response: {
-                ...base,
-                status: "failed",
-                output: [],
-                usage: emptyUsage(),
-                metadata,
-                error: { code: "server_error", message: deps.hub.isShuttingDown ? "Gateway is shutting down" : "Turn was interrupted" },
-              },
-            });
-          }
           break;
       }
     }
@@ -445,18 +441,8 @@ async function runLocked(
   clearTimeout(timer);
   await finish(outcome);
   if (timedOut) throw apiError(504, `Non-streaming turn timed out after ${deps.config.sessions.nonStreamTimeoutSeconds}s`);
-  const full = (status: string, output: unknown[], extra: Record<string, unknown> = {}) => ({
-    ...base,
-    status,
-    output,
-    usage: mapper.usage(),
-    metadata,
-    error: null,
-    incomplete_details: null,
-    structured_output: null,
-    background: null,
-    ...extra,
-  });
+  const full = (status: string, output: unknown[], extra: Record<string, unknown> = {}) =>
+    body(status, output, mapper.usage(), { error: null, incomplete_details: null, structured_output: null, background: null, ...extra });
   switch (outcome.status) {
     case "completed":
       mapper.finalize("completed");

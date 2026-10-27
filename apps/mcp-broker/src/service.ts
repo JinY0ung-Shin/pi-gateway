@@ -89,7 +89,6 @@ export class BrokerService {
       if (!server.config.enabled || this.#store.missingSecrets(server).length > 0) continue;
       const view: VisibleServer = { id: server.config.id, timeoutSec: this.#effectiveTimeoutSec(server) };
       if (server.config.displayName) view.displayName = server.config.displayName;
-      if (server.config.description) view.description = server.config.description;
       out.push(view);
     }
     return out;
@@ -120,10 +119,7 @@ export class BrokerService {
       throw new ConfigError(`secrets could not be decrypted: ${failed.join(", ")}`);
     }
     const rendered = renderTransport(server.config, identity, values);
-    if (rendered.missingSecrets.length > 0) {
-      throw new ServerUnavailableError(`missing secrets: ${rendered.missingSecrets.join(", ")}`);
-    }
-    const redactor = new Redactor([...values.values(), ...rendered.credentials]);
+    const redactor = new Redactor([...values.values(), ...rendered.headerCredentials]);
     const renderedHash = createHash("sha256").update(JSON.stringify(rendered.transport)).digest("hex");
     return {
       server,
@@ -135,7 +131,7 @@ export class BrokerService {
 
   async #acquire(prepared: Prepared): Promise<Lease> {
     const { server, rendered, key } = prepared;
-    return this.#pool.acquire({ serverId: server.config.id, revision: server.revision, ...key }, rendered.transport);
+    return this.#pool.acquire({ serverId: server.config.id, ...key }, rendered.transport);
   }
 
   // ── 도구 ──────────────────────────────────────────────────────────
@@ -165,8 +161,7 @@ export class BrokerService {
       const tools = await this.#fetchTools(lease, server, signal);
       return tools.filter((t) => isToolAllowed(server.config, t.name)).map((t) => prepared!.redactor.redactDeep(t));
     } catch (error) {
-      const { message } = this.#fail(serverId, "tools/list", error, prepared?.redactor);
-      throw new ProtocolError(ProtocolErrorCode.InternalError, message);
+      throw new ProtocolError(ProtocolErrorCode.InternalError, this.#fail(serverId, "tools/list", error, prepared?.redactor));
     } finally {
       lease?.release();
     }
@@ -208,8 +203,7 @@ export class BrokerService {
       return capResult(redactor.redactDeep(result), this.#config.limits.maxResultBytes);
     } catch (error) {
       const kind = classify(error, { deadline, caller: options.signal });
-      const { message } = this.#fail(serverId, `tools/call ${params.name}`, error, prepared?.redactor, kind, timeoutSec);
-      return errorResult(message);
+      return errorResult(this.#fail(serverId, `tools/call ${params.name}`, error, prepared?.redactor, kind, timeoutSec));
     } finally {
       lease?.release();
     }
@@ -223,7 +217,7 @@ export class BrokerService {
     redactor: Redactor | undefined,
     kind: FailureKind = classify(error, {}),
     timeoutSec?: number,
-  ): { message: string; ref: string } {
+  ): string {
     const ref = correlationId();
     const safe = redactor ?? new Redactor([]);
     this.#log.warn({ serverId, operation, ref, kind, err: describeError(error, safe) }, "upstream MCP failure");
@@ -251,31 +245,15 @@ export class BrokerService {
         message = `Upstream MCP server error (ref ${ref})`;
     }
     this.#lastErrors.set(serverId, { message, at: new Date().toISOString() });
-    return { message, ref };
+    return message;
   }
 
   // ── 관리 ──────────────────────────────────────────────────────────
 
-  /** 관리 화면의 도구 목록. 풀을 쓴다. 오류 상세(가린 것)를 그대로 돌려준다. */
-  async adminTools(server: StoredServer, user: string | undefined): Promise<ToolSummary[]> {
-    const identity: Identity = { sub: user ?? "_admin", sid: "admin" };
-    const prepared = this.#prepare(server, identity);
-    let lease: Lease | undefined;
-    try {
-      lease = await this.#acquire(prepared);
-      const tools = await this.#fetchTools(lease, server);
-      return tools.filter((t) => isToolAllowed(server.config, t.name)).map((t) => summarize(prepared.redactor.redactDeep(t)));
-    } catch (error) {
-      throw new AdminUpstreamError(describeError(error, prepared.redactor, 1000));
-    } finally {
-      lease?.release();
-    }
-  }
-
   /** 풀을 거치지 않는 새 연결로 연결·도구 목록을 확인한다. */
-  async testServer(server: StoredServer, user: string | undefined): Promise<TestServerResponse> {
+  async testServer(server: StoredServer): Promise<TestServerResponse> {
     const started = Date.now();
-    const identity: Identity = { sub: user ?? "_admin", sid: `admin-test-${randomUUID()}` };
+    const identity: Identity = { sub: "_admin", sid: `admin-test-${randomUUID()}` };
     let redactor = new Redactor([]);
     try {
       const missing = this.#store.missingSecrets(server);
@@ -303,10 +281,6 @@ export class BrokerService {
       return { ok: false, error: describeError(error, redactor, 1000), durationMs: Date.now() - started };
     }
   }
-}
-
-export class AdminUpstreamError extends Error {
-  override name = "AdminUpstreamError";
 }
 
 function summarize(tool: Tool): ToolSummary {

@@ -2,8 +2,6 @@ import { rmSync } from "node:fs";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import { type AgentFactoryDeps, type BuiltAgent, buildAgentSession, subagentDirFor } from "../agent/session-factory.js";
-import type { GatewayConfig } from "../config.js";
-import type { ToolRegistry } from "../tools/registry.js";
 import { KeyedMutex } from "./limiter.js";
 import type { SessionRecord, SessionStore } from "./store.js";
 
@@ -13,7 +11,6 @@ import type { SessionRecord, SessionStore } from "./store.js";
  */
 
 export interface LiveSession {
-  id: string;
   record: SessionRecord;
   agent: BuiltAgent;
   /** 현재 턴 요청의 전달 헤더·metadata. MCP 호출이 이 값을 쓴다. */
@@ -34,8 +31,6 @@ export interface SessionPreview {
 export interface SessionHubDeps {
   store: SessionStore;
   factory: AgentFactoryDeps;
-  config: GatewayConfig;
-  tools: ToolRegistry;
   log: Logger;
 }
 
@@ -81,7 +76,7 @@ export class SessionHub {
     const holder: { live?: LiveSession; ctx: RequestContext } = { ctx: requestContext };
     const revision = this.settingsRevision();
     const agent = await buildAgentSession(this.deps.factory, record, () => holder.live?.requestContext ?? holder.ctx, signal);
-    const live: LiveSession = { id: record.id, record, agent, requestContext, lastActive: Date.now(), activeTurn: null, revision };
+    const live: LiveSession = { record, agent, requestContext, lastActive: Date.now(), activeTurn: null, revision };
     holder.live = live;
     this.live.set(record.id, live);
     return live;
@@ -99,7 +94,7 @@ export class SessionHub {
         tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
       };
     } finally {
-      await this.teardown({ id: record.id, record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, revision: "" });
+      await this.teardown({ record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, revision: "" });
     }
   }
 
@@ -113,7 +108,8 @@ export class SessionHub {
 
   /** abort → session_shutdown → dispose → 도구 연결 정리 (pi dispose는 앞의 두 단계를 하지 않는다) */
   private async teardown(live: LiveSession): Promise<void> {
-    this.live.delete(live.id);
+    const { id } = live.record;
+    this.live.delete(id);
     const { session } = live.agent;
     live.activeTurn?.abort();
     await withTimeout(session.abort(), ABORT_TIMEOUT_MS);
@@ -123,14 +119,14 @@ export class SessionHub {
         await withTimeout(runner.emit({ type: "session_shutdown", reason: "quit" }), ABORT_TIMEOUT_MS);
       }
     } catch (err) {
-      this.deps.log.warn({ err, session: live.id }, "session_shutdown handlers failed");
+      this.deps.log.warn({ err, session: id }, "session_shutdown handlers failed");
     }
     try {
       session.dispose();
     } catch (err) {
-      this.deps.log.warn({ err, session: live.id }, "session dispose failed");
+      this.deps.log.warn({ err, session: id }, "session dispose failed");
     }
-    await this.deps.tools.disposeSession(live.id);
+    await this.deps.factory.tools.disposeSession(id);
   }
 
   /** 메모리의 세션만 정리한다 (호출하는 쪽이 lock을 잡고 있어야 한다). 다음 요청 때 JSONL에서 되살린다. */
@@ -141,10 +137,7 @@ export class SessionHub {
 
   /** 세션 lock 안에서 메모리의 세션을 정리한다. */
   async evict(id: string): Promise<void> {
-    await this.locks.run(id, async () => {
-      const live = this.live.get(id);
-      if (live) await this.teardown(live);
-    });
+    await this.locks.run(id, () => this.discardLive(id));
   }
 
   /** 세션을 완전히 지운다 (호출하는 쪽이 lock을 잡고 있어야 한다): 메모리, JSONL(하위 agent 포함), 메타. workspace는 사용자의 다른 세션과 공유하므로 남긴다. */
@@ -154,18 +147,18 @@ export class SessionHub {
     if (live) await this.teardown(live);
     const file = live?.agent.session.sessionManager.getSessionFile() ?? record?.sessionFile;
     if (file) rmSync(file, { force: true });
-    if (record) rmSync(subagentDirFor(this.deps.config, record), { recursive: true, force: true });
+    if (record) rmSync(subagentDirFor(this.deps.factory.config, record), { recursive: true, force: true });
     this.deps.store.delete(id);
   }
 
   async reap(): Promise<void> {
     const now = Date.now();
-    const idleMs = this.deps.config.sessions.idleSeconds * 1000;
-    for (const live of [...this.live.values()]) {
+    const idleMs = this.deps.factory.config.sessions.idleSeconds * 1000;
+    for (const [id, live] of [...this.live]) {
       if (live.activeTurn || now - live.lastActive < idleMs) continue;
-      if (this.locks.isLocked(live.id)) continue;
-      await this.evict(live.id);
-      this.deps.log.debug({ session: live.id }, "idle session evicted");
+      if (this.locks.isLocked(id)) continue;
+      await this.evict(id);
+      this.deps.log.debug({ session: id }, "idle session evicted");
     }
   }
 

@@ -1,14 +1,14 @@
 import Fastify, { type FastifyBaseLogger, type FastifyError, type FastifyInstance } from "fastify";
 import type { Logger } from "pino";
 import { type ResponsesDeps, registerResponsesRoutes } from "./api/responses.js";
-import type { AdminDeps, RegisterAdminRoutes } from "./contracts.js";
+import { registerAdminRoutes } from "./admin/index.js";
+import type { AdminDeps } from "./contracts.js";
 import { ApiError, apiError, validationError } from "./errors.js";
 
 export interface ServerDeps {
   logger: Logger;
   responses: ResponsesDeps;
   admin: AdminDeps;
-  registerAdminRoutes: RegisterAdminRoutes;
   /** Fastify trustProxy (TRUST_PROXY). 프록시 뒤에서 req.ip·req.protocol이 클라이언트 기준이 된다. */
   trustProxy: false | string[];
 }
@@ -50,6 +50,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/healthz", async () => ({ status: "ok" }));
 
   registerResponsesRoutes(app, deps.responses);
-  await deps.registerAdminRoutes(app, deps.admin);
+  await registerAdminRoutes(app, deps.admin);
   return app;
 }

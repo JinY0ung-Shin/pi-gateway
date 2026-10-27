@@ -11,7 +11,6 @@ import { McpServerConfig } from "@pi-gateway/shared";
 import Docker from "dockerode";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureProxyVolume } from "../../sandboxd/src/docker-setup.js";
 import { SandboxManager } from "../../sandboxd/src/manager.js";
 import { DockerSandboxRuntime } from "../../sandboxd/src/runtime.js";
 import { buildServer } from "../../sandboxd/src/server.js";
@@ -80,7 +79,6 @@ describe.skipIf(!enabled)("gateway + sandboxd + Docker", () => {
       containerPrefix: `pi-sbx-e2e-${run}-`,
       idleSeconds: 120,
     });
-    await ensureProxyVolume(docker, config, silentLogger);
     const manager = new SandboxManager(docker, config, new Workspaces(wsRoot), silentLogger);
     const runtime = new DockerSandboxRuntime(manager, config, silentLogger);
     sandboxd = await buildServer({ jwtSecret: config.jwtSecret, runtime, logger: silentLogger });

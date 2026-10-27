@@ -20,7 +20,6 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { SandboxdConfig } from "../src/config.js";
-import { ensureProxyVolume } from "../src/docker-setup.js";
 import { SandboxManager } from "../src/manager.js";
 import { DockerSandboxRuntime } from "../src/runtime.js";
 import { buildServer } from "../src/server.js";
@@ -135,7 +134,6 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
       containerPrefix: `pi-sbx-it-${run}-`,
       idleSeconds: 60,
     });
-    await ensureProxyVolume(docker, config, silentLogger);
     await startEgressProxy();
     manager = new SandboxManager(docker, config, new Workspaces(wsRoot), silentLogger);
     const runtime = new DockerSandboxRuntime(manager, config, silentLogger);
@@ -453,7 +451,8 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
     await docker.getContainer(containerName(config, userKey("erin"))).stop({ t: 0 });
     const fresh = new SandboxManager(docker, config, new Workspaces(wsRoot), silentLogger);
     await fresh.reconcile();
-    expect(fresh.activity(userKey("dave"))).toBeDefined();
+    // 채택한 컨테이너만 마지막 사용 시각을 안다
+    expect((await fresh.list()).find((s) => s.key === userKey("dave"))?.lastActiveAt).toBeDefined();
     await expect(docker.getContainer(containerName(config, userKey("erin"))).inspect()).rejects.toMatchObject({
       statusCode: 404,
     });

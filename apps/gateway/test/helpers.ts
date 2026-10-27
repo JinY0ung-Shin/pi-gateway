@@ -101,7 +101,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     skills: () => options.skills ?? [],
     promptTemplates: () => options.promptTemplates ?? [],
     agents: () => options.agents ?? [],
-    revision: () => 0,
   };
   const mcpRegistry: McpRegistry = {
     sandboxServers: () => options.sandboxServers ?? [],
@@ -114,7 +113,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     prompts,
     plugins,
     mcpRegistry,
-    registerAdminRoutes: async () => {},
     piSettings: { retry: { enabled: false } },
     reaperIntervalMs: 0,
     ...(options.overrides ?? {}),

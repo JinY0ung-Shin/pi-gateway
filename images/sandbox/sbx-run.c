@@ -1,7 +1,7 @@
 // sbx-run — pi-gateway sandbox exec 래퍼 (sandboxd가 docker exec로 호출한다)
 //
 //   sbx-run exec <id> <timeout_sec> <cwd> -- <argv...>
-//   sbx-run kill <id> <TERM|KILL|INT|HUP>
+//   sbx-run kill <id> <TERM|KILL>
 //
 // exec: cwd로 이동한 뒤 argv를 새 세션(= 새 process group)에서 실행한다.
 //   cwd가 없으면 "sbx-run: cannot change directory to …" 를 stderr에 쓰고 1로 끝난다
@@ -96,9 +96,8 @@ static int cmd_exec(const char *id, long timeout_sec, const char *cwd, char **ar
     perror("sbx-run: pipe");
     return 125;
   }
-  if (mkdir(STATE_DIR, 0700) < 0 && errno != EEXIST) {
-    // 상태 디렉토리가 없어도 실행은 한다 (kill만 못 할 뿐)
-  }
+  // 상태 디렉토리를 만들지 못해도 실행은 한다 (kill만 못 할 뿐)
+  (void)mkdir(STATE_DIR, 0700);
 
   pid_t pid = fork();
   if (pid < 0) {
@@ -210,7 +209,7 @@ static int cmd_exec(const char *id, long timeout_sec, const char *cwd, char **ar
 
 static int usage(void) {
   dprintf(STDERR_FILENO,
-          "usage: sbx-run exec <id> <timeout_sec> <cwd> -- <argv...>\n       sbx-run kill <id> <TERM|KILL|INT|HUP>\n");
+          "usage: sbx-run exec <id> <timeout_sec> <cwd> -- <argv...>\n       sbx-run kill <id> <TERM|KILL>\n");
   return 2;
 }
 

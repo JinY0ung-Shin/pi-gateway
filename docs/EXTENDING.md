@@ -141,7 +141,7 @@ agent가 `bash`로 쓰는 프로그램은 sandbox 이미지에 미리 설치해�
 
 파생 이미지(`FROM pi-gateway/sandbox`)를 만들고 `SANDBOX_IMAGE`를 그 이미지로 바꿔요.
 
-- 이미 떠 있는 사용자 컨테이너는 예전 이미지를 써요. 유휴 시간이 지나 다시 만들어질 때 새 이미지가 적용돼요. 바로 적용하려면 해당 사용자 컨테이너(`pi-sbx-…`)를 지워요. 다음 도구 호출 때 새 이미지로 다시 만들어져요 (workspace는 남아요).
+- 이미 떠 있는 사용자 컨테이너는 다시 만들어질 때 새 이미지를 써요 ([OPERATIONS.md §3.5](OPERATIONS.md#35-중지재시작업데이트)).
 - 운영 절차(빌드·배포·확인)는 [OPERATIONS.md §5 "sandbox에 도구 추가하기"](OPERATIONS.md#5-sandbox에-도구-추가하기)에 있어요.
 
 ---
@@ -163,22 +163,7 @@ apps/gateway/src/tools/
     mcp-sandbox.ts     sandbox MCP 서버
 ```
 
-```ts
-interface ToolProvider {
-  id: string;                    // 로그에 쓰는 이름
-  createTools(ctx: ToolSessionContext): Promise<ToolDefinition[]>; // 세션마다 호출
-  disposeSession?(sessionId: string): Promise<void>;           // 세션 정리 때 연결 닫기
-}
-
-interface ToolSessionContext {
-  principal: string;          // 사용자 id
-  sessionId: string;
-  sandbox: SandboxHandle;     // 이 세션 전용 sandbox 핸들 (exec, readFile, writeFile, stat, list, glob, attach)
-  requestContext: () => RequestContext; // 전달 헤더·metadata (턴마다 바뀔 수 있다)
-  log: Logger;
-  signal: AbortSignal;        // 세션 생성이 취소되면 abort
-}
-```
+인터페이스(`ToolProvider`, `ToolSessionContext`)와 각 필드의 뜻은 `provider.ts`의 주석에 있어요. provider는 세션마다 `createTools(ctx)`로 도구를 만들고, 파일·명령은 `ctx.sandbox`로만 다뤄요.
 
 ### 순서
 

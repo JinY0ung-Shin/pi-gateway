@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_SYSTEM_PROMPT } from "../../src/prompts/default-prompt.js";
-import { analyzePrompt, buildPromptVars, renderPrompt } from "../../src/prompts/render.js";
+import { buildPromptVars, renderPrompt, unknownVariables } from "../../src/prompts/render.js";
 import { adminHeaders, buildHarness, cleanupTempDirs, type Harness, loginCookie } from "./helpers.js";
 
 const input = (user = "alice") => ({ user, model: "test-model", now: new Date("2026-10-16T03:04:05Z") });
@@ -12,11 +12,18 @@ afterEach(async () => {
 
 describe("prompt rendering", () => {
   it("알려진 변수만 치환하고 나머지는 그대로 둔다", () => {
-    const vars = buildPromptVars(input(), "Korean", "Asia/Seoul");
-    const text = renderPrompt("{{USER}}|{{DATE}}|{{DATETIME}}|{{WORKSPACE}}|{{MODEL}}|{{LANGUAGE}}|{{FOO}}|{{ USER }}|{{user}}", vars);
-    // 변수 이름은 대문자만 인식한다 (공백은 허용)
-    expect(text).toBe("alice|2026-10-16|2026-10-16 12:04 (Asia/Seoul)|/workspace|test-model|Korean|{{FOO}}|alice|{{user}}");
-    expect(analyzePrompt("{{USER}} {{FOO}} {{MODEL}}")).toEqual({ used: ["USER", "MODEL"], unknown: ["{{FOO}}"] });
+    const tz = process.env.TZ;
+    process.env.TZ = "Asia/Seoul";
+    try {
+      const vars = buildPromptVars(input(), "Korean");
+      const text = renderPrompt("{{USER}}|{{DATE}}|{{DATETIME}}|{{WORKSPACE}}|{{MODEL}}|{{LANGUAGE}}|{{FOO}}|{{ USER }}|{{user}}", vars);
+      // 변수 이름은 대문자만 인식한다 (공백은 허용)
+      expect(text).toBe("alice|2026-10-16|2026-10-16 12:04 (Asia/Seoul)|/workspace|test-model|Korean|{{FOO}}|alice|{{user}}");
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+    expect(unknownVariables("{{USER}} {{FOO}} {{MODEL}} {{FOO}}")).toEqual(["{{FOO}}"]);
   });
 
   it("기본 프롬프트는 sandbox 지침과 AskUserQuestion 지침을 담고 pi 문서 경로는 없다", () => {
@@ -43,7 +50,6 @@ describe("PromptManager", () => {
     h = await buildHarness();
     const created = h.prompts.create({ name: "ops", content: "Hello {{USER}}", description: "운영" }, "jin");
     expect(created.versions).toHaveLength(1);
-    expect(created.versions[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
     const v2 = h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}", message: "인사 변경" }, "jin");
     expect(v2.version).toBe(2);
     expect(() => h.prompts.addVersion("ops", { content: "Hi {{USER}} on {{MODEL}}" }, "jin")).toThrow(
@@ -62,16 +68,14 @@ describe("PromptManager", () => {
     expect(start.isDefault).toBe(true);
 
     const d2 = h.prompts.deploy("ops", { version: 2 }, "jin");
-    expect(d2.deployment?.action).toBe("deploy");
     expect(d2.live.version).toBe(2);
     expect(h.prompts.snapshotForSession(input("bob"))).toBe("v2 for bob");
 
-    const d1 = h.prompts.deploy("ops", { version: 1, note: "되돌림" });
-    expect(d1.deployment?.action).toBe("rollback");
+    h.prompts.deploy("ops", { version: 1, note: "되돌림" });
     expect(h.prompts.snapshotForSession(input("bob"))).toBe("v1 for bob {{UNKNOWN}}");
 
     // 이미 배포된 버전을 다시 배포하면 아무것도 바꾸지 않는다
-    expect(h.prompts.deploy("ops", { version: 1 }).deployment).toBeNull();
+    h.prompts.deploy("ops", { version: 1 });
 
     const reset = h.prompts.reset({});
     expect(reset.live.isDefault).toBe(true);
@@ -79,15 +83,9 @@ describe("PromptManager", () => {
     expect(() => h.prompts.deploy("ops", { version: 9 })).toThrow(expect.objectContaining({ status: 404 }));
   });
 
-  it("미리보기는 임의 내용·저장된 버전·현재 배포본을 렌더링한다", async () => {
+  it("미리보기는 임의 내용이나 현재 배포본을 렌더링한다", async () => {
     h = await buildHarness();
-    h.prompts.create({ name: "ops", content: "saved {{MODEL}}" });
-    expect(h.prompts.render({ content: "x {{USER}} {{NOPE}}", user: "carol", model: "m1" })).toMatchObject({
-      text: "x carol {{NOPE}}",
-      used: ["USER"],
-      unknown: ["{{NOPE}}"],
-    });
-    expect(h.prompts.render({ name: "ops", model: "m2" }).text).toBe("saved m2");
+    expect(h.prompts.render({ content: "x {{USER}} {{NOPE}}" })).toEqual({ text: "x preview-user {{NOPE}}", unknown: ["{{NOPE}}"] });
     expect(h.prompts.render({}).text).toContain("/workspace");
   });
 });
@@ -109,7 +107,7 @@ describe("prompt admin API", () => {
     expect(res.statusCode).toBe(201);
 
     const list = (await h.app.inject({ method: "GET", url: "/admin/api/prompts", headers: { cookie } })).json();
-    expect(list.prompts[0]).toMatchObject({ name: "ops", latestVersion: 2, versionCount: 2, liveVersion: null });
+    expect(list.prompts[0]).toEqual({ name: "ops", description: "", latestVersion: 2, liveVersion: null });
     expect(list.defaultContent).toContain("{{WORKSPACE}}");
 
     res = await h.app.inject({
@@ -122,8 +120,8 @@ describe("prompt admin API", () => {
     expect(res.json().live).toMatchObject({ name: "ops", version: 2 });
 
 
-    res = await h.app.inject({ method: "POST", url: "/admin/api/prompt-render", headers, payload: { name: "ops", version: 2, user: "dave" } });
-    expect(res.json().text).toBe("B dave");
+    res = await h.app.inject({ method: "POST", url: "/admin/api/prompt-render", headers, payload: {} });
+    expect(res.json().text).toBe("B preview-user");
 
     res = await h.app.inject({ method: "GET", url: "/admin/api/prompt-deployments", headers: { cookie } });
     expect(res.json().deployments).toHaveLength(1);

@@ -14,7 +14,7 @@ set -euo pipefail
 case "$PI_GATEWAY_HOME" in /*) ;; *) echo "PI_GATEWAY_HOME must be absolute" >&2; exit 1 ;; esac
 SECRETS="${PI_GATEWAY_SECRETS:-$PI_GATEWAY_HOME/secrets}"
 case "$SECRETS" in /*) ;; *) echo "PI_GATEWAY_SECRETS must be absolute" >&2; exit 1 ;; esac
-ENV_FILE="${ENV_FILE:-$(dirname "$0")/../.env}"
+ENV_FILE="$(dirname "$0")/../.env"
 DOCKER_SOCK=/var/run/docker.sock
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -77,12 +77,11 @@ secret() {
 }
 gen48() { rand 48; }
 gen32() { rand 32; }
-kek() { openssl rand -base64 32 | tr -d '\n'; }
 
 G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
 secret sandboxd_jwt_secret gen48 "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
 secret broker_jwt_secret   gen48 "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
-secret broker_kek          kek   "$B/broker_kek:0"
+secret broker_kek          gen32 "$B/broker_kek:0"
 secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
 secret api_key             gen32 "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)

@@ -2,8 +2,6 @@
 // egress 프록시의 unix socket(/run/pi-proxy/proxy.sock, 읽기 전용 mount)으로 잇는다.
 // sandbox의 HTTP_PROXY/HTTPS_PROXY가 이 주소를 가리킨다. 컨테이너의 주 프로세스로 돌며,
 // 연결마다 자식 프로세스 하나가 양방향으로 바이트를 넘긴다 (프로토콜은 해석하지 않는다).
-//
-//   sbx-proxy-bridge [port] [socket]     기본: 3128 /run/pi-proxy/proxy.sock
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -12,11 +10,13 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#define PORT 3128
+#define SOCKET_PATH "/run/pi-proxy/proxy.sock"
 
 static int write_all(int fd, const char *buf, size_t len) {
   while (len > 0) {
@@ -72,13 +72,7 @@ static void relay(int client, const char *path) {
   }
 }
 
-int main(int argc, char **argv) {
-  int port = argc > 1 ? atoi(argv[1]) : 3128;
-  const char *path = argc > 2 ? argv[2] : "/run/pi-proxy/proxy.sock";
-  if (port < 1 || port > 65535) {
-    fprintf(stderr, "sbx-proxy-bridge: invalid port\n");
-    return 2;
-  }
+int main(void) {
   signal(SIGCHLD, SIG_IGN); // 자식은 자동으로 회수된다
   signal(SIGPIPE, SIG_IGN);
 
@@ -92,7 +86,7 @@ int main(int argc, char **argv) {
   struct sockaddr_in sa;
   memset(&sa, 0, sizeof sa);
   sa.sin_family = AF_INET;
-  sa.sin_port = htons((unsigned short)port);
+  sa.sin_port = htons(PORT);
   sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) < 0 || listen(lfd, 128) < 0) {
     perror("sbx-proxy-bridge: bind/listen");
@@ -112,7 +106,7 @@ int main(int argc, char **argv) {
     pid_t pid = fork();
     if (pid == 0) {
       close(lfd);
-      relay(c, path);
+      relay(c, SOCKET_PATH);
       _exit(0);
     }
     close(c);

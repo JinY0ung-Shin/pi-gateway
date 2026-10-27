@@ -53,7 +53,7 @@ describe("MCP registry", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ store: "sandbox", config: { id: "monsemi-frontend", scope: "per-session" } });
 
-    res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers: { ...adminHeaders, ...json }, payload: brokerServer });
+    res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers: { ...adminHeaders, ...json }, payload: { config: brokerServer } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ store: "broker", missingSecrets: ["GITHUB_TOKEN"] });
     expect(broker.servers.has("github")).toBe(true);
@@ -73,10 +73,10 @@ describe("MCP registry", () => {
       ...sandboxServer,
       transport: { type: "stdio", command: "node", env: { T: "{{secret:TOKEN}}" } },
     };
-    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/monsemi-frontend", headers: { ...adminHeaders, ...json }, payload: bad });
+    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/monsemi-frontend", headers: { ...adminHeaders, ...json }, payload: { config: bad } });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toMatch(/must not use \{\{secret/);
-    res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/other", headers: { ...adminHeaders, ...json }, payload: sandboxServer });
+    res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/other", headers: { ...adminHeaders, ...json }, payload: { config: sandboxServer } });
     expect(res.statusCode).toBe(400);
     res = await h.app.inject({ method: "POST", url: "/admin/api/mcp/validate", headers: { ...adminHeaders, ...json }, payload: { config: brokerServer } });
     expect(res.json()).toEqual({ ok: true, errors: [], requiredSecrets: ["GITHUB_TOKEN"], clearsSecrets: [] });
@@ -97,7 +97,7 @@ describe("MCP registry", () => {
     const cookie = await loginCookie(h.app);
     const headers = { cookie, "x-admin-request": "1", ...json };
     const bodies: string[] = [];
-    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers, payload: brokerServer });
+    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers, payload: { config: brokerServer } });
     bodies.push(res.body);
     res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github/secrets/GITHUB_TOKEN", headers, payload: { value: SECRET } });
     expect(res.statusCode).toBe(204);
@@ -107,7 +107,6 @@ describe("MCP registry", () => {
     for (const [method, url] of [
       ["GET", "/admin/api/mcp/servers"],
       ["POST", "/admin/api/mcp/servers/github/test"],
-      ["GET", "/admin/api/mcp/servers/github/tools"],
     ] as const) {
       res = await h.app.inject({ method, url, headers: method === "GET" ? { cookie } : { ...headers }, ...(method === "POST" ? { payload: {} } : {}) });
       expect(res.statusCode).toBe(200);
@@ -141,8 +140,6 @@ describe("MCP registry", () => {
     res = await h.app.inject({ method: "POST", url: "/admin/api/mcp/servers/monsemi-frontend/test", headers: { ...adminHeaders, ...json }, payload: {} });
     expect(res.json()).toMatchObject({ ok: true });
     expect(res.json().note).toMatch(/sandbox/);
-    res = await h.app.inject({ method: "GET", url: "/admin/api/mcp/servers/monsemi-frontend/tools", headers: adminHeaders });
-    expect(res.statusCode).toBe(400);
   });
 
   it("runIn을 바꾸면 다른 저장소로 옮기고, 삭제는 어느 쪽이든 찾아서 지운다", async () => {
@@ -186,7 +183,7 @@ describe("MCP registry", () => {
   it("sandbox 서버에 리터럴 자격증명을 넣으면 400이고, broker+{{secret}}을 쓰라고 알려준다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     const literal = { ...sandboxServer, transport: { ...sandboxServer.transport, env: { GITHUB_TOKEN: "ghp_literal_value_123" } } };
-    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/monsemi-frontend", headers: { ...adminHeaders, ...json }, payload: literal });
+    let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/monsemi-frontend", headers: { ...adminHeaders, ...json }, payload: { config: literal } });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toMatch(/GITHUB_TOKEN.*literal credential.*runIn=broker/);
     expect(h.mcp.store.get("monsemi-frontend")).toBeUndefined();
@@ -216,16 +213,16 @@ describe("MCP registry", () => {
       await expect(h.mcp.setPluginServersEnabled("p@m", false, "t")).rejects.toMatchObject({ status: 503 });
       await expect(h.mcp.removePluginServers("p@m", "t")).rejects.toMatchObject({ status: 503 });
       // 새 id의 sandbox 서버도 broker에 같은 id가 있는지 확인해야 하므로 만들지 않는다
-      let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/brand-new", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "brand-new" } });
+      let res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/brand-new", headers: { ...adminHeaders, ...json }, payload: { config: { ...sandboxServer, id: "brand-new" } } });
       expect(res.statusCode).toBe(503);
       expect(h.mcp.store.get("brand-new")).toBeUndefined();
       // 이미 sandbox에 있는 서버를 고칠 때는 broker에 묻지 않는다
       const asked = broker.refused.length;
-      res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/new-one", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "new-one", description: "edited" } });
+      res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/new-one", headers: { ...adminHeaders, ...json }, payload: { config: { ...sandboxServer, id: "new-one", description: "edited" } } });
       expect(res.statusCode).toBe(200);
       expect(broker.refused.length).toBe(asked);
       // broker에 있던 id를 sandbox로 옮기는 것은 503 (두 저장소에 같은 id가 생긴다)
-      res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers: { ...adminHeaders, ...json }, payload: { ...sandboxServer, id: "github" } });
+      res = await h.app.inject({ method: "PUT", url: "/admin/api/mcp/servers/github", headers: { ...adminHeaders, ...json }, payload: { config: { ...sandboxServer, id: "github" } } });
       expect(res.statusCode).toBe(503);
       expect(res.json().error.message).toMatch(/not applied/);
       // sandbox 서버 삭제도 broker 없이 된다

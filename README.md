@@ -11,18 +11,13 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
                    └─▶ mcp-broker ─▶ 키가 필요한 MCP 서버
 ```
 
-| 서비스 | 하는 일 | 가진 비밀 |
-|---|---|---|
-| `gateway` (`apps/gateway`) | API, 인증, 세션, pi agent loop, plugin 설치, 프롬프트, 관리 화면(`/admin`) | LLM 키, 내부 JWT 키 |
-| `sandboxd` (`apps/sandboxd`) | 사용자 컨테이너 생성·명령 실행·파일 조작 | docker.sock |
-| `mcp-broker` (`apps/mcp-broker`) | MCP 비밀키 보관, MCP 프록시 | MCP 키 |
-| `egress-proxy` (`images/egress-proxy`) | sandbox의 유일한 바깥 경로. 허용 목록의 도메인·IP만 연다 | 없음 |
+코드는 `apps/gateway`, `apps/sandboxd`, `apps/mcp-broker`, `images/egress-proxy`에 있다. 서비스마다 하는 일·네트워크·가진 비밀은 [OPERATIONS.md §1](docs/OPERATIONS.md#1-구성)에 있다.
 
 ## 보안 경계
 
 - **agent loop와 도구 실행을 분리한다.** agent loop는 gateway에서 돌고, `read`·`write`·`edit`·`ls`·`find`·`bash`·`grep`과 sandbox MCP는 사용자 컨테이너에서 돈다.
 - **sandbox 컨테이너에는 비밀이 없다.**
-  - mount는 본인 workspace(`/workspace`)와 plugin(`/opt/plugins`, 읽기 전용) 두 개뿐이다.
+  - mount는 본인 workspace(`/workspace`), plugin(`/opt/plugins`, 읽기 전용), egress 프록시 socket(`/run/pi-proxy`, 읽기 전용) 세 개뿐이다.
   - 읽기 전용 rootfs, capability 없음, 네트워크 없음이다.
 - **MCP 키는 broker에만 있다.** 암호화해 저장하고, 관리 API로는 쓸 수만 있다. 접속 대상이 바뀌면 키가 지워진다.
 - **확인 방법:** `scripts/security-check`가 이 경계를 실제로 시험한다.

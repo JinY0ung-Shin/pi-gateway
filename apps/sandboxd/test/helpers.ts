@@ -24,11 +24,9 @@ export async function brokerTokenFor(sub: string): Promise<string> {
 /** 테스트용 sandboxd 설정 */
 export function testConfig(overrides: Partial<SandboxdConfig> = {}): SandboxdConfig {
   return {
-    host: "127.0.0.1",
     port: 0,
     logLevel: "silent",
     jwtSecret: SECRET,
-    dockerSocket: "/var/run/docker.sock",
     image: "pi-gateway/sandbox:test",
     proxyVolume: "pi-gw-test-proxy-sock",
     runtime: undefined,

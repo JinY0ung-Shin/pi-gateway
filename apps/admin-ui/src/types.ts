@@ -13,12 +13,7 @@ export interface LivePrompt {
 export interface PromptSummary {
   name: string;
   description: string;
-  createdAt: string;
-  updatedAt: string;
   latestVersion: number;
-  versionCount: number;
-  latestAuthor: string;
-  charCount: number;
   liveVersion: number | null;
 }
 
@@ -28,16 +23,11 @@ export interface PromptVersion {
   message: string;
   author: string;
   createdAt: string;
-  sha: string;
 }
 
 export interface PromptDetail {
   name: string;
   description: string;
-  createdAt: string;
-  updatedAt: string;
-  createdBy: string;
-  latestVersion: number;
   liveVersion: number | null;
   versions: PromptVersion[];
 }
@@ -110,11 +100,9 @@ export interface MarketplaceView {
   url: string;
   ref: string | null;
   commitSha: string;
-  description?: string;
   owner?: string;
   pluginCount: number;
   invalidEntries: number;
-  addedAt: string;
   refreshedAt: string;
 }
 
@@ -123,10 +111,7 @@ export interface CatalogEntry {
   description?: string;
   /** marketplace.json에 적힌 버전 (설치본 plugin.json 버전과 다를 수 있다) */
   listedVersion?: string;
-  category?: string;
-  tags: string[];
   source: string;
-  sourceType: string;
   supported: boolean;
   installed: { id: string; version: string; enabled: boolean; update?: { version: string } } | null;
 }

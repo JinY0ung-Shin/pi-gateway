@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, enc, errorText, formatTime } from "../api";
-import { Modal, Notice, Section, useAction } from "../components";
+import { api, enc, formatTime } from "../api";
+import { Modal, Notice, Section, useAction, useLoad } from "../components";
 import { newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
 
 /** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간 */
@@ -204,16 +204,8 @@ function SessionList() {
 }
 
 function Transcript(props: { id: string }) {
-  const [data, setData] = useState<(SessionSummary & { turns: (Turn | SystemItem)[] }) | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setData(null);
-    setError(null);
-    api<SessionSummary & { messages: PiMessage[] }>("GET", `/history/${enc(props.id)}`)
-      .then(({ messages, ...s }) => setData({ ...s, turns: toTurns(messages) }))
-      .catch((e) => setError(errorText(e)));
-  }, [props.id]);
+  const { data, error } = useLoad<SessionSummary & { messages: PiMessage[] }>(`/history/${enc(props.id)}`);
+  const turns = data ? toTurns(data.messages) : [];
 
   return (
     <Modal title="대화" onClose={() => (location.hash = "#/history")}>
@@ -226,8 +218,8 @@ function Transcript(props: { id: string }) {
             {formatTime(data.lastActiveAt)} · <span class="mono">{data.id}</span>
           </p>
           <div class="chat-log">
-            {data.turns.length === 0 && <p class="muted">기록된 메시지가 없습니다.</p>}
-            {data.turns.map((turn, i) => ("system" in turn ? <SystemView key={i} {...turn} /> : <TurnView key={i} turn={turn} />))}
+            {turns.length === 0 && <p class="muted">기록된 메시지가 없습니다.</p>}
+            {turns.map((turn, i) => ("system" in turn ? <SystemView key={i} {...turn} /> : <TurnView key={i} turn={turn} />))}
           </div>
         </>
       )}

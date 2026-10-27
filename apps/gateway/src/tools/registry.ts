@@ -19,18 +19,11 @@ export interface DefaultProviderDeps {
   mcpRegistry: McpRegistry;
   broker: GatewayConfig["broker"];
   mcpCache: McpToolCache;
-  /** 세션 생성 시 MCP 서버 하나의 도구 목록 대기 시간 (기본 MCP_LIST_TIMEOUT_MS) */
-  mcpListTimeoutMs?: number;
 }
 
 /** 등록된 provider 목록 (순서 = 도구 이름이 겹칠 때의 우선순위) */
 export function createDefaultToolProviders(deps: DefaultProviderDeps): ToolProvider[] {
-  const mcp = {
-    registry: deps.mcpRegistry,
-    broker: deps.broker,
-    cache: deps.mcpCache,
-    ...(deps.mcpListTimeoutMs ? { listTimeoutMs: deps.mcpListTimeoutMs } : {}),
-  };
+  const mcp = { registry: deps.mcpRegistry, broker: deps.broker, cache: deps.mcpCache };
   return [
     createSandboxToolProvider(),
     createAskUserToolProvider(),

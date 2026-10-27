@@ -34,25 +34,23 @@ export function buildContainerSpec(config: SandboxdConfig, key: string): Docker.
       ReadOnly: false,
       BindOptions: { Propagation: "rprivate" },
     },
-  ];
-  // egress 프록시 socket (읽기 전용). sandbox 안의 sbx-proxy-bridge가 127.0.0.1:3128을 여기로 잇는다.
-  mounts.push({
-    Type: "volume",
-    Source: config.proxyVolume,
-    Target: PROXY_SOCKET_DIR,
-    ReadOnly: true,
-    // @types/dockerode는 VolumeOptions의 모든 필드를 필수로 적어 두었지만 Docker API에서는 전부 선택이다
-    VolumeOptions: { NoCopy: true } as Docker.MountSettings["VolumeOptions"],
-  });
-  if (config.pluginsHostDir) {
-    mounts.push({
+    // egress 프록시 socket (읽기 전용). sandbox 안의 sbx-proxy-bridge가 127.0.0.1:3128을 여기로 잇는다.
+    {
+      Type: "volume",
+      Source: config.proxyVolume,
+      Target: PROXY_SOCKET_DIR,
+      ReadOnly: true,
+      // @types/dockerode는 VolumeOptions의 모든 필드를 필수로 적어 두었지만 Docker API에서는 전부 선택이다
+      VolumeOptions: { NoCopy: true } as Docker.MountSettings["VolumeOptions"],
+    },
+    {
       Type: "bind",
       Source: config.pluginsHostDir,
       Target: SANDBOX_PLUGINS_DIR,
       ReadOnly: true,
       BindOptions: { Propagation: "rprivate" },
-    });
-  }
+    },
+  ];
 
   const hostConfig: Docker.HostConfig = {
     Init: true,

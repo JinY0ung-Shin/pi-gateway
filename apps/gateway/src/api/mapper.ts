@@ -93,7 +93,6 @@ export class ResponseEventMapper {
   private reasoningHold = "";
   private messageEmitted = false;
   private readonly startedTools = new Set<string>();
-  private readonly toolArgs = new Map<string, unknown>();
   private readonly usageSum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   private contextTokens: number | null = null;
   /** assistant 응답 시도가 시작될 때의 상태. pi가 같은 응답을 다시 시도하면 그 시도에서 나온 항목을 버린다. */
@@ -308,7 +307,6 @@ export class ResponseEventMapper {
       }
       case "tool_execution_start":
         if (event.parentToolCallId) return;
-        this.toolArgs.set(event.toolCallId, event.args);
         this.running.set(event.toolCallId, { name: event.toolName, startedAt: Date.now() });
         return;
       case "tool_execution_update": {
@@ -331,8 +329,8 @@ export class ResponseEventMapper {
         if (event.parentToolCallId) return;
         this.running.delete(event.toolCallId);
         if (event.toolName === ASK_USER_TOOL) {
-          // AskUserQuestion의 결과는 내부용 자리표시자라서 클라이언트에 보내지 않는다.
-          if (!event.isError) this.addPendingQuestion(event.toolCallId, this.toolArgs.get(event.toolCallId) ?? {});
+          // AskUserQuestion의 결과는 내부용 자리표시자라서 클라이언트에 보내지 않는다. 질문은 결과 details에 있다.
+          if (!event.isError) this.addPendingQuestion(event.toolCallId, { questions: event.result?.details?.questions ?? [] });
           return;
         }
         this.send("response.tool_result", {

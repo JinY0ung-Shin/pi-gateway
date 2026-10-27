@@ -172,10 +172,10 @@ describe("data plane (pi-mcp client ↔ broker ↔ upstream fixture)", { timeout
   });
 
   it("관리 test는 실제 연결로 도구 목록을 확인한다", async () => {
-    const res = await tb.admin("POST", "/admin/servers/allowonly/test", { user: "alice" });
+    const res = await tb.admin("POST", "/admin/servers/allowonly/test", {});
     expect(res.status).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, tools: [{ name: "whoami" }] });
-    const tools = await tb.admin("GET", "/admin/servers/remote/tools?user=alice");
-    expect(tools.json().tools.map((t: { name: string }) => t.name).sort()).toEqual(["echo_auth", "headers"]);
+    const remote = await tb.admin("POST", "/admin/servers/remote/test", {});
+    expect(remote.json().tools.map((t: { name: string }) => t.name).sort()).toEqual(["echo_auth", "headers"]);
   });
 });

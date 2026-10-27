@@ -101,7 +101,7 @@ export class AdminAuth {
    * 요청이 인증됐으면 방법을, 아니면 null을 돌려준다.
    * Bearer 시도는 로그인과 같이 실패를 세고, 잠긴 주소에서는 맞는 키여도 429를 던진다.
    */
-  authenticate(req: FastifyRequest): { via: AdminVia; expiresAt?: string } | null {
+  authenticate(req: FastifyRequest): AdminVia | null {
     if (!this.enabled) return null;
     const token = bearerToken(req.headers.authorization);
     if (token !== null) {
@@ -111,13 +111,12 @@ export class AdminAuth {
         return null;
       }
       this.#failures.delete(req.ip);
-      return { via: "bearer" };
+      return "bearer";
     }
-    const session = this.#session(req);
-    return session ? { via: "cookie", expiresAt: session.expiresAt } : null;
+    return this.#hasSession(req) ? "cookie" : null;
   }
 
-  login(req: FastifyRequest, reply: FastifyReply, apiKey: unknown): { expiresAt: string } {
+  login(req: FastifyRequest, reply: FastifyReply, apiKey: unknown): void {
     this.requireEnabled();
     const ip = req.ip;
     const now = Date.now();
@@ -137,7 +136,6 @@ export class AdminAuth {
       "set-cookie",
       serializeCookie(ADMIN_COOKIE, token, { maxAgeSeconds: SESSION_TTL_MS / 1000, secure: req.protocol === "https" }),
     );
-    return { expiresAt };
   }
 
   logout(req: FastifyRequest, reply: FastifyReply): void {
@@ -176,14 +174,13 @@ export class AdminAuth {
     return readCookie(req.headers.cookie, ADMIN_COOKIE) || null;
   }
 
-  #session(req: FastifyRequest): { expiresAt: string } | null {
+  #hasSession(req: FastifyRequest): boolean {
     const token = this.#cookieToken(req);
-    if (!token) return null;
+    if (!token) return false;
     const row = this.#db
       .prepare("SELECT expires_at, revoked_at FROM admin_sessions WHERE id = ?")
       .get(sha256(token).toString("hex")) as { expires_at: string; revoked_at: string | null } | undefined;
-    if (!row || row.revoked_at !== null || Date.parse(row.expires_at) <= Date.now()) return null;
-    return { expiresAt: row.expires_at };
+    return Boolean(row && row.revoked_at === null && Date.parse(row.expires_at) > Date.now());
   }
 }
 
