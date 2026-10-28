@@ -104,6 +104,21 @@ describe("mcp_search and mcp_call", () => {
     expect(String(unknown!.content)).toContain("Unknown tool 'mcp__demo__nope'. Find the exact name with mcp_search.");
   });
 
+  it("accepts the tool names skills use: Claude Code plugin names and bare MCP tool names", async () => {
+    h.llm.enqueue(
+      { toolCalls: [{ id: "al1", name: "mcp_call", arguments: { name: "mcp__plugin_demo-plugin_demo__echo", arguments: { text: "cc" } } }] },
+      { toolCalls: [{ id: "al2", name: "mcp_call", arguments: { name: "fail" } }] },
+      { toolCalls: [{ id: "al3", name: "mcp_call", arguments: { name: "echo", arguments: { text: "x" } } }] },
+      { text: "ok" },
+    );
+    const res = await h.stream({ input: "alias calls" });
+    const [cc, bare, ambiguous] = ofType(res.events, "response.tool_result").map((e) => e.data);
+    expect(String(cc!.content)).toContain("echo:cc");
+    expect(bare).toMatchObject({ is_error: true, content: "upstream refused" });
+    // 두 서버에 같은 이름이 있으면 고르지 않고 후보를 돌려준다
+    expect(String(ambiguous!.content)).toContain("'echo' matches several tools: mcp__demo__echo, mcp__local__echo.");
+  });
+
   it("splits Korean into two-letter terms so particles do not block a match", () => {
     expect(searchTerms("결함을 조회")).toEqual(["결함", "함을", "조회"]);
     expect(searchTerms("listIssues v2")).toEqual(["list", "issues", "v2"]);

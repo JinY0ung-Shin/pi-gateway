@@ -86,6 +86,19 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 
 /** McpConnectionSet이 만든 도구의 label은 `<server id>/<MCP 도구 이름>`이다 (도구 이름은 64자에서 잘릴 수 있다). */
 const serverOf = (tool: ToolDefinition) => tool.label.slice(0, tool.label.indexOf("/"));
+const mcpNameOf = (tool: ToolDefinition) => tool.label.slice(tool.label.indexOf("/") + 1).replace(/[^A-Za-z0-9_-]/g, "_");
+
+/**
+ * 정확한 이름이 없을 때 다른 형식의 이름을 도구로 바꾼다. skill은 Claude Code 형식
+ * (`mcp__plugin_<plugin>_<server>__<tool>`)이나 MCP 도구 이름만 적기도 한다.
+ * 이름이 `__<MCP 도구 이름>`으로 끝나는 도구를 찾고, 여럿이면 이름에 서버 id가 들어 있는 것으로 좁힌다.
+ */
+function resolveAlias(name: string, tools: ToolDefinition[]): ToolDefinition[] {
+  const matches = tools.filter((t) => name === mcpNameOf(t) || name.endsWith(`__${mcpNameOf(t)}`));
+  if (matches.length <= 1) return matches;
+  const narrowed = matches.filter((t) => name.includes(serverOf(t)));
+  return narrowed.length > 0 ? narrowed : matches;
+}
 
 /** tools: MCP 서버들의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다. */
 export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedServer[]): ToolDefinition[] {
@@ -128,13 +141,18 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const { name, arguments: args = {} } = params as { name: string; arguments?: Record<string, unknown> };
-      const tool = byName.get(name);
+      let tool = byName.get(name);
+      if (!tool) {
+        const aliases = resolveAlias(name, tools);
+        if (aliases.length > 1) throw new Error(`'${name}' matches several tools: ${aliases.map((t) => t.name).join(", ")}. Call one of them.`);
+        tool = aliases[0];
+      }
       if (!tool) throw new Error(`Unknown tool '${name}'. Find the exact name with ${MCP_SEARCH_TOOL}.`);
       let validated: Record<string, unknown>;
       try {
-        validated = validateToolArguments(tool as never, { type: "toolCall", id: toolCallId, name, arguments: args as never });
+        validated = validateToolArguments(tool as never, { type: "toolCall", id: toolCallId, name: tool.name, arguments: args as never });
       } catch (err) {
-        throw new Error(`${err instanceof Error ? err.message : String(err)}\nParameters of ${name}: ${JSON.stringify(tool.parameters)}`);
+        throw new Error(`${err instanceof Error ? err.message : String(err)}\nParameters of ${tool.name}: ${JSON.stringify(tool.parameters)}`);
       }
       return tool.execute(toolCallId, validated as never, signal, onUpdate, ctx);
     },
