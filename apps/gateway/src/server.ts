@@ -1,5 +1,6 @@
 import Fastify, { type FastifyBaseLogger, type FastifyError, type FastifyInstance } from "fastify";
 import type { Logger } from "pino";
+import { registerFileRoutes } from "./api/files.js";
 import { type ResponsesDeps, registerResponsesRoutes } from "./api/responses.js";
 import { registerAdminRoutes } from "./admin/index.js";
 import type { AdminDeps } from "./contracts.js";
@@ -50,6 +51,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get("/healthz", async () => ({ status: "ok" }));
 
   registerResponsesRoutes(app, deps.responses);
+  registerFileRoutes(app, deps.responses);
   await registerAdminRoutes(app, deps.admin);
   return app;
 }

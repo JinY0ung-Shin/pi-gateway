@@ -161,7 +161,7 @@ apps/gateway/src/tools/
   provider.ts          ToolProvider·ToolSessionContext 인터페이스 (규칙 주석 포함)
   registry.ts          provider 목록 → pi tools/customTools
   providers/
-    sandbox.ts         read, write, edit, ls, find, bash, grep
+    sandbox.ts         read, write, edit, ls, find, bash, grep, present_file
     ask-user.ts        AskUserQuestion
     mcp.ts             MCP 서버 (broker·sandbox)
 ```

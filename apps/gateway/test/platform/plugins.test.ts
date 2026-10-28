@@ -281,7 +281,7 @@ describe("plugin installer (fixture marketplace)", () => {
     res = await api("GET", "/admin/api/tools");
     const tools: { name: string; runsIn: string; description: string; parameters: unknown }[] = res.json().tools;
     expect(tools.map((t) => `${t.name}@${t.runsIn}`)).toEqual([
-      ...["read", "write", "edit", "ls", "find", "bash", "grep"].map((n) => `${n}@sandbox`),
+      ...["read", "write", "edit", "ls", "find", "bash", "grep", "present_file"].map((n) => `${n}@sandbox`),
       "AskUserQuestion@gateway",
       "Agent@gateway",
       "SendMessage@gateway",

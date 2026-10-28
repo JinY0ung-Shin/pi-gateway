@@ -4,6 +4,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { McpProgressDetails } from "../mcp-client/connections.js";
 import type { PendingToolCall } from "../sessions/store.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
+import { PRESENT_FILE_TOOL, type PresentedFile } from "../tools/present-file.js";
 
 /**
  * pi AgentSession 이벤트 → OpenAI Responses 출력 항목과 SSE 이벤트.
@@ -40,7 +41,12 @@ export interface FunctionCallItem {
   arguments: string;
   status: "completed";
 }
-export type OutputItem = MessageItem | ReasoningItem | FunctionCallItem;
+/** present_file로 보여준 workspace 파일. 내용은 `GET /v1/files/content?path=`로 받는다. */
+export interface FileItem extends PresentedFile {
+  id: string;
+  type: "file";
+}
+export type OutputItem = MessageItem | ReasoningItem | FunctionCallItem | FileItem;
 
 export interface ResponseUsage {
   input_tokens: number;
@@ -52,6 +58,7 @@ export interface ResponseUsage {
 const hex = () => randomBytes(12).toString("hex");
 export const newMessageId = () => `msg_${hex()}`;
 export const newReasoningId = () => `rs_${hex()}`;
+const newFileId = () => `file_${hex()}`;
 
 export function emptyUsage(): ResponseUsage {
   return { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_tokens_details: { cached_tokens: 0, cache_creation_tokens: 0 } };
@@ -79,7 +86,7 @@ function toolResultText(result: unknown): string {
 
 export class ResponseEventMapper {
   /** 완료된 출력 항목 (스트림 순서) */
-  readonly items: (MessageItem | ReasoningItem)[] = [];
+  readonly items: (MessageItem | ReasoningItem | FileItem)[] = [];
   /** AskUserQuestion이 호출되면 채워진다 */
   pending: PendingToolCall | null = null;
   /** 마지막 assistant 메시지 (결과 판정용) */
@@ -223,7 +230,7 @@ export class ResponseEventMapper {
   /** 클라이언트에 보여줄 출력(텍스트나 reasoning)이 있었는가 (빈 응답 판정용) */
   hasOutput(): boolean {
     if (this.reasoning || (this.message && this.message.text.length > 0)) return true;
-    return this.items.some((i) => i.type === "reasoning" || i.content.some((c) => c.text.length > 0));
+    return this.items.some((i) => i.type !== "message" || i.content.some((c) => c.text.length > 0));
   }
 
   handle(event: AgentSessionEvent): void {
@@ -338,6 +345,8 @@ export class ResponseEventMapper {
           content: toolResultText(event.result),
           is_error: event.isError === true,
         });
+        const file = (event.result as { details?: { file?: PresentedFile } } | undefined)?.details?.file;
+        if (event.toolName === PRESENT_FILE_TOOL && !event.isError && file) this.addFile(file);
         return;
       }
       default:
@@ -360,6 +369,16 @@ export class ResponseEventMapper {
     }
     const merged = { ...(this.pending.arguments as Record<string, unknown>), questions: [...questions(this.pending.arguments), ...questions(args)] };
     this.pending = { ...this.pending, arguments: merged };
+  }
+
+  /** 파일 항목은 완성된 채로 한 번에 보낸다. 그 앞의 텍스트 항목은 닫고, 뒤의 텍스트는 새 항목이 된다. */
+  private addFile(file: PresentedFile): void {
+    this.closeOpenItems();
+    const item: FileItem = { id: newFileId(), type: "file", ...file };
+    this.send("response.output_item.added", { output_index: this.outputIndex, item });
+    this.send("response.output_item.done", { output_index: this.outputIndex, item });
+    this.items.push(item);
+    this.outputIndex++;
   }
 
   private toolUseStarted(id: string, name: string): void {
@@ -397,7 +416,7 @@ export class ResponseEventMapper {
     };
   }
 
-  /** 비스트리밍 응답의 output: reasoning 항목들 뒤에 message 하나 (oh-my-gateway 비스트리밍과 같다) */
+  /** 비스트리밍 응답의 output: reasoning 항목들, message 하나 (oh-my-gateway 비스트리밍과 같다), file 항목들 */
   nonStreamOutput(): OutputItem[] {
     const reasoning = this.items.filter((i): i is ReasoningItem => i.type === "reasoning");
     const text = this.items
@@ -411,6 +430,6 @@ export class ResponseEventMapper {
       status: "completed",
       content: [{ type: "output_text", text, annotations: [] }],
     };
-    return [...reasoning, message];
+    return [...reasoning, message, ...this.items.filter((i): i is FileItem => i.type === "file")];
   }
 }

@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import { type GatewayModels, thinkingLevelOf } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
+import type { SandboxClient } from "../sandbox/client.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
 import type { McpRegistry, PluginResources, PromptService } from "../contracts.js";
@@ -32,6 +33,8 @@ export interface ResponsesDeps {
   prompts: PromptService;
   plugins: PluginResources;
   mcpRegistry: McpRegistry;
+  /** `GET /v1/files/content`가 workspace 파일을 읽는다 */
+  sandbox: SandboxClient;
   log: Logger;
 }
 
@@ -191,7 +194,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
 }
 
 /** user 키면 키의 사용자, 서비스 키면 클라이언트가 보낸 user */
-function userOf(auth: AuthResult, claimed: string | null | undefined): string {
+export function userOf(auth: AuthResult, claimed: string | null | undefined): string {
   if (auth.kind === "user") return auth.user;
   if (!claimed) throw badRequest("user is required");
   if (!isValidUserId(claimed)) throw badRequest(`Invalid user '${claimed}'`);

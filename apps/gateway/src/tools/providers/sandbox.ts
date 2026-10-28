@@ -9,14 +9,16 @@ import {
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { createSandboxBashTool } from "../bash.js";
 import { createSandboxGrepTool } from "../grep.js";
+import { createPresentFileTool } from "../present-file.js";
 import type { ToolProvider } from "../provider.js";
 import { createRemoteFs, mapHomePath, PathNamespace } from "../remote-fs.js";
 
 /**
- * sandbox provider — 파일·명령 도구 7개. 전부 사용자 sandbox 컨테이너 안에서 실행된다.
+ * sandbox provider — 파일·명령 도구 8개. 전부 사용자 sandbox 컨테이너 안에서 실행된다.
  * - read/write/edit: pi 정의 + 원격 operations + 세션별 경로 이름공간 (remote-fs.ts 설명 참고)
  * - ls/find: pi 정의 + 원격 operations (pi가 로컬 파일시스템을 보지 않는다)
  * - bash/grep: pi 스키마에 execute만 sandbox 실행으로 바꾼 것
+ * - present_file: workspace 파일을 클라이언트에 보여준다 (present-file.ts)
  */
 
 function preparePath(def: ToolDefinition, map: (path: string) => string): ToolDefinition["prepareArguments"] {
@@ -71,6 +73,7 @@ export function createSandboxToolProvider(): ToolProvider {
         withHomeMapping(createFindToolDefinition(cwd, { operations: fs.find }) as ToolDefinition),
         createSandboxBashTool(ctx.sandbox),
         createSandboxGrepTool(ctx.sandbox),
+        createPresentFileTool(ctx.sandbox) as unknown as ToolDefinition,
       ];
     },
   };

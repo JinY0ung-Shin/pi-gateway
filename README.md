@@ -43,6 +43,10 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.
   - call_id가 다르면 400이다. 대기 중에 일반 메시지가 오면 409다.
+- **파일 보여주기:**
+  - 에이전트가 `present_file`을 부르면 스트림 도중에 `type: "file"` 출력 항목(`path`, `filename`, `mime_type`, `size`)이 나간다. 최종 `output`에도 남는다.
+  - 내용은 `GET /v1/files/content?path=`(서비스 키면 `&user=`)로 받는다. `/workspace` 아래 파일만 되고 최대 32MiB다.
+  - 렌더링은 클라이언트가 `mime_type`을 보고 한다. 응답은 `attachment`와 `Content-Security-Policy: sandbox`로 나가므로, HTML은 받아서 sandbox iframe 등에 띄운다.
 
 ## 개발
 

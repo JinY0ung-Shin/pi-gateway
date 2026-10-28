@@ -99,6 +99,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     prompts,
     plugins,
     mcpRegistry,
+    sandbox: sandboxClient,
     log: logger.child({ component: "responses" }),
   };
   const app = await buildServer({

@@ -27,7 +27,7 @@ describe("Agent / SendMessage", () => {
     const first = await h.post({ input: "where is x?" });
     expect(first.status).toBe(200);
     const [parent, child, after] = h.llm.requests.slice(start);
-    expect(toolNames(parent!)).toEqual(["Agent", "AskUserQuestion", "SendMessage", "bash", "edit", "find", "grep", "ls", "read", "write"]);
+    expect(toolNames(parent!)).toEqual(["Agent", "AskUserQuestion", "SendMessage", "bash", "edit", "find", "grep", "ls", "present_file", "read", "write"]);
     // 하위 세션: agent 본문이 시스템 프롬프트, 도구는 frontmatter tools만 (Agent·SendMessage·AskUserQuestion 없음)
     expect(system(child!)).toContain("You are the scout.");
     expect(toolNames(child!)).toEqual(["bash", "read"]);
