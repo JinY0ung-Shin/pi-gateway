@@ -82,6 +82,9 @@ export async function executeTurn(input: {
     default:
       // 텍스트도 reasoning도 없는 응답은 성공으로 끝내지 않는다 (oh-my-gateway와 같다: empty_response, commit 안 함).
       if (!mapper.hasOutput()) return { status: "failed", error: { code: "empty_response", message: "No response generated" }, leafBefore };
+      if (live.record.outputFormat && !mapper.structuredOutput) {
+        return { status: "failed", error: { code: "structured_output_missing", message: "Model ended without calling StructuredOutput" }, leafBefore };
+      }
       return { status: "completed", leafBefore };
   }
 }

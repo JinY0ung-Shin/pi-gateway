@@ -1,3 +1,4 @@
+import type { OutputFormat } from "../api/request.js";
 import { type Db, migrate } from "../db.js";
 
 /** gateway가 기억하는 세션 메타. 대화 내용 자체는 pi JSONL에 있다. */
@@ -26,6 +27,8 @@ export interface SessionRecord {
   /** 세션을 만들 때의 skill 이름 목록 (이후 설치된 skill은 새 세션부터) */
   skillNames: string[];
   pendingToolCall: PendingToolCall | null;
+  /** 첫 요청의 text.format json_schema. 세션 동안 바뀌지 않는다. */
+  outputFormat: OutputFormat | null;
   createdAt: string;
   lastActiveAt: string;
 }
@@ -42,6 +45,7 @@ interface Row {
   append_prompt: string;
   skill_names: string;
   pending_tool_call: string | null;
+  output_format: string | null;
   created_at: string;
   last_active_at: string;
 }
@@ -78,6 +82,7 @@ const MIGRATIONS = [
    ALTER TABLE sessions DROP COLUMN prompt_ref`,
   // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
   `ALTER TABLE session_retention DROP COLUMN updated_by`,
+  `ALTER TABLE sessions ADD COLUMN output_format TEXT`,
 ];
 
 /** 대화 기록 보관 기간. 마지막 활동 뒤 days일이 지나면 지운다 (0 = 지우지 않는다). */
@@ -99,6 +104,7 @@ function fromRow(row: Row): SessionRecord {
     appendPrompt: row.append_prompt,
     skillNames: JSON.parse(row.skill_names) as string[],
     pendingToolCall: row.pending_tool_call ? (JSON.parse(row.pending_tool_call) as PendingToolCall) : null,
+    outputFormat: row.output_format ? (JSON.parse(row.output_format) as OutputFormat) : null,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
   };
@@ -118,9 +124,9 @@ export class SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
-           append_prompt, skill_names, pending_tool_call, created_at, updated_at, last_active_at)
+           append_prompt, skill_names, pending_tool_call, output_format, created_at, updated_at, last_active_at)
          VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
-           @append_prompt, @skill_names, @pending_tool_call, @created_at, @created_at, @last_active_at)`,
+           @append_prompt, @skill_names, @pending_tool_call, @output_format, @created_at, @created_at, @last_active_at)`,
       )
       .run({
         id: record.id,
@@ -134,6 +140,7 @@ export class SessionStore {
         append_prompt: record.appendPrompt,
         skill_names: JSON.stringify(record.skillNames),
         pending_tool_call: record.pendingToolCall ? JSON.stringify(record.pendingToolCall) : null,
+        output_format: record.outputFormat ? JSON.stringify(record.outputFormat) : null,
         created_at: record.createdAt,
         last_active_at: record.lastActiveAt,
       });

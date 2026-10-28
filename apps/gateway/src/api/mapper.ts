@@ -5,6 +5,7 @@ import type { McpProgressDetails } from "../mcp-client/connections.js";
 import type { PendingToolCall } from "../sessions/store.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL, type PresentedFile } from "../tools/present-file.js";
+import { STRUCTURED_OUTPUT_TOOL } from "../tools/structured-output.js";
 
 /**
  * pi AgentSession 이벤트 → OpenAI Responses 출력 항목과 SSE 이벤트.
@@ -89,6 +90,8 @@ export class ResponseEventMapper {
   readonly items: (MessageItem | ReasoningItem | FileItem)[] = [];
   /** AskUserQuestion이 호출되면 채워진다 */
   pending: PendingToolCall | null = null;
+  /** StructuredOutput이 호출되면 그 인자 (응답의 structured_output) */
+  structuredOutput: Record<string, unknown> | null = null;
   /** 마지막 assistant 메시지 (결과 판정용) */
   lastAssistant: AssistantMessage | null = null;
   /** 이 턴에서 실행 중인 도구 (keepalive 때 tool_progress를 보낸다) */
@@ -345,8 +348,9 @@ export class ResponseEventMapper {
           content: toolResultText(event.result),
           is_error: event.isError === true,
         });
-        const file = (event.result as { details?: { file?: PresentedFile } } | undefined)?.details?.file;
-        if (event.toolName === PRESENT_FILE_TOOL && !event.isError && file) this.addFile(file);
+        const details = (event.result as { details?: { file?: PresentedFile; output?: Record<string, unknown> } } | undefined)?.details;
+        if (event.toolName === PRESENT_FILE_TOOL && !event.isError && details?.file) this.addFile(details.file);
+        if (event.toolName === STRUCTURED_OUTPUT_TOOL && !event.isError && details?.output) this.addStructuredOutput(details.output);
         return;
       }
       default:
@@ -379,6 +383,16 @@ export class ResponseEventMapper {
     this.send("response.output_item.done", { output_index: this.outputIndex, item });
     this.items.push(item);
     this.outputIndex++;
+  }
+
+  /** 구조화된 답은 JSON 텍스트로도 내보낸다: output_text만 읽는 클라이언트도 파싱할 수 있다. */
+  private addStructuredOutput(output: Record<string, unknown>): void {
+    this.structuredOutput = output;
+    this.openMessage();
+    const m = this.message!;
+    m.text = JSON.stringify(output);
+    this.send("response.output_text.delta", { item_id: m.id, output_index: m.outputIndex, content_index: 0, delta: m.text, logprobs: [] });
+    this.closeMessage();
   }
 
   private toolUseStarted(id: string, name: string): void {
@@ -419,10 +433,13 @@ export class ResponseEventMapper {
   /** 비스트리밍 응답의 output: reasoning 항목들, message 하나 (oh-my-gateway 비스트리밍과 같다), file 항목들 */
   nonStreamOutput(): OutputItem[] {
     const reasoning = this.items.filter((i): i is ReasoningItem => i.type === "reasoning");
-    const text = this.items
-      .filter((i): i is MessageItem => i.type === "message")
-      .map((m) => m.content.map((c) => c.text).join(""))
-      .join("");
+    // 구조화된 답이 있으면 그 JSON만 둔다 (앞에 쓴 문장이 섞이면 파싱할 수 없다).
+    const text = this.structuredOutput
+      ? JSON.stringify(this.structuredOutput)
+      : this.items
+          .filter((i): i is MessageItem => i.type === "message")
+          .map((m) => m.content.map((c) => c.text).join(""))
+          .join("");
     const message: MessageItem = {
       id: newMessageId(),
       type: "message",

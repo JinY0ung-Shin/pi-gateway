@@ -13,8 +13,19 @@ import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError }
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore } from "../sessions/store.js";
+import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
 import { emptyUsage, functionCallItem, ResponseEventMapper, type ResponseUsage } from "./mapper.js";
-import { type ParsedInput, parseInput, parseRequest, parseResponseId, type ResponseCreateRequest, responseId, thinkingLevelFor } from "./request.js";
+import {
+  type OutputFormat,
+  outputFormatOf,
+  type ParsedInput,
+  parseInput,
+  parseRequest,
+  parseResponseId,
+  type ResponseCreateRequest,
+  responseId,
+  thinkingLevelFor,
+} from "./request.js";
 import { SseWriter } from "./sse.js";
 import { executeTurn, rewindTurn, type TurnOutcome } from "./turn.js";
 
@@ -63,6 +74,7 @@ async function requestContext(headers: IncomingHttpHeaders, metadata: Record<str
 interface NewSession {
   model: string;
   thinkingLevel: string | undefined;
+  outputFormat: OutputFormat | null;
 }
 
 interface TurnPlan {
@@ -122,8 +134,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
   if (deps.hub.isShuttingDown) throw shuttingDownError();
   const body = parseRequest(req.body);
   if (body.background) throw badRequest("background=true is not supported by this gateway");
-  const format = body.text?.format?.type;
-  if (format && format !== "text") throw badRequest(`text.format '${format}' is not supported yet`);
+  const outputFormat = outputFormatOf(body);
   const input = parseInput(body);
 
   const principal = userOf(auth, body.user);
@@ -161,7 +172,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     const model = body.model ?? defaultModel;
     const modelConfig = deps.models.config(model);
     if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
-    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig) };
+    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig), outputFormat };
   }
 
   const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession };
@@ -208,7 +219,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
   const id = typeof model === "string" && model ? model : deps.models.defaultModel();
   if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
-  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined }, null));
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null }, null));
 }
 
 function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
@@ -216,6 +227,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
   const promptText = deps.prompts.snapshotForSession({ user: plan.principal, model: plan.model, now });
   const append: string[] = [];
   if (instructions?.trim()) append.push(instructions.trim());
+  if (plan.outputFormat) append.push(STRUCTURED_OUTPUT_PROMPT);
   append.push(`Current user: ${plan.principal}`);
   const modelConfig = deps.models.config(plan.model);
   const iso = now.toISOString();
@@ -231,6 +243,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     appendPrompt: append.join("\n\n"),
     skillNames: deps.plugins.skills().map((s) => s.name),
     pendingToolCall: null,
+    outputFormat: plan.outputFormat,
     createdAt: iso,
     lastActiveAt: iso,
   };
@@ -275,6 +288,11 @@ async function runLocked(
     const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel);
     if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
       throw badRequest("reasoning.effort is fixed when the session is created");
+    }
+    // 클라이언트는 보통 매 턴 같은 설정을 다시 보낸다. 같으면 통과, 다르면 거부한다 (도구가 세션을 만들 때 정해진다).
+    const outputFormat = outputFormatOf(plan.body);
+    if (outputFormat && JSON.stringify(outputFormat) !== JSON.stringify(record.outputFormat)) {
+      throw badRequest("text.format 'json_schema' is fixed when the session is created. Start a new session to use a different schema.");
     }
   }
 
@@ -403,12 +421,10 @@ async function runLocked(
         case "incomplete":
           mapper.finalize(outcome.status);
           sse.send(outcome.status === "completed" ? "response.completed" : "response.incomplete", {
-            response: body(
-              outcome.status,
-              mapper.items,
-              mapper.usage(),
-              outcome.incompleteReason ? { incomplete_details: { reason: outcome.incompleteReason } } : {},
-            ),
+            response: body(outcome.status, mapper.items, mapper.usage(), {
+              structured_output: mapper.structuredOutput,
+              ...(outcome.incompleteReason ? { incomplete_details: { reason: outcome.incompleteReason } } : {}),
+            }),
           });
           break;
         case "requires_action": {
@@ -445,7 +461,13 @@ async function runLocked(
   await finish(outcome);
   if (timedOut) throw apiError(504, `Non-streaming turn timed out after ${deps.config.sessions.nonStreamTimeoutSeconds}s`);
   const full = (status: string, output: unknown[], extra: Record<string, unknown> = {}) =>
-    body(status, output, mapper.usage(), { error: null, incomplete_details: null, structured_output: null, background: null, ...extra });
+    body(status, output, mapper.usage(), {
+      error: null,
+      incomplete_details: null,
+      structured_output: mapper.structuredOutput,
+      background: null,
+      ...extra,
+    });
   switch (outcome.status) {
     case "completed":
       mapper.finalize("completed");

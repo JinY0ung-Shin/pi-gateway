@@ -1,5 +1,6 @@
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.js";
 
 /**
  * AskUserQuestion — Claude Code와 같은 입력 스키마.
@@ -52,16 +53,18 @@ export function createAskUserQuestionTool(): ToolDefinition<typeof AskUserQuesti
   };
 }
 
+const TURN_ENDING_TOOLS = new Set([ASK_USER_TOOL, STRUCTURED_OUTPUT_TOOL]);
+
 /**
- * AskUserQuestion이 다른 도구와 같은 배치로 호출되면 `terminate`가 적용되지 않는다.
+ * AskUserQuestion·StructuredOutput이 다른 도구와 같은 배치로 호출되면 `terminate`가 적용되지 않는다.
  * 그런 턴도 끝나도록 AgentSession의 finishTurn을 감싼다 (세션 쪽 boundary 처리는 먼저 실행).
  */
-export function installAskUserTurnGuard(session: AgentSession): void {
+export function installTurnEndGuard(session: AgentSession): void {
   const agent = session.agent;
   const previous = agent.finishTurn;
   agent.finishTurn = async (turn, signal) => {
     const decision = await previous?.(turn, signal);
-    if (turn.toolResults.some((r) => r.toolName === ASK_USER_TOOL && !r.isError)) return { action: "end" };
+    if (turn.toolResults.some((r) => TURN_ENDING_TOOLS.has(r.toolName) && !r.isError)) return { action: "end" };
     return decision ?? undefined;
   };
 }

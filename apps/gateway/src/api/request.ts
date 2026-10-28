@@ -40,7 +40,15 @@ export const ResponseCreateRequest = z
     metadata: z.record(z.string(), z.string()).nullish(),
     user: z.string().nullish(),
     reasoning: z.object({ effort: z.string().nullish() }).passthrough().nullish(),
-    text: z.object({ format: z.object({ type: z.string() }).passthrough().nullish() }).passthrough().nullish(),
+    text: z
+      .object({
+        format: z
+          .object({ type: z.string(), name: z.string().nullish(), schema: z.record(z.string(), z.unknown()).nullish() })
+          .passthrough()
+          .nullish(),
+      })
+      .passthrough()
+      .nullish(),
   })
   .passthrough();
 export type ResponseCreateRequest = z.infer<typeof ResponseCreateRequest>;
@@ -57,6 +65,20 @@ export function parseRequest(body: unknown): ResponseCreateRequest {
     );
   }
   return parsed.data;
+}
+
+/** `text.format` json_schema. 스키마는 StructuredOutput 도구의 인자가 되므로 최상위가 object여야 한다. */
+export interface OutputFormat {
+  name: string | null;
+  schema: Record<string, unknown>;
+}
+
+export function outputFormatOf(body: ResponseCreateRequest): OutputFormat | null {
+  const format = body.text?.format;
+  if (!format || format.type === "text") return null;
+  if (format.type !== "json_schema") throw badRequest(`text.format '${format.type}' is not supported`);
+  if (!format.schema || format.schema.type !== "object") throw badRequest("text.format.schema must be a JSON schema with type 'object'");
+  return { name: format.name ?? null, schema: format.schema };
 }
 
 export type ParsedInput =
