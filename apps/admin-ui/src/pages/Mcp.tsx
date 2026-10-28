@@ -222,6 +222,10 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
   );
 }
 
+/** 새 broker 서버의 url·headers가 쓰는 {{secret:NAME}} 이름 */
+const secretRefs = (f: FormState) =>
+  [...new Set([...`${f.url}\n${f.headers}`.matchAll(/\{\{\s*secret:([A-Za-z0-9_.-]{1,64})\s*\}\}/g)].map((m) => m[1]!))].sort();
+
 const clip = (text: string) => (text.length > 160 ? `${text.slice(0, 160)}…` : text);
 
 interface FormState {
@@ -302,6 +306,9 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
   const [required, setRequired] = useState<string[]>(props.entry?.requiredSecrets ?? []);
   const action = useAction();
   const isNew = props.entry === null;
+  /** 새 서버를 저장할 때 함께 넣을 비밀키 값 */
+  const [newSecrets, setNewSecrets] = useState<Record<string, string>>({});
+  const newSecretNames = isNew && form.runIn === "broker" ? secretRefs(form) : [];
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const source = props.entry?.config.source ?? { kind: "manual" as const };
 
@@ -329,6 +336,10 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
           if (!yes) return { cancelled: true, cleared: [] as string[] };
         }
         await api("PUT", `/mcp/servers/${enc(config.id)}`, { config });
+        for (const name of newSecretNames) {
+          const value = newSecrets[name];
+          if (value) await api("PUT", `/mcp/servers/${enc(config.id)}/secrets/${enc(name)}`, { value });
+        }
         await props.onSaved(config.id);
         return { cancelled: false, cleared };
       },
@@ -433,6 +444,29 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
         </div>
       )}
       <Placeholders />
+      {newSecretNames.length > 0 && (
+        <div class="subsection">
+          <h3>비밀키</h3>
+          <p class="muted small-text">저장할 때 broker에 함께 저장되고, 그 뒤에는 다시 읽을 수 없습니다.</p>
+          <table class="table compact">
+            <tbody>
+              {newSecretNames.map((name) => (
+                <tr key={name}>
+                  <td class="mono">{name}</td>
+                  <td>
+                    <input
+                      type="password"
+                      autocomplete="new-password"
+                      value={newSecrets[name] ?? ""}
+                      onInput={(e) => setNewSecrets((v) => ({ ...v, [name]: (e.currentTarget as HTMLInputElement).value }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div class="grid-2">
         <label class="field">
           <span>허용할 도구 (쉼표, 비우면 전체)</span>
