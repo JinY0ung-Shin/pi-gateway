@@ -88,7 +88,7 @@ export function StatusPage() {
           </tbody>
         </table>
       </Section>
-      <ToolStats tools={status.tools} />
+      <ToolStats tools={status.tools} turns={status.turns} />
       <Section title="sandbox">
         {status.sandboxes.error && <Notice tone="error">sandboxd 조회 실패: {status.sandboxes.error}</Notice>}
         <table class="table">
@@ -123,9 +123,9 @@ export function StatusPage() {
   );
 }
 
-function ToolStats(props: { tools: ToolStat[] }) {
+function ToolStats(props: { tools: ToolStat[]; turns: StatusView["turns"] }) {
   const [all, setAll] = useState(false);
-  const { tools } = props;
+  const { tools, turns } = props;
   const more = tools.length > TOP_TOOLS && (
     <button class="small" onClick={() => setAll(true)}>
       전체 {tools.length}개 보기
@@ -133,6 +133,10 @@ function ToolStats(props: { tools: ToolStat[] }) {
   );
   return (
     <Section title="도구 사용 (최근 30일)" actions={more}>
+      <p class="muted small-text">
+        턴 {turns.turns.toLocaleString()}개 · 재생성·수정 {turns.branched.toLocaleString()}개
+        {turns.turns > 0 && ` (${((turns.branched / turns.turns) * 100).toFixed(1)}%)`}
+      </p>
       <ToolTable tools={tools.slice(0, TOP_TOOLS)} />
       {all && (
         <Modal title="도구 사용 (최근 30일)" onClose={() => setAll(false)}>

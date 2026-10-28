@@ -167,6 +167,8 @@ export interface StatusView {
   prompt: { name: string | null; version: number | null; isDefault: boolean };
   /** 최근 30일 도구별 호출 (호출이 많은 순). MCP 도구는 `<server id>/<도구 이름>`, skill 읽기는 `skill/<이름>` */
   tools: ToolStat[];
+  /** 최근 30일 commit된 턴. branched는 예전 응답에서 이어간 턴 (메시지 수정·재생성) */
+  turns: { turns: number; branched: number };
 }
 
 export interface ToolStat {

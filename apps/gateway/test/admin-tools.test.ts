@@ -101,3 +101,16 @@ describe("tool stats", () => {
     expect(stat("mcp_call")).toBeUndefined();
   });
 });
+
+describe("turn stats", () => {
+  it("counts committed turns and those continued from an earlier response (edit or regenerate)", async () => {
+    const turns = async () => ((await (await admin("GET", "/status")).json()) as { turns: { turns: number; branched: number } }).turns;
+    const before = await turns();
+    const first = await h.post({ input: "a" });
+    await h.post({ input: "b", previous_response_id: first.json.id });
+    await h.post({ input: "b edited", previous_response_id: first.json.id });
+    const after = await turns();
+    expect(after.turns - before.turns).toBe(3);
+    expect(after.branched - before.branched).toBe(1);
+  });
+});

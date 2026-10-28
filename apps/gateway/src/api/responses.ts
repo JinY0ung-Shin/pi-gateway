@@ -13,6 +13,7 @@ import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError }
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore, TurnPoint } from "../sessions/store.js";
+import type { ToolStats } from "../tools/stats.js";
 import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
 import { emptyUsage, functionCallItem, ResponseEventMapper, type ResponseUsage } from "./mapper.js";
 import {
@@ -46,6 +47,7 @@ export interface ResponsesDeps {
   mcpRegistry: McpRegistry;
   /** `GET /v1/files/content`가 workspace 파일을 읽는다 */
   sandbox: SandboxClient;
+  toolStats: Pick<ToolStats, "countTurn">;
   log: Logger;
 }
 
@@ -375,6 +377,7 @@ async function runLocked(
         sessionFile: sm.getSessionFile() ?? null,
         pendingToolCall: outcome.pending ?? null,
       });
+      deps.toolStats.countTurn(!plan.newSession && plan.prevTurn < record.turn);
       live.record = deps.store.get(record.id) ?? live.record;
       return;
     }
