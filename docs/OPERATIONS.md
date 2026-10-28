@@ -52,6 +52,7 @@ sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh
 - 디렉토리가 root 0700이라 호스트의 다른 사용자는 읽을 수 없다.
 - 파일은 그 비밀값을 쓰는 서비스의 uid만 읽을 수 있다(0400).
 - 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다.
+- 새로 만든 `admin_api_key`·`api_key`는 실행이 끝날 때 한 번 보여준다. 내부용 값은 보여주지 않는다.
 
 **호스트에서 uid 1000이 실제 로그인 사용자인 경우**
 - 그 사용자가 모든 workspace의 소유자로 보인다.
@@ -146,7 +147,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/api_key` | 10001 | gateway | 서비스 키 (`body.user`를 믿는다, BFF용). 빈 파일이면 끈다 |
 | `gateway/user_api_keys` | 10001 | gateway | `{"사용자":"키"}`. 키가 사용자를 정한다 |
 | `gateway/admin_api_key` | 10001 | gateway | 관리 화면 로그인 키. 빈 파일이면 관리 화면이 꺼진다 |
-| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token (사용자 이름은 `x-access-token`). marketplace와 같은 호스트에만 보낸다. 빈 파일이면 쓰지 않는다 |
+| `gateway/plugin_git_token` | 10001 | gateway | 비공개 plugin marketplace 저장소의 git token (사용자 이름은 `x-access-token`). marketplace와 같은 호스트에만 보낸다. `setup-host.sh`가 파일을 처음 만들 때 입력을 받는다. 빈 파일이면 쓰지 않는다 |
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |

@@ -37,6 +37,10 @@ install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/br
 
 rand() { openssl rand -base64 "$1" | tr -d '\n'; }
 
+# 새로 만든 값 중 운영자가 직접 쓰는 키만 끝에 보여준다. 내부용 값(JWT secret, broker_kek)은 보여주지 않는다.
+SHOW_NEW=" admin_api_key api_key "
+shown=""
+
 # put <value> <path> <uid>: 0400, uid 소유로 쓴다
 put() {
   local value="$1" path="$2" owner="$3" tmp
@@ -72,11 +76,19 @@ secret() {
     else
       put "$value" "$path" "$owner"
       echo "create $path"
+      case "$SHOW_NEW" in *" $name "*) shown+="  $name: $value"$'\n' ;; esac
     fi
   done
 }
 gen48() { rand 48; }
 gen32() { rand 32; }
+# 입력을 화면에 보이지 않게 받는다. 비우면(또는 입력이 없으면) 빈 값
+ask_git_token() {
+  local token=""
+  read -rsp "private plugin marketplace git token (e.g. ghp_..., empty to skip): " token || true
+  echo >&2
+  printf '%s' "$token"
+}
 
 G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
 secret sandboxd_jwt_secret gen48 "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
@@ -86,8 +98,8 @@ secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
 secret api_key             gen32 "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)
 secret user_api_keys       empty "$G/user_api_keys:$GW_UID"
-# 비공개 plugin marketplace 저장소의 git token은 운영자가 채운다 (빈 파일 = 쓰지 않음)
-secret plugin_git_token    empty "$G/plugin_git_token:$GW_UID"
+# 비공개 plugin marketplace 저장소의 git token: 파일이 없을 때만 묻는다 (빈 파일 = 쓰지 않음)
+secret plugin_git_token    ask_git_token "$G/plugin_git_token:$GW_UID"
 
 if [ -S "$DOCKER_SOCK" ]; then
   gid="$(stat -c %g "$DOCKER_SOCK")"
@@ -109,6 +121,12 @@ add_env() {
 add_env PI_GATEWAY_HOME "$PI_GATEWAY_HOME"
 add_env PI_GATEWAY_SECRETS "$SECRETS"
 [ -n "$gid" ] && add_env DOCKER_GID "$gid"
+
+if [ -n "$shown" ]; then
+  echo
+  echo "new keys (shown only now; also in $G):"
+  printf '%s' "$shown"
+fi
 
 echo
 echo "next:"
