@@ -262,7 +262,7 @@ export function AgentsPage(props: { focus?: string | undefined }) {
   );
 }
 
-/** agent가 실행될 때 받는 것. 하위 세션에는 skill 목록을 넣지 않고 AskUserQuestion·present_file·Agent·SendMessage도 주지 않는다. */
+/** agent가 실행될 때 받는 것. 하위 세션에는 skill 목록을 넣지 않고 AskUserQuestion·present_file·request_admin·Agent·SendMessage도 주지 않는다. */
 function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean; declared: string[] | undefined }) {
   const { toolset } = props;
   return (
@@ -309,7 +309,7 @@ function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean;
         </tr>
         <tr>
           <th>frontmatter tools</th>
-          <td>{props.declared ? <span class="mono">{props.declared.join(", ")}</span> : <span class="muted">지정 안 함 (AskUserQuestion·present_file·Agent·SendMessage를 뺀 전부)</span>}</td>
+          <td>{props.declared ? <span class="mono">{props.declared.join(", ")}</span> : <span class="muted">지정 안 함 (AskUserQuestion·present_file·request_admin·Agent·SendMessage를 뺀 전부)</span>}</td>
         </tr>
       </tbody>
     </table>

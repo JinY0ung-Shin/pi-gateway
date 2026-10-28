@@ -10,6 +10,7 @@ import { registerLlmRoutes } from "./routes-llm.js";
 import { registerMcpRoutes } from "./routes-mcp.js";
 import { registerPluginRoutes } from "./routes-plugins.js";
 import { registerPromptRoutes } from "./routes-prompts.js";
+import { registerRequestRoutes } from "./routes-requests.js";
 import { registerStatusRoutes } from "./routes-status.js";
 import { registerToolRoutes } from "./routes-tools.js";
 import { registerAdminUi } from "./ui.js";
@@ -93,4 +94,5 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   registerChatRoutes(api, ctx);
   registerLlmRoutes(api, ctx);
   registerHistoryRoutes(api, ctx);
+  registerRequestRoutes(api, ctx);
 }

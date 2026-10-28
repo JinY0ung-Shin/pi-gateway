@@ -176,6 +176,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 
 **agent가 직접 설치하는 경우**
 - `pip install`과 `npm install -g`는 agent의 workspace(`/workspace/.home`) 안에 설치된다.
+- 패키지 저장소가 허용 목록([§6](#6-네트워크-차단-규칙))에 없으면 설치는 실패한다. 그때 agent는 `request_admin`으로 관리 화면 "요청" 페이지에 요청을 남긴다. 이미지에 넣거나 허용 목록을 열어 처리하고 요청을 지운다.
 - 사용자마다 따로이고, 재시작해도 남는다.
 
 **관리자가 미리 넣는 경우**: 모든 사용자가 같이 쓰는 도구는 기본 이미지를 `FROM`으로 쓰는 파생 이미지에 시스템 경로로 설치하고, `.env`의 `SANDBOX_IMAGE`로 지정한 뒤 `docker compose up -d sandboxd`로 적용한다. 실행 중인 sandbox에 바로 적용하려면 [§3.5](#35-중지재시작업데이트)처럼 지운다 (workspace는 남는다). 마지막 `USER`는 `1000:1000`이어야 하고, `/usr/local/bin/sbx-run`·`sbx-fs`·`sbx-proxy-bridge`와 `/usr/local/lib/pi-sbx`는 그대로 둔다. 설치 뒤 setuid/setgid 비트를 지우고(`find / -xdev -perm /6000 -type f -exec chmod a-s {} +`), 비밀값은 넣지 않는다.

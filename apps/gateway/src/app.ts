@@ -20,6 +20,7 @@ import { SessionHub } from "./sessions/hub.js";
 import { TurnLimiter } from "./sessions/limiter.js";
 import { SessionStore } from "./sessions/store.js";
 import { createDefaultToolProviders, ToolRegistry } from "./tools/registry.js";
+import { AdminRequests } from "./tools/request-admin.js";
 import { ToolSettings } from "./tools/settings.js";
 
 /**
@@ -60,10 +61,12 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
 
   const models = await createModelRuntime(db);
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
+  const adminRequests = new AdminRequests(db);
   const providers = createDefaultToolProviders({
     mcpRegistry,
     broker: config.broker,
     mcpCache: new McpToolCache(),
+    adminRequests,
   });
   const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));
   const toolSettings = new ToolSettings(db);
@@ -121,6 +124,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       sandboxes: () => sandboxClient.list(),
       llm: models,
       toolSettings,
+      adminRequests,
       sessions: store,
       chat: {
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),

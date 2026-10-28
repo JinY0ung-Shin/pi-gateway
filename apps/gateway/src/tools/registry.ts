@@ -6,7 +6,9 @@ import type { McpToolCache } from "../mcp-client/connections.js";
 import type { ToolProvider, ToolSessionContext } from "./provider.js";
 import { createAskUserToolProvider } from "./providers/ask-user.js";
 import { createMcpToolProvider } from "./providers/mcp.js";
+import { createRequestAdminToolProvider } from "./providers/request-admin.js";
 import { createSandboxToolProvider } from "./providers/sandbox.js";
+import type { AdminRequests } from "./request-admin.js";
 
 /**
  * 도구 provider들을 합친다.
@@ -18,6 +20,7 @@ export interface DefaultProviderDeps {
   mcpRegistry: McpRegistry;
   broker: GatewayConfig["broker"];
   mcpCache: McpToolCache;
+  adminRequests: AdminRequests;
 }
 
 /** 등록된 provider 목록 (순서 = 도구 순서). 도구 이름은 provider끼리 겹치지 않는다 (MCP 도구는 mcp__ 접두사). */
@@ -25,6 +28,7 @@ export function createDefaultToolProviders(deps: DefaultProviderDeps): ToolProvi
   return [
     createSandboxToolProvider(),
     createAskUserToolProvider(),
+    createRequestAdminToolProvider(deps.adminRequests),
     createMcpToolProvider({ registry: deps.mcpRegistry, broker: deps.broker, cache: deps.mcpCache }),
   ];
 }

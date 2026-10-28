@@ -9,6 +9,7 @@ import type { McpRegistryService } from "./mcp-registry/service.js";
 import type { PluginService } from "./plugins/service.js";
 import type { PromptManager } from "./prompts/service.js";
 import type { SessionStore } from "./sessions/store.js";
+import type { AdminRequests } from "./tools/request-admin.js";
 import type { ToolSettings } from "./tools/settings.js";
 
 /**
@@ -107,4 +108,6 @@ export interface AdminDeps {
   };
   /** 대화 기록 보기와 보관 기간 */
   sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;
+  /** agent가 request_admin으로 남긴 요청 */
+  adminRequests: Pick<AdminRequests, "add" | "list" | "remove">;
 }

@@ -10,6 +10,7 @@ import { Login } from "./pages/Login";
 import { McpPage } from "./pages/Mcp";
 import { PluginsPage } from "./pages/Plugins";
 import { PromptsPage } from "./pages/Prompts";
+import { RequestsPage } from "./pages/Requests";
 import { StatusPage } from "./pages/Status";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
@@ -27,6 +28,7 @@ const PAGES = [
   { id: "status", group: "운영", label: "상태", desc: "LLM·broker·sandboxd 연결과 세션·sandbox·메모리 현황 (10초마다 갱신)" },
   { id: "chat", group: "운영", label: "채팅 테스트", desc: "운영과 같은 도구·MCP·skill 구성으로 대화해 봅니다" },
   { id: "history", group: "운영", label: "대화 기록", desc: "서버에 저장된 세션의 대화·시스템 프롬프트와 보관 기간" },
+  { id: "requests", group: "운영", label: "요청", desc: "agent가 request_admin으로 남긴 요청 (패키지 설치, 막힌 도메인, 없는 도구 등). 처리하면 지웁니다" },
 ] as const;
 const GROUPS = [...new Set(PAGES.map((p) => p.group))];
 type PageId = (typeof PAGES)[number]["id"];
@@ -108,6 +110,7 @@ function App() {
         {route.page === "status" && <StatusPage />}
         {route.page === "chat" && <ChatPage />}
         {route.page === "history" && <HistoryPage focus={route.arg} />}
+        {route.page === "requests" && <RequestsPage />}
       </main>
     </div>
   );

@@ -163,6 +163,7 @@ apps/gateway/src/tools/
   providers/
     sandbox.ts         read, write, edit, ls, find, bash, grep, present_file
     ask-user.ts        AskUserQuestion
+    request-admin.ts   request_admin (관리자에게 요청 남기기)
     mcp.ts             MCP 서버 (broker·sandbox)
 ```
 

@@ -171,6 +171,6 @@ describe("offered tools", () => {
   it("declares the default tools to the model", async () => {
     const before = h.llm.requests.length;
     await h.post({ input: "tools?" });
-    expect(toolNames(before)).toEqual(["AskUserQuestion", "bash", "edit", "find", "grep", "ls", "present_file", "read", "write"]);
+    expect(toolNames(before)).toEqual(["AskUserQuestion", "bash", "edit", "find", "grep", "ls", "present_file", "read", "request_admin", "write"]);
   });
 });

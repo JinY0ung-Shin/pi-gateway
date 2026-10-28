@@ -27,6 +27,7 @@ import { McpRegistryService } from "../../src/mcp-registry/service.js";
 import { PluginService } from "../../src/plugins/service.js";
 import { PromptManager } from "../../src/prompts/service.js";
 import { SessionStore } from "../../src/sessions/store.js";
+import { AdminRequests } from "../../src/tools/request-admin.js";
 import { ToolSettings } from "../../src/tools/settings.js";
 
 export const ADMIN_KEY = "admin-key-for-tests-0123456789";
@@ -122,6 +123,7 @@ export async function buildHarness(options: {
     llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },
     sessions: new SessionStore(db),
     toolSettings: new ToolSettings(db),
+    adminRequests: new AdminRequests(db),
   };
   await registerAdminRoutes(app, deps);
   await app.ready();

@@ -283,6 +283,7 @@ describe("plugin installer (fixture marketplace)", () => {
     expect(tools.map((t) => `${t.name}@${t.runsIn}`)).toEqual([
       ...["read", "write", "edit", "ls", "find", "bash", "grep", "present_file"].map((n) => `${n}@sandbox`),
       "AskUserQuestion@gateway",
+      "request_admin@gateway",
       "Agent@gateway",
       "SendMessage@gateway",
     ]);

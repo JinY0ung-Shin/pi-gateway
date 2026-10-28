@@ -8,13 +8,14 @@ import { Type } from "typebox";
 import type { SubagentDefinition } from "../contracts.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL } from "../tools/present-file.js";
+import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
 
 /**
  * Agent·SendMessage — plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
  * - 하위 세션은 gateway 프로세스 안에서 만들고 부모 세션의 도구 정의를 그대로 쓴다. 파일·명령은 부모와
  *   같은 sandbox에서, 비밀키가 필요한 호출은 broker에서 실행되므로 격리 규칙이 그대로 지켜진다.
  * - 호출이 끝나면 하위 세션을 바로 정리한다. 기록은 JSONL로 남기고, SendMessage가 그 기록을 다시 열어 이어서 실행한다.
- * - 하위 세션에는 Agent·SendMessage·AskUserQuestion·present_file을 주지 않는다 (깊이 1, 사용자와는 부모만 대화한다).
+ * - 하위 세션에는 Agent·SendMessage·AskUserQuestion·present_file·request_admin을 주지 않는다 (깊이 1, 사용자와는 부모만 대화한다).
  */
 
 export const AGENT_TOOL = "Agent";
@@ -46,7 +47,7 @@ export interface SubagentContext {
 
 /** agent가 쓸 도구: frontmatter `tools`가 있으면 그 목록만 (모르는 이름은 무시한다) */
 export function subagentTools(agent: SubagentDefinition, tools: ToolDefinition[]): ToolDefinition[] {
-  const usable = tools.filter((t) => t.name !== ASK_USER_TOOL && t.name !== PRESENT_FILE_TOOL);
+  const usable = tools.filter((t) => t.name !== ASK_USER_TOOL && t.name !== PRESENT_FILE_TOOL && t.name !== REQUEST_ADMIN_TOOL);
   if (!agent.tools) return usable;
   const allowed = new Set(
     agent.tools.flatMap((name) => {

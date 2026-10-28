@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { createSubagentTools, subagentTools } from "../agent/subagents.js";
 import type { ToolSessionContext } from "../tools/provider.js";
 import { createAskUserToolProvider } from "../tools/providers/ask-user.js";
+import { createRequestAdminToolProvider } from "../tools/providers/request-admin.js";
 import { createSandboxToolProvider } from "../tools/providers/sandbox.js";
 import type { AdminContext } from "./context.js";
 import { PlatformError } from "./errors.js";
@@ -20,6 +21,7 @@ export function registerToolRoutes(app: FastifyInstance, ctx: AdminContext): voi
     const sandbox = await createSandboxToolProvider().createTools(unused);
     const gateway = [
       ...(await createAskUserToolProvider().createTools(unused)),
+      ...(await createRequestAdminToolProvider(ctx.adminRequests).createTools(unused)),
       ...createSubagentTools({ agents, tools: [], dir: "", open: () => Promise.reject(new Error("not used")) }),
     ];
     return { agents, sandbox, gateway };
