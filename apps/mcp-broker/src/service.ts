@@ -65,10 +65,13 @@ export class BrokerService {
     return Math.min(server.config.timeoutSec, this.#config.limits.callTimeoutCapSeconds);
   }
 
-  /** enabled이고 필요한 비밀키가 모두 있는 서버 */
+  /**
+   * enabled인 서버. 비밀키가 빠져 있어도 막지 않는다: 빈 값으로 보내고 업스트림이 그 값이 필요한 호출만 거절한다.
+   * (빠진 비밀키는 관리 화면에 경고로만 보인다.)
+   */
   #usable(serverId: string): StoredServer {
     const server = this.#store.getServer(serverId);
-    if (!server || !server.config.enabled || this.#store.missingSecrets(server).length > 0) {
+    if (!server || !server.config.enabled) {
       throw new ServerUnavailableError(`MCP server '${serverId}' is not available`);
     }
     return server;
@@ -86,7 +89,7 @@ export class BrokerService {
   visibleServers(_identity: Identity): VisibleServer[] {
     const out: VisibleServer[] = [];
     for (const server of this.#store.listServers()) {
-      if (!server.config.enabled || this.#store.missingSecrets(server).length > 0) continue;
+      if (!server.config.enabled) continue;
       const view: VisibleServer = { id: server.config.id, timeoutSec: this.#effectiveTimeoutSec(server) };
       if (server.config.displayName) view.displayName = server.config.displayName;
       if (server.config.description) view.description = server.config.description;
@@ -257,8 +260,6 @@ export class BrokerService {
     const identity: Identity = { sub: "_admin", sid: `admin-test-${randomUUID()}` };
     let redactor = new Redactor([]);
     try {
-      const missing = this.#store.missingSecrets(server);
-      if (missing.length > 0) return { ok: false, error: `missing secrets: ${missing.join(", ")}`, durationMs: 0 };
       const prepared = this.#prepare(server, identity);
       redactor = prepared.redactor;
       const conn = await connectUpstream(prepared.rendered.transport, {

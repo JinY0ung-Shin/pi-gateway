@@ -284,7 +284,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
     return {
       servers: [...servers.values()]
-        .filter((c) => c.enabled && view(c).missingSecrets.length === 0)
+        .filter((c) => c.enabled)
         .map((c) => ({ id: c.id, ...(c.displayName ? { displayName: c.displayName } : {}), timeoutSec: c.timeoutSec })),
     };
   });

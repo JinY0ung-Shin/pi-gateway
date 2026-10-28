@@ -178,7 +178,7 @@ describe("admin plane", () => {
     expect(JSON.stringify(events)).not.toContain("audit-secret-value");
   });
 
-  it("데이터 평면 목록에는 enabled이고 비밀키가 다 있는 서버만 나온다", async () => {
+  it("데이터 평면 목록에는 enabled인 서버가 나온다 (비밀키가 빠져도 숨기지 않는다)", async () => {
     await tb.admin("PUT", "/admin/servers/vis-ready", httpServer("vis-ready"));
     await tb.admin("PUT", "/admin/servers/vis-ready/secrets/TOKEN", { value: "ready-secret-1" });
     await tb.admin("PUT", "/admin/servers/vis-missing", httpServer("vis-missing"));
@@ -191,7 +191,7 @@ describe("admin plane", () => {
     });
     const ids = (res.json().servers as { id: string }[]).map((s) => s.id);
     expect(ids).toContain("vis-ready");
-    expect(ids).not.toContain("vis-missing");
+    expect(ids).toContain("vis-missing");
     expect(ids).not.toContain("vis-off");
     const ready = (res.json().servers as { id: string; timeoutSec: number; displayName?: string }[]).find((s) => s.id === "vis-ready");
     expect(ready).toMatchObject({ timeoutSec: 120, displayName: "Server vis-ready" });

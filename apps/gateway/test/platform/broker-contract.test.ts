@@ -58,7 +58,7 @@ async function scenario(b: TestBroker): Promise<unknown[]> {
   out.push(["update", r.status]);
   r = await adminCall(b, "GET", "/admin/servers/docs");
   out.push(["get", r.status, r.json?.config?.displayName]);
-  out.push(["hidden without secret", await visible()]);
+  out.push(["visible without secret", await visible()]);
   r = await adminCall(b, "PUT", "/admin/servers/docs/secrets/T", { value: "s3cr3t-value-123" });
   out.push(["put secret", r.status]);
   r = await adminCall(b, "GET", "/admin/servers/docs");
@@ -73,7 +73,7 @@ async function scenario(b: TestBroker): Promise<unknown[]> {
     transport: { ...docs.transport, headers: { Authorization: "Bearer {{secret:T}}", "X-Extra": "1" } },
   });
   out.push(["header change clears secret", r.status, r.json?.missingSecrets]);
-  out.push(["hidden after clear", await visible()]);
+  out.push(["visible after clear", await visible()]);
   const rejected: [string, Record<string, unknown>][] = [
     ["literal credential", { ...docs, id: "lit", transport: { type: "http", url: "https://x.example.com/mcp", headers: { Authorization: "Bearer abc" } } }],
     ["stdio", { id: "stdiosrv", runIn: "broker", transport: { type: "stdio", command: "node", args: ["x.js"] } }],
@@ -139,14 +139,14 @@ describe("broker contract (fake vs real createBroker)", () => {
       ["create", 201, ["T"]],
       ["update", 200],
       ["get", 200, "Docs"],
-      ["hidden without secret", [200, []]],
+      ["visible without secret", [200, ["docs"]]],
       ["put secret", 204],
       ["secret set", [], ["T"], false],
       ["visible", [200, ["docs"]]],
       ["cosmetic edit keeps secret", 200, []],
       ["header name case keeps secret", 200, []],
       ["header change clears secret", 200, ["T"]],
-      ["hidden after clear", [200, []]],
+      ["visible after clear", [200, ["docs"]]],
       ["literal credential", 400, "invalid_request"],
       ["stdio", 400, "invalid_request"],
       ["reserved id", 400, "invalid_request"],

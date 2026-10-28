@@ -172,7 +172,7 @@ function Placeholders() {
           </tr>
           <tr>
             <td class="mono">{"{{ctx.header:NAME}}"}</td>
-            <td>클라이언트 요청 헤더 (broker 서버만)</td>
+            <td>클라이언트 요청 헤더 (broker 서버만). 개인 토큰처럼 사용자마다 다른 값은 이것을 쓴다</td>
           </tr>
           <tr>
             <td class="mono">{"{{user}}"}</td>

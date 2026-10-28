@@ -161,6 +161,19 @@ describe("data plane (pi-mcp client ↔ broker ↔ upstream fixture)", { timeout
     expect(res.statusCode).toBe(404);
   });
 
+  it("빠진 비밀키가 있어도 서버를 막지 않고 빈 값으로 보낸다 (#2)", async () => {
+    await tb.addHttpServer("partial", http.url, { headers: { "X-Leak": "{{secret:LEAK}}", "X-Optional": "{{secret:OPTIONAL}}" } });
+    expect((await tb.admin("PUT", "/admin/servers/partial/secrets/LEAK", { value: LEAK })).status).toBe(204);
+    expect((await tb.admin("GET", "/admin/servers/partial")).json().missingSecrets).toEqual(["OPTIONAL"]);
+    const client = await piClient(tb, "partial", { sub: "erin", sid: "e1" });
+    expect((await client.listTools()).map((t) => t.name)).toContain("whoami");
+    await client.callTool("whoami", {});
+    const sent = http.requests.filter((r) => r.method === "POST").at(-1)!.headers;
+    expect(sent["x-leak"]).toBe(LEAK);
+    expect(sent["x-optional"] ?? "").toBe("");
+    await client.close();
+  });
+
   it("비밀키를 바꾸면 새 연결이 새 값으로 붙는다", async () => {
     const client = await piClient(tb, "echo", { sub: "dave", sid: "d1" });
     await client.callTool("whoami", {});

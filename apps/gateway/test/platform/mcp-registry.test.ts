@@ -163,7 +163,7 @@ describe("MCP registry", () => {
   it("brokerServersFor는 내부 JWT로 broker 데이터 평면을 부르고, 실패하면 빈 목록이다", async () => {
     h = await buildHarness({ env: brokerEnv(broker.url) });
     await h.mcp.upsert({ ...brokerServer, id: "docs", transport: { type: "http", url: "https://docs.example.com/mcp", headers: {} } });
-    await h.mcp.upsert(brokerServer); // 비밀키가 없어서 보이지 않는다
+    await h.mcp.upsert({ ...brokerServer, enabled: false }); // 꺼진 서버는 보이지 않는다
     expect(await h.mcp.brokerServersFor("alice", "sess-1")).toEqual([{ id: "docs", timeoutSec: 120 }]);
     await broker.close();
     expect(await h.mcp.brokerServersFor("alice", "sess-1")).toEqual([]);

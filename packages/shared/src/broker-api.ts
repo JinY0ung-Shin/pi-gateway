@@ -10,7 +10,7 @@ import { McpServerConfig } from "./mcp-config.js";
  *     (pi-mcp 클라이언트가 2025-11-25만 지원한다.) GET/DELETE는 405로 답해도 된다.
  *     도구 목록은 toolAllow/toolDeny로 거른 결과다. 도구 이름은 MCP 원래 이름 그대로다
  *     (`mcp__…` 접두사는 gateway가 붙인다).
- *   - GET  /mcp/servers    — 이 사용자가 쓸 수 있는(enabled + 필요한 비밀키가 다 있는) 서버 목록
+ *   - GET  /mcp/servers    — 이 사용자가 쓸 수 있는(enabled) 서버 목록. 빠진 비밀키는 빈 값으로 보낸다
  *
  * 관리 평면 (BROKER_ADMIN_PORT, control 네트워크)
  *   - 인증: `Authorization: Bearer <internal JWT, aud=AUD_BROKER_ADMIN>`.
