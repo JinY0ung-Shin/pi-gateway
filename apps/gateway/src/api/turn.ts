@@ -1,5 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Logger } from "pino";
+import { limitToolCalls } from "../agent/tool-call-limit.js";
 import type { LiveSession } from "../sessions/hub.js";
 import type { PendingToolCall } from "../sessions/store.js";
 import type { ResponseEventMapper } from "./mapper.js";
@@ -50,6 +51,7 @@ export async function executeTurn(input: {
     void session.abort();
   };
   signal.addEventListener("abort", onAbort, { once: true });
+  const stopLimit = limitToolCalls(session);
   let thrown: unknown;
   try {
     if (signal.aborted) throw new Error("aborted");
@@ -60,8 +62,11 @@ export async function executeTurn(input: {
     signal.removeEventListener("abort", onAbort);
     unsubscribe();
   }
+  const limited = stopLimit();
 
   if (signal.aborted) return { status: "aborted", leafBefore };
+  // 상한에 걸려 멈춘 턴은 취소처럼 그때까지의 내용을 남기고 incomplete로 끝낸다.
+  if (limited) return { status: "incomplete", incompleteReason: "max_tool_calls", leafBefore };
   if (thrown) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     log.warn({ err: thrown }, "turn failed before completion");

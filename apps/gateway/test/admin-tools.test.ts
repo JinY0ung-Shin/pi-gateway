@@ -1,7 +1,7 @@
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
-import { type Harness, startHarness } from "./helpers.js";
+import { type Harness, last, startHarness } from "./helpers.js";
 
 const ADMIN_KEY = "admin-key-for-tests-0123456789";
 
@@ -112,5 +112,42 @@ describe("turn stats", () => {
     const after = await turns();
     expect(after.turns - before.turns).toBe(3);
     expect(after.branched - before.branched).toBe(1);
+  });
+});
+
+describe("user token usage", () => {
+  it("adds each LLM call's tokens to the user, cached tokens included in input", async () => {
+    type Row = { user: string; llmCalls: number; inputTokens: number; cachedTokens: number; outputTokens: number };
+    const alice = async () =>
+      ((await (await admin("GET", "/status")).json()) as { users: Row[] }).users.find((u) => u.user === "alice") ??
+      { llmCalls: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0 };
+    const before = await alice();
+    h.llm.enqueue({ text: "ok", usage: { prompt_tokens: 1000, completion_tokens: 50, cached_tokens: 400 } });
+    await h.post({ input: "count me" });
+    const after = await alice();
+    expect(after.llmCalls - before.llmCalls).toBe(1);
+    expect(after.inputTokens - before.inputTokens).toBe(1000);
+    expect(after.cachedTokens - before.cachedTokens).toBe(400);
+    expect(after.outputTokens - before.outputTokens).toBe(50);
+  });
+});
+
+describe("active turns", () => {
+  it("lists a running turn and stops it from the admin API", async () => {
+    h.llm.enqueue({ textChunks: Array.from({ length: 50 }, (_, i) => `c${i} `), chunkDelayMs: 50 });
+    const streaming = h.stream({ input: "long task" });
+    type Active = { user: string; responseId: string };
+    let active: Active[] = [];
+    for (let i = 0; i < 40 && active.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      active = ((await (await admin("GET", "/status")).json()) as { activeTurns: Active[] }).activeTurns;
+    }
+    expect(active).toHaveLength(1);
+    expect(active[0]!.user).toBe("alice");
+
+    const stop = await admin("POST", `/chat/${active[0]!.responseId}/cancel?user=alice`);
+    expect(stop.status).toBe(200);
+    const end = last((await streaming).events);
+    expect((end.data.response as { incomplete_details: unknown }).incomplete_details).toEqual({ reason: "user_cancelled" });
   });
 });

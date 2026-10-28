@@ -81,6 +81,13 @@ export interface SessionStats {
   queuedTurns: number;
 }
 
+/** 실행 중인 턴 (관리 화면에서 멈출 수 있다) */
+export interface ActiveTurn {
+  user: string;
+  responseId: string;
+  startedAt: string;
+}
+
 export interface AdminDeps {
   config: GatewayConfig;
   db: Db;
@@ -90,14 +97,15 @@ export interface AdminDeps {
   mcp: McpRegistryService;
   /** 세션 실시간 통계 */
   stats: () => SessionStats;
+  activeTurns: () => ActiveTurn[];
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
   /** LLM 연결 설정 (관리 화면에서 바꾸면 바로 적용된다) */
   llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update">;
   /** 기본 도구 켜고 끄기 (메모리의 세션도 다음 턴부터 적용된다) */
   toolSettings: Pick<ToolSettings, "disabled" | "setEnabled">;
-  /** 도구별 호출과 턴 통계 (최근 30일) */
-  toolStats: Pick<ToolStats, "summary" | "turns">;
+  /** 도구별 호출·턴·사용자별 토큰 통계 (최근 30일) */
+  toolStats: Pick<ToolStats, "summary" | "turns" | "users">;
   /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`·`…/{id}/cancel`과 같은 처리를 한다 (body.user·?user=를 믿는다) */
   chat: {
     respond: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;

@@ -1,13 +1,14 @@
+import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
-import { formatBytes, formatTime } from "../api";
-import { Badge, Modal, Notice, Section, useLoad } from "../components";
-import type { ServiceCheck, StatusView, ToolStat } from "../types";
+import { api, enc, formatBytes, formatTime } from "../api";
+import { Badge, Modal, Notice, Section, useAction, useLoad } from "../components";
+import type { ServiceCheck, StatusView, ToolStat, UserUsage } from "../types";
 
-/** 상태 화면에 바로 보이는 도구 수. 나머지는 전체 보기에서 */
-const TOP_TOOLS = 10;
+/** 통계 표에 바로 보이는 줄 수. 나머지는 전체 보기에서 */
+const TOP_ROWS = 10;
 
 export function StatusPage() {
-  const { data: status, error } = useLoad<StatusView>("/status", 10_000);
+  const { data: status, error, reload } = useLoad<StatusView>("/status", 10_000);
 
   if (error && !status) return <Notice tone="error">{error}</Notice>;
   if (!status) return <p class="muted">불러오는 중…</p>;
@@ -66,6 +67,7 @@ export function StatusPage() {
         <Stat label="gateway RSS" value={formatBytes(status.process.rssBytes)} />
         <Stat label="heap" value={`${formatBytes(status.process.heapUsedBytes)} / ${formatBytes(status.process.heapTotalBytes)}`} />
       </div>
+      {status.activeTurns.length > 0 && <ActiveTurns turns={status.activeTurns} reload={reload} />}
       <Section title="구성">
         <table class="table compact">
           <tbody>
@@ -88,7 +90,13 @@ export function StatusPage() {
           </tbody>
         </table>
       </Section>
-      <ToolStats tools={status.tools} turns={status.turns} />
+      <Ranked title="도구 사용 (최근 30일)" rows={status.tools} table={(rows) => <ToolTable tools={rows} />}>
+        <p class="muted small-text">
+          턴 {status.turns.turns.toLocaleString()}개 · 재생성·수정 {status.turns.branched.toLocaleString()}개
+          {status.turns.turns > 0 && ` (${((status.turns.branched / status.turns.turns) * 100).toFixed(1)}%)`}
+        </p>
+      </Ranked>
+      <Ranked title="사용자별 토큰 (최근 30일)" rows={status.users} table={(rows) => <UserTable users={rows} />} />
       <Section title="sandbox">
         {status.sandboxes.error && <Notice tone="error">sandboxd 조회 실패: {status.sandboxes.error}</Notice>}
         <table class="table">
@@ -123,24 +131,61 @@ export function StatusPage() {
   );
 }
 
-function ToolStats(props: { tools: ToolStat[]; turns: StatusView["turns"] }) {
+function ActiveTurns(props: { turns: StatusView["activeTurns"]; reload: () => Promise<void> }) {
+  const action = useAction();
+  // 멈춘 턴은 그때까지의 내용을 남기고 incomplete(user_cancelled)로 끝난다.
+  const stop = (t: StatusView["activeTurns"][number]) =>
+    action.run(async () => {
+      await api("POST", `/chat/${enc(t.responseId)}/cancel?user=${enc(t.user)}`);
+      await props.reload();
+    }, "중지했습니다.");
+  return (
+    <Section title="실행 중인 턴">
+      {action.view}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>사용자</th>
+            <th>응답</th>
+            <th class="num">경과</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {props.turns.map((t) => (
+            <tr key={t.responseId}>
+              <td>{t.user}</td>
+              <td class="mono">{t.responseId}</td>
+              <td class="num">{Math.round((Date.now() - Date.parse(t.startedAt)) / 1000)}초</td>
+              <td class="actions">
+                <button class="small danger" disabled={action.busy} onClick={() => void stop(t)}>
+                  중지
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Section>
+  );
+}
+
+/** 상위 TOP_ROWS줄만 보이고 나머지는 전체 보기 창에서 보는 표 */
+function Ranked<T>(props: { title: string; rows: T[]; table: (rows: T[]) => JSX.Element; children?: ComponentChildren }) {
   const [all, setAll] = useState(false);
-  const { tools, turns } = props;
-  const more = tools.length > TOP_TOOLS && (
+  const { rows } = props;
+  const more = rows.length > TOP_ROWS && (
     <button class="small" onClick={() => setAll(true)}>
-      전체 {tools.length}개 보기
+      전체 {rows.length}개 보기
     </button>
   );
   return (
-    <Section title="도구 사용 (최근 30일)" actions={more}>
-      <p class="muted small-text">
-        턴 {turns.turns.toLocaleString()}개 · 재생성·수정 {turns.branched.toLocaleString()}개
-        {turns.turns > 0 && ` (${((turns.branched / turns.turns) * 100).toFixed(1)}%)`}
-      </p>
-      <ToolTable tools={tools.slice(0, TOP_TOOLS)} />
+    <Section title={props.title} actions={more}>
+      {props.children}
+      {props.table(rows.slice(0, TOP_ROWS))}
       {all && (
-        <Modal title="도구 사용 (최근 30일)" onClose={() => setAll(false)}>
-          <ToolTable tools={tools} />
+        <Modal title={props.title} onClose={() => setAll(false)}>
+          {props.table(rows)}
         </Modal>
       )}
     </Section>
@@ -172,6 +217,40 @@ function ToolTable(props: { tools: ToolStat[] }) {
             <td class="num">{t.calls.toLocaleString()}</td>
             <td class="num">{t.errors > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "0%"}</td>
             <td class="num">{t.avgMs < 1000 ? `${t.avgMs}ms` : `${(t.avgMs / 1000).toFixed(1)}s`}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function UserTable(props: { users: UserUsage[] }) {
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          <th>사용자</th>
+          <th class="num">LLM 호출</th>
+          <th class="num">입력 토큰</th>
+          <th class="num">캐시 비율</th>
+          <th class="num">출력 토큰</th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.users.length === 0 && (
+          <tr>
+            <td colSpan={5} class="muted">
+              아직 사용 기록이 없습니다.
+            </td>
+          </tr>
+        )}
+        {props.users.map((u) => (
+          <tr key={u.user}>
+            <td>{u.user}</td>
+            <td class="num">{u.llmCalls.toLocaleString()}</td>
+            <td class="num">{u.inputTokens.toLocaleString()}</td>
+            <td class="num">{u.inputTokens > 0 ? `${((u.cachedTokens / u.inputTokens) * 100).toFixed(1)}%` : "-"}</td>
+            <td class="num">{u.outputTokens.toLocaleString()}</td>
           </tr>
         ))}
       </tbody>

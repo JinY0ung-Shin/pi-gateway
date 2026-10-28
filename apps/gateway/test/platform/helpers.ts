@@ -119,6 +119,7 @@ export async function buildHarness(options: {
     plugins,
     mcp,
     stats: () => ({ liveSessions: 2, activeTurns: 1, queuedTurns: 0 }),
+    activeTurns: () => [],
     sandboxes: async () => [{ key: "u-abc", containerName: "sbx-u-abc", state: "running" }],
     chat: { respond: async () => ({}), cancel: async () => ({}), preview: async () => ({}), file: async () => ({}), forwardHeaders: () => mcp.forwardHeaders() },
     llm: { list: () => [], defaultModel: () => undefined, current: () => null, update: async () => Promise.reject(new Error("not used")) },

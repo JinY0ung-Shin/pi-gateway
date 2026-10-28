@@ -190,6 +190,14 @@ export class SessionHub {
     return { liveSessions: this.live.size };
   }
 
+  /** 실행 중인 턴. 턴 동안에는 세션 lock 때문에 lastActive가 턴 시작 시각 그대로다. */
+  activeTurns(): { user: string; sessionId: string; turn: number; startedAt: number }[] {
+    return [...this.live.values()]
+      .filter((l) => l.activeTurn)
+      .map((l) => ({ user: l.record.principal, sessionId: l.record.id, turn: l.record.turn + 1, startedAt: l.lastActive }))
+      .sort((a, b) => a.startedAt - b.startedAt);
+  }
+
   get isShuttingDown(): boolean {
     return this.shuttingDown;
   }

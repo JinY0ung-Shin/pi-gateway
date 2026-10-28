@@ -46,6 +46,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
     const live = ctx.prompts.live();
     return {
       stats: ctx.stats(),
+      activeTurns: ctx.activeTurns(),
       services: { llm, broker, sandboxd },
       sandboxes: { items, ...(sandboxd.error ? { error: sandboxd.error } : {}) },
       process: {
@@ -59,6 +60,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
       prompt: { name: live.name, version: live.version, isDefault: live.isDefault },
       tools: ctx.toolStats.summary(),
       turns: ctx.toolStats.turns(),
+      users: ctx.toolStats.users(),
     };
   });
 }

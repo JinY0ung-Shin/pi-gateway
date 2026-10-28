@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { MAX_TOOL_CALLS_PER_TURN } from "../src/agent/tool-call-limit.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
 
@@ -265,6 +266,21 @@ describe("GET /v1/models", () => {
     expect(body.data.map((m: { id: string }) => m.id)).toEqual(["test-model", "think-model", "vision-model"]);
     expect(body.data[0]).toMatchObject({ object: "model" });
     expect((await fetch(`${h.url}/v1/models`)).status).toBe(401);
+  });
+});
+
+describe("tool call limit", () => {
+  it("ends a turn as incomplete once it exceeds the per-turn tool call limit, and it stays continuable", async () => {
+    const calls = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `t${from + i}`, name: "ls", arguments: { path: "." } }));
+    // 상한은 한 턴의 모든 LLM 호출에 걸쳐 센다.
+    h.llm.enqueue({ toolCalls: calls(150, 0) }, { toolCalls: calls(MAX_TOOL_CALLS_PER_TURN - 150 + 1, 150) });
+    const res = await h.post({ input: "loop" });
+    expect(res.json.status).toBe("incomplete");
+    expect(res.json.incomplete_details).toEqual({ reason: "max_tool_calls" });
+
+    const next = await h.post({ input: "go on", previous_response_id: res.json.id });
+    expect(next.status).toBe(200);
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("loop");
   });
 });
 

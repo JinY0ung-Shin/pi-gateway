@@ -4,6 +4,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
+  type AgentSessionEvent,
   createAgentSession,
   createExtensionRuntime,
   type PromptTemplate,
@@ -131,6 +132,7 @@ export async function buildAgentSession(
     sessionManager = SessionManager.create(SANDBOX_WORKSPACE, sessionDir, { id: record.id });
   }
 
+  const countStats = deps.toolStats.listener(record.principal, skills);
   const subagentTools = createSubagentTools({
     agents: deps.plugins.agents(),
     tools: customTools,
@@ -142,7 +144,7 @@ export async function buildAgentSession(
         loader: resourceLoader({ systemPrompt, appendPrompt: "", skills: [], prompts: [] }),
         tools,
         sessionManager,
-        statSkills: skills,
+        countStats,
       }),
   }).filter(enabled);
 
@@ -153,7 +155,7 @@ export async function buildAgentSession(
     // StructuredOutput은 이 세션의 최종 답용이라 하위 agent에는 주지 않는다.
     tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],
     sessionManager,
-    statSkills: skills,
+    countStats,
   });
   installTurnEndGuard(session);
   return { session, sandbox };
@@ -176,8 +178,8 @@ async function createPiSession(
     loader: ResourceLoader;
     tools: ToolDefinition[];
     sessionManager: SessionManager;
-    /** 통계에서 skill 읽기로 셀 skill (하위 agent가 부모의 skill을 읽어도 센다) */
-    statSkills: readonly Skill[];
+    /** 통계 리스너. 하위 agent 세션도 부모 세션의 것을 같이 쓴다 (부모의 사용자·skill로 센다) */
+    countStats: (event: AgentSessionEvent) => void;
   },
 ): Promise<AgentSession> {
   // pi가 agentDir 아래에 파일을 만들 일은 없지만, 홈 디렉토리 대신 gateway 데이터 아래의 빈 디렉토리를 준다.
@@ -204,11 +206,10 @@ async function createPiSession(
       { projectTrusted: false },
     ),
   });
-  // 하위 agent 세션도 여기서 만들어지므로 그 도구 호출도 센다. 리스너가 던지면 실행이 깨질 수 있어 잡는다.
-  const countTools = deps.toolStats.listener(input.statSkills);
+  // 리스너가 던지면 실행이 깨질 수 있어 잡는다.
   session.subscribe((event) => {
     try {
-      countTools(event);
+      input.countStats(event);
     } catch (err) {
       deps.log.warn({ err }, "tool stats update failed");
     }

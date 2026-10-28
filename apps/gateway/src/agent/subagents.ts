@@ -9,6 +9,7 @@ import type { SubagentDefinition } from "../contracts.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL } from "../tools/present-file.js";
 import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
+import { limitToolCalls, MAX_TOOL_CALLS_PER_TURN } from "./tool-call-limit.js";
 
 /**
  * Agent·SendMessage — plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
@@ -133,12 +134,16 @@ async function prompt(session: AgentSession, text: string, signal: AbortSignal |
     void session.abort();
   };
   signal?.addEventListener("abort", onAbort, { once: true });
+  const stopLimit = limitToolCalls(session);
+  let limited = false;
   try {
     if (signal?.aborted) throw new Error("aborted");
     await session.prompt(text, { expandPromptTemplates: false });
   } finally {
     signal?.removeEventListener("abort", onAbort);
+    limited = stopLimit();
   }
+  if (limited) throw new Error(`subagent stopped after ${MAX_TOOL_CALLS_PER_TURN} tool calls`);
   const last = session.messages.findLast((m) => m.role === "assistant");
   if (signal?.aborted || last?.stopReason === "aborted") throw new Error("aborted");
   if (last?.stopReason === "error") throw new Error(last.errorMessage ?? "subagent model error");

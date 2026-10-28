@@ -155,6 +155,8 @@ export interface ServiceCheck {
 
 export interface StatusView {
   stats: { liveSessions: number; activeTurns: number; queuedTurns: number };
+  /** 실행 중인 턴 (오래된 순) */
+  activeTurns: { user: string; responseId: string; startedAt: string }[];
   services: {
     /** missingModels: 설정했지만 서버의 모델 목록에 없는 모델 */
     llm: (ServiceCheck & { id: string; models: number; missingModels: string[] })[];
@@ -169,6 +171,17 @@ export interface StatusView {
   tools: ToolStat[];
   /** 최근 30일 commit된 턴. branched는 예전 응답에서 이어간 턴 (메시지 수정·재생성) */
   turns: { turns: number; branched: number };
+  /** 최근 30일 사용자별 LLM 토큰 (많이 쓴 순). 실패·중단된 턴과 하위 agent도 포함 */
+  users: UserUsage[];
+}
+
+export interface UserUsage {
+  user: string;
+  llmCalls: number;
+  /** 캐시 포함 */
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
 }
 
 export interface ToolStat {

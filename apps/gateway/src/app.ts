@@ -8,6 +8,7 @@ import type { GatewayConfig } from "./config.js";
 import type { McpRegistry, PluginResources, PromptService } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
 import { sendWorkspaceFile } from "./api/files.js";
+import { responseId } from "./api/request.js";
 import { cancelResponse, createResponse, previewSession, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
 import { McpToolCache } from "./mcp-client/connections.js";
@@ -125,6 +126,8 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         const l = limiter.stats();
         return { liveSessions: hub.stats().liveSessions, activeTurns: l.active, queuedTurns: l.queued };
       },
+      activeTurns: () =>
+        hub.activeTurns().map((t) => ({ user: t.user, responseId: responseId(t.sessionId, t.turn), startedAt: new Date(t.startedAt).toISOString() })),
       sandboxes: () => sandboxClient.list(),
       llm: models,
       toolSettings,
