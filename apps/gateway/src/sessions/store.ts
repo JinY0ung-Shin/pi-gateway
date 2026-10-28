@@ -19,14 +19,13 @@ export interface SessionRecord {
   turn: number;
   /** pi JSONL 경로. 첫 메시지가 기록되기 전에는 null */
   sessionFile: string | null;
-  /** commit 시점의 pi leaf entry id. 되살릴 때 이 지점으로 맞춘다 (실패한 턴을 버리기 위해). */
+  /** 마지막 commit 시점의 pi leaf entry id (관리 화면 대화 기록이 여기까지 보여준다) */
   leafId: string | null;
   promptText: string;
   /** pi addendum: 첫 턴 instructions + `Current user:` */
   appendPrompt: string;
   /** 세션을 만들 때의 skill 이름 목록 (이후 설치된 skill은 새 세션부터) */
   skillNames: string[];
-  pendingToolCall: PendingToolCall | null;
   /** 첫 요청의 text.format json_schema. 세션 동안 바뀌지 않는다. */
   outputFormat: OutputFormat | null;
   createdAt: string;
@@ -44,7 +43,6 @@ interface Row {
   prompt_text: string;
   append_prompt: string;
   skill_names: string;
-  pending_tool_call: string | null;
   output_format: string | null;
   created_at: string;
   last_active_at: string;
@@ -83,7 +81,25 @@ const MIGRATIONS = [
   // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
   `ALTER TABLE session_retention DROP COLUMN updated_by`,
   `ALTER TABLE sessions ADD COLUMN output_format TEXT`,
+  // 예전 응답에서도 이어갈 수 있게 (메시지 수정·재생성) turn마다 끝난 지점을 남긴다.
+  `CREATE TABLE session_turns (
+     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+     turn INTEGER NOT NULL,
+     leaf_id TEXT,
+     pending_tool_call TEXT,
+     PRIMARY KEY (session_id, turn)
+   );
+   INSERT INTO session_turns (session_id, turn, leaf_id, pending_tool_call)
+     SELECT id, turn, leaf_id, pending_tool_call FROM sessions WHERE turn > 0;
+   ALTER TABLE sessions DROP COLUMN pending_tool_call`,
 ];
+
+/** commit된 turn이 끝난 지점. 그 응답에서 이어갈 때 pi leaf를 여기로 옮긴다. */
+export interface TurnPoint {
+  leafId: string | null;
+  /** 그 turn이 사용자 답을 기다리며 끝났으면 그 질문 */
+  pendingToolCall: PendingToolCall | null;
+}
 
 /** 대화 기록 보관 기간. 마지막 활동 뒤 days일이 지나면 지운다 (0 = 지우지 않는다). */
 export interface Retention {
@@ -103,7 +119,6 @@ function fromRow(row: Row): SessionRecord {
     promptText: row.prompt_text,
     appendPrompt: row.append_prompt,
     skillNames: JSON.parse(row.skill_names) as string[],
-    pendingToolCall: row.pending_tool_call ? (JSON.parse(row.pending_tool_call) as PendingToolCall) : null,
     outputFormat: row.output_format ? (JSON.parse(row.output_format) as OutputFormat) : null,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
@@ -124,9 +139,9 @@ export class SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
-           append_prompt, skill_names, pending_tool_call, output_format, created_at, updated_at, last_active_at)
+           append_prompt, skill_names, output_format, created_at, updated_at, last_active_at)
          VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
-           @append_prompt, @skill_names, @pending_tool_call, @output_format, @created_at, @created_at, @last_active_at)`,
+           @append_prompt, @skill_names, @output_format, @created_at, @created_at, @last_active_at)`,
       )
       .run({
         id: record.id,
@@ -139,7 +154,6 @@ export class SessionStore {
         prompt_text: record.promptText,
         append_prompt: record.appendPrompt,
         skill_names: JSON.stringify(record.skillNames),
-        pending_tool_call: record.pendingToolCall ? JSON.stringify(record.pendingToolCall) : null,
         output_format: record.outputFormat ? JSON.stringify(record.outputFormat) : null,
         created_at: record.createdAt,
         last_active_at: record.lastActiveAt,
@@ -152,12 +166,25 @@ export class SessionStore {
     patch: { turn: number; leafId: string | null; sessionFile: string | null; pendingToolCall: PendingToolCall | null },
   ): void {
     const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `UPDATE sessions SET turn = ?, leaf_id = ?, session_file = COALESCE(?, session_file), pending_tool_call = ?,
-           updated_at = ?, last_active_at = ? WHERE id = ?`,
-      )
-      .run(patch.turn, patch.leafId, patch.sessionFile, patch.pendingToolCall ? JSON.stringify(patch.pendingToolCall) : null, now, now, id);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE sessions SET turn = ?, leaf_id = ?, session_file = COALESCE(?, session_file), updated_at = ?, last_active_at = ?
+           WHERE id = ?`,
+        )
+        .run(patch.turn, patch.leafId, patch.sessionFile, now, now, id);
+      this.db
+        .prepare("INSERT INTO session_turns (session_id, turn, leaf_id, pending_tool_call) VALUES (?, ?, ?, ?)")
+        .run(id, patch.turn, patch.leafId, patch.pendingToolCall ? JSON.stringify(patch.pendingToolCall) : null);
+    })();
+  }
+
+  turnPoint(id: string, turn: number): TurnPoint | undefined {
+    const row = this.db.prepare("SELECT leaf_id, pending_tool_call FROM session_turns WHERE session_id = ? AND turn = ?").get(id, turn) as
+      | { leaf_id: string | null; pending_tool_call: string | null }
+      | undefined;
+    if (!row) return undefined;
+    return { leafId: row.leaf_id, pendingToolCall: row.pending_tool_call ? (JSON.parse(row.pending_tool_call) as PendingToolCall) : null };
   }
 
   setSessionFile(id: string, sessionFile: string): void {

@@ -126,12 +126,27 @@ describe("continuation", () => {
     expect(texts.at(-1)).toContain("second question");
   });
 
-  it("409 for a stale id, 404 for a future or malformed id", async () => {
+  it("an earlier id branches from that turn; both branches stay continuable", async () => {
     const first = await h.post({ input: "a" });
     const second = await h.post({ input: "b", previous_response_id: first.json.id });
-    const stale = await h.post({ input: "c", previous_response_id: first.json.id });
-    expect(stale.status).toBe(409);
-    expect(stale.json.error.message).toBe(`Stale previous_response_id: only the latest response (${second.json.id}) can be continued`);
+    let n = h.llm.requests.length;
+    const edited = await h.post({ input: "b edited", previous_response_id: first.json.id });
+    expect(edited.status).toBe(200);
+    expect(edited.json.id).toBe(first.json.id.replace(/_1$/, "_3"));
+    let sent = JSON.stringify(h.llm.requests[n]!.messages);
+    expect(sent).toContain('"a"');
+    expect(sent).not.toContain('"b"');
+    n = h.llm.requests.length;
+    const back = await h.post({ input: "c", previous_response_id: second.json.id });
+    expect(back.status).toBe(200);
+    sent = JSON.stringify(h.llm.requests[n]!.messages);
+    expect(sent).toContain('"b"');
+    expect(sent).not.toContain("b edited");
+  });
+
+  it("404 for a future or malformed id", async () => {
+    const first = await h.post({ input: "a" });
+    const second = await h.post({ input: "b", previous_response_id: first.json.id });
     const future = await h.post({ input: "c", previous_response_id: second.json.id.replace(/_2$/, "_9") });
     expect(future.status).toBe(404);
     expect(future.json.error.message).toContain("references a future turn");

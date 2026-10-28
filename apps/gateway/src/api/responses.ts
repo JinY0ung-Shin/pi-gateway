@@ -12,7 +12,7 @@ import type { McpRegistry, PluginResources, PromptService } from "../contracts.j
 import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError } from "../errors.js";
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
-import type { SessionRecord, SessionStore } from "../sessions/store.js";
+import type { SessionRecord, SessionStore, TurnPoint } from "../sessions/store.js";
 import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
 import { emptyUsage, functionCallItem, ResponseEventMapper, type ResponseUsage } from "./mapper.js";
 import {
@@ -27,7 +27,7 @@ import {
   thinkingLevelFor,
 } from "./request.js";
 import { SseWriter } from "./sse.js";
-import { executeTurn, rewindTurn, type TurnOutcome } from "./turn.js";
+import { executeTurn, moveLeaf, type TurnOutcome } from "./turn.js";
 
 /**
  * POST /v1/responses — OpenAI Responses 호환 (oh-my-gateway 계약).
@@ -242,7 +242,6 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     promptText,
     appendPrompt: append.join("\n\n"),
     skillNames: deps.plugins.skills().map((s) => s.name),
-    pendingToolCall: null,
     outputFormat: plan.outputFormat,
     createdAt: iso,
     lastActiveAt: iso,
@@ -263,6 +262,8 @@ async function runLocked(
   abort: AbortController,
 ): Promise<unknown> {
   let record: SessionRecord;
+  /** 이번 턴이 이어지는 지점 */
+  let from: TurnPoint = { leafId: null, pendingToolCall: null };
   if (plan.newSession) {
     requireImageInput(deps, plan.newSession.model, plan.input);
     record = newRecord(
@@ -280,11 +281,10 @@ async function runLocked(
       throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
     }
     requireImageInput(deps, record.model, plan.input);
-    if (plan.prevTurn < record.turn) {
-      throw conflict(
-        `Stale previous_response_id: only the latest response (${responseId(record.id, record.turn)}) can be continued`,
-      );
-    }
+    // 예전 응답이면 그 지점에서 갈라진다 (메시지 수정·재생성). 대화 기록만 갈라지고 workspace 파일은 그대로다.
+    const point = deps.store.turnPoint(record.id, plan.prevTurn);
+    if (!point) throw conflict(`previous_response_id '${plan.prev}' can no longer be continued`);
+    from = point;
     const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel);
     if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
       throw badRequest("reasoning.effort is fixed when the session is created");
@@ -296,7 +296,7 @@ async function runLocked(
     }
   }
 
-  const pending = record.pendingToolCall;
+  const pending = from.pendingToolCall;
   if (pending) {
     if (plan.input.kind === "prompt") {
       throw conflict(
@@ -324,6 +324,7 @@ async function runLocked(
     deps.log.error({ err, session: record.id }, "failed to open session");
     throw apiError(503, "Session could not be started; retry shortly");
   }
+  moveLeaf(live, from.leafId);
   live.activeTurn = abort;
   live.lastActive = Date.now();
   // 만료 정리가 진행 중인 턴의 세션을 지우지 않도록 활동 시각을 먼저 남긴다.
@@ -383,7 +384,7 @@ async function runLocked(
       return;
     }
     try {
-      rewindTurn(live, outcome.leafBefore);
+      moveLeaf(live, outcome.leafBefore);
     } catch (err) {
       log.warn({ err }, "rewind failed; evicting session");
       await deps.hub.discardLive(record.id);

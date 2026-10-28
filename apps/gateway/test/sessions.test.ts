@@ -127,7 +127,7 @@ describe("concurrency and cancellation", () => {
     expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).not.toContain("stream then leave");
   });
 
-  it("the second of two concurrent requests on one session gets 409", async () => {
+  it("two concurrent requests from one id run one after the other as two branches", async () => {
     const h2 = await startHarness();
     try {
       const first = await h2.post({ input: "base" });
@@ -136,7 +136,8 @@ describe("concurrency and cancellation", () => {
         h2.post({ input: "a", previous_response_id: first.json.id }),
         h2.post({ input: "b", previous_response_id: first.json.id }),
       ]);
-      expect([a.status, b.status].sort()).toEqual([200, 409]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      expect([a.json.id, b.json.id].map((id: string) => id.split("_").at(-1)).sort()).toEqual(["2", "3"]);
     } finally {
       await h2.close();
     }

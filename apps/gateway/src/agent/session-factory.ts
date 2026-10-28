@@ -123,12 +123,8 @@ export async function buildAgentSession(
   mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
   let sessionManager: SessionManager;
   if (record.sessionFile && existsSync(record.sessionFile)) {
+    // leaf는 요청마다 이어갈 turn의 끝으로 옮긴다 (responses.ts).
     sessionManager = SessionManager.open(record.sessionFile, sessionDir, SANDBOX_WORKSPACE);
-    // commit되지 않은(실패·중단된) 턴의 기록은 건너뛰고 마지막 commit 지점부터 잇는다.
-    if (record.turn === 0) sessionManager.resetLeaf();
-    else if (record.leafId && sessionManager.getLeafId() !== record.leafId && sessionManager.getEntry(record.leafId)) {
-      sessionManager.branch(record.leafId);
-    }
   } else {
     sessionManager = SessionManager.create(SANDBOX_WORKSPACE, sessionDir, { id: record.id });
   }

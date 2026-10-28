@@ -89,12 +89,12 @@ export async function executeTurn(input: {
   }
 }
 
-/** commit하지 않는 턴의 기록을 버린다: pi leaf를 턴 시작 전으로 되돌린다. */
-export function rewindTurn(live: LiveSession, leafBefore: string | null): void {
+/** pi leaf를 옮긴다: 이어갈 turn의 끝으로, 또는 commit하지 않는 턴을 버리려고 턴 시작 전으로. */
+export function moveLeaf(live: LiveSession, leafId: string | null): void {
   const session = live.agent.session;
   const sm = session.sessionManager;
-  if (sm.getLeafId() === leafBefore) return;
-  if (leafBefore === null) sm.resetLeaf();
-  else sm.branch(leafBefore);
+  if (sm.getLeafId() === leafId) return;
+  if (leafId === null) sm.resetLeaf();
+  else sm.branch(leafId);
   session.refreshContext();
 }

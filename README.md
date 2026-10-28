@@ -26,7 +26,8 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 
 - **응답 id와 이어가기:** id는 `resp_{session}_{turn}`이다. `previous_response_id`로 이어간다.
   - 다른 사용자의 세션이거나 아직 없는 turn이면 404다.
-  - 최신이 아닌 id면 409다.
+  - 예전 응답 id를 주면 그 지점에서 갈라진다 (메시지 수정·재생성). 새 응답은 다음 turn 번호를 받고, 갈라진 쪽들 모두 계속 이어갈 수 있다.
+  - 되돌아가는 것은 대화 기록뿐이다. workspace 파일과 MCP로 한 일은 그대로다.
 - **인증:**
   - `USER_API_KEYS`(키가 사용자를 정함) 또는 `API_KEY`(`user` 필드를 믿음)를 쓴다.
   - 사용자 없는 요청은 400이다.
