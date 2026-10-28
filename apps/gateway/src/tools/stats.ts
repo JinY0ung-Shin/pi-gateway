@@ -1,5 +1,7 @@
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, Skill } from "@earendil-works/pi-coding-agent";
+import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { type Db, migrate } from "../db.js";
+import { resolveSandboxPath } from "./remote-fs.js";
 
 /**
  * 도구별 호출 통계 (관리 화면 상태). 호출 한 건씩은 남기지 않고 날짜(UTC)·도구별로 더한다.
@@ -32,19 +34,37 @@ export class ToolStats {
   }
 
   /**
-   * 실행된 도구 호출을 센다 (없는 도구 이름처럼 실행 전에 막힌 호출은 durationMs가 없어 빼낸다).
+   * 세션 하나의 이벤트 리스너. 실행된 도구 호출을 센다 (없는 도구 이름처럼 실행 전에 막힌 호출은 durationMs가 없어 빼낸다).
    * MCP 도구는 mcp_call로 불러도 결과 details의 `<server id>/<도구 이름>`으로 센다.
+   * pi는 skill을 read로 불러오므로, SKILL.md를 읽은 read는 `skill/<이름>`으로 센다 (경로는 시작 이벤트에만 있다).
    */
-  handle(event: AgentSessionEvent): void {
-    if (event.type !== "tool_execution_end" || event.durationMs === undefined) return;
-    const details = (event.result as { details?: { server?: unknown; tool?: unknown } } | undefined)?.details;
-    const tool = typeof details?.server === "string" && typeof details.tool === "string" ? `${details.server}/${details.tool}` : event.toolName;
-    this.db
-      .prepare(
-        `INSERT INTO tool_stats (day, tool, calls, errors, total_ms) VALUES (?, ?, 1, ?, ?)
-         ON CONFLICT (day, tool) DO UPDATE SET calls = calls + 1, errors = errors + excluded.errors, total_ms = total_ms + excluded.total_ms`,
-      )
-      .run(new Date().toISOString().slice(0, 10), tool, event.isError ? 1 : 0, Math.round(event.durationMs));
+  listener(skills: readonly Skill[]): (event: AgentSessionEvent) => void {
+    const skillByFile = new Map(skills.map((s) => [s.filePath, s.name]));
+    const skillReads = new Map<string, string>();
+    return (event) => {
+      if (event.type === "tool_execution_start") {
+        const path = (event.args as { path?: unknown } | undefined)?.path;
+        const skill = event.toolName === "read" && typeof path === "string" ? skillByFile.get(resolveSandboxPath(path, SANDBOX_WORKSPACE)) : undefined;
+        if (skill) skillReads.set(event.toolCallId, skill);
+        return;
+      }
+      if (event.type !== "tool_execution_end") return;
+      const skill = skillReads.get(event.toolCallId);
+      skillReads.delete(event.toolCallId);
+      if (event.durationMs === undefined) return;
+      const details = (event.result as { details?: { server?: unknown; tool?: unknown } } | undefined)?.details;
+      const tool = skill
+        ? `skill/${skill}`
+        : typeof details?.server === "string" && typeof details.tool === "string"
+          ? `${details.server}/${details.tool}`
+          : event.toolName;
+      this.db
+        .prepare(
+          `INSERT INTO tool_stats (day, tool, calls, errors, total_ms) VALUES (?, ?, 1, ?, ?)
+           ON CONFLICT (day, tool) DO UPDATE SET calls = calls + 1, errors = errors + excluded.errors, total_ms = total_ms + excluded.total_ms`,
+        )
+        .run(new Date().toISOString().slice(0, 10), tool, event.isError ? 1 : 0, Math.round(event.durationMs));
+    };
   }
 
   /** 최근 30일, 호출이 많은 순 */

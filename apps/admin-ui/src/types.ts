@@ -165,7 +165,7 @@ export interface StatusView {
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };
-  /** 최근 30일 도구별 호출 (호출이 많은 순). MCP 도구는 `<server id>/<도구 이름>` */
+  /** 최근 30일 도구별 호출 (호출이 많은 순). MCP 도구는 `<server id>/<도구 이름>`, skill 읽기는 `skill/<이름>` */
   tools: ToolStat[];
 }
 

@@ -1,3 +1,4 @@
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
 import { type Harness, startHarness } from "./helpers.js";
@@ -8,6 +9,15 @@ let h: Harness;
 beforeAll(async () => {
   h = await startHarness({
     env: { ADMIN_API_KEY: ADMIN_KEY },
+    skills: [
+      {
+        name: "p:report",
+        description: "Writes reports",
+        filePath: "/opt/plugins/m/p/current/skills/report/SKILL.md",
+        baseDir: "/opt/plugins/m/p/current/skills/report",
+        disableModelInvocation: false,
+      } as Skill,
+    ],
     agents: [{ name: "p:scout", description: "Finds things", tools: ["Read", "Bash(git:*)"], prompt: "You are the scout." }],
     brokerServers: {
       demo: [
@@ -61,13 +71,14 @@ describe("built-in tool switches", () => {
 });
 
 describe("tool stats", () => {
-  it("counts executed calls per tool, MCP tools by server/tool and subagent calls too", async () => {
+  it("counts executed calls per tool, MCP tools by server/tool, skill reads by skill and subagent calls too", async () => {
     h.llm.enqueue(
       {
         toolCalls: [
           { id: "s1", name: "mcp_call", arguments: { name: "mcp__demo__echo" } },
           { id: "s2", name: "mcp__demo__fail", arguments: {} },
           { id: "s3", name: "nope", arguments: {} },
+          { id: "s6", name: "read", arguments: { path: "@/opt/plugins/m/p/current/skills/report/SKILL.md" } },
         ],
       },
       { toolCalls: [{ id: "s4", name: "Agent", arguments: { subagent_type: "p:scout", description: "read x", prompt: "Read x." } }] },
@@ -81,6 +92,8 @@ describe("tool stats", () => {
     const stat = (tool: string) => status.tools.find((t) => t.tool === tool);
     expect(stat("demo/echo")).toMatchObject({ calls: 1, errors: 0 });
     expect(stat("demo/fail")).toMatchObject({ calls: 1, errors: 1 });
+    expect(stat("skill/p:report")).toMatchObject({ calls: 1 });
+    // SKILL.md 읽기는 read에 더하지 않는다 (하위 agent의 read 1번만)
     expect(stat("read")).toMatchObject({ calls: 1 });
     expect(stat("Agent")).toBeDefined();
     // 실행되지 않은 호출(없는 도구)은 세지 않는다

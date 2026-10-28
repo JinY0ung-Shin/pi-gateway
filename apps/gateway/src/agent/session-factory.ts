@@ -51,7 +51,7 @@ export interface AgentFactoryDeps {
   plugins: PluginResources;
   tools: ToolRegistry;
   toolSettings: Pick<ToolSettings, "disabled" | "revision">;
-  toolStats: Pick<ToolStats, "handle">;
+  toolStats: Pick<ToolStats, "listener">;
   log: Logger;
   /** 테스트용 pi settings 덮어쓰기 (예: retry 끄기) */
   settingsOverrides?: Record<string, unknown>;
@@ -142,6 +142,7 @@ export async function buildAgentSession(
         loader: resourceLoader({ systemPrompt, appendPrompt: "", skills: [], prompts: [] }),
         tools,
         sessionManager,
+        statSkills: skills,
       }),
   }).filter(enabled);
 
@@ -152,6 +153,7 @@ export async function buildAgentSession(
     // StructuredOutput은 이 세션의 최종 답용이라 하위 agent에는 주지 않는다.
     tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],
     sessionManager,
+    statSkills: skills,
   });
   installTurnEndGuard(session);
   return { session, sandbox };
@@ -168,7 +170,15 @@ export const compactionTokens = (contextWindow: number) => ({
 
 async function createPiSession(
   deps: AgentFactoryDeps,
-  input: { model: Model<Api>; thinkingLevel: string; loader: ResourceLoader; tools: ToolDefinition[]; sessionManager: SessionManager },
+  input: {
+    model: Model<Api>;
+    thinkingLevel: string;
+    loader: ResourceLoader;
+    tools: ToolDefinition[];
+    sessionManager: SessionManager;
+    /** 통계에서 skill 읽기로 셀 skill (하위 agent가 부모의 skill을 읽어도 센다) */
+    statSkills: readonly Skill[];
+  },
 ): Promise<AgentSession> {
   // pi가 agentDir 아래에 파일을 만들 일은 없지만, 홈 디렉토리 대신 gateway 데이터 아래의 빈 디렉토리를 준다.
   const agentDir = join(deps.config.dataDir, "pi-agent");
@@ -195,9 +205,10 @@ async function createPiSession(
     ),
   });
   // 하위 agent 세션도 여기서 만들어지므로 그 도구 호출도 센다. 리스너가 던지면 실행이 깨질 수 있어 잡는다.
+  const countTools = deps.toolStats.listener(input.statSkills);
   session.subscribe((event) => {
     try {
-      deps.toolStats.handle(event);
+      countTools(event);
     } catch (err) {
       deps.log.warn({ err }, "tool stats update failed");
     }
