@@ -100,6 +100,8 @@ export interface AdminDeps {
     cancel: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
     /** body `{ user, model? }`로 새 세션을 열면 모델이 받는 시스템 프롬프트와 도구 */
     preview: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
+    /** `GET /v1/files/content?path=&user=`와 같다 (present_file로 보여준 파일) */
+    file: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
     /** MCP 템플릿 {{ctx.header:NAME}}로 넘어가는 헤더 (McpRegistry.forwardHeaders) */
     forwardHeaders: () => Promise<string[]>;
   };

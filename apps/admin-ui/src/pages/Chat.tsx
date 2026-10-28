@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, enc } from "../api";
+import { api, enc, formatBytes } from "../api";
 import { Badge, Notice, Section, useLoad } from "../components";
 
 /**
@@ -27,6 +27,16 @@ export interface ToolCall {
   progress?: string;
 }
 
+/** present_file로 보여준 파일 (`type: "file"` 출력 항목) */
+export interface ChatFile {
+  path: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  /** `/admin/api/chat/file` 주소 */
+  url: string;
+}
+
 interface Usage {
   input: number;
   output: number;
@@ -38,6 +48,7 @@ export interface Turn {
   images?: string[];
   reasoning: string;
   tools: ToolCall[];
+  files?: ChatFile[];
   usage?: Usage;
   note?: { tone: "warn" | "error"; text: string };
 }
@@ -264,6 +275,13 @@ export function ChatPage() {
             if (event.progress !== undefined) parts.push(event.total !== undefined ? `${event.progress}/${event.total}` : String(event.progress));
             if (event.message) parts.push(event.message);
             t.progress = parts.join(" · ");
+            break;
+          }
+          case "response.output_item.added": {
+            const item = event.item;
+            if (item?.type !== "file") return;
+            const url = `/admin/api/chat/file?user=${enc(settings.user)}&path=${enc(item.path)}`;
+            (reply.files ??= []).push({ path: item.path, filename: item.filename, mime_type: item.mime_type, size: item.size, url });
             break;
           }
           case "response.tool_result": {
@@ -525,6 +543,7 @@ export function TurnView(props: { turn: Turn; waiting?: boolean }) {
       )}
       {turn.text &&
         (turn.role === "assistant" ? <div class="md" dangerouslySetInnerHTML={{ __html: markdown(turn.text) }} /> : <div class="msg-text">{turn.text}</div>)}
+      {turn.files?.map((f) => <FileView key={f.url} file={f} />)}
       {turn.role === "assistant" && props.waiting && !turn.text && <span class="muted">…</span>}
       {turn.usage && (
         <div class="muted small-text">
@@ -532,6 +551,40 @@ export function TurnView(props: { turn: Turn; waiting?: boolean }) {
         </div>
       )}
       {turn.note && <Notice tone={turn.note.tone}>{turn.note.text}</Notice>}
+    </div>
+  );
+}
+
+/**
+ * present_file로 보여준 파일. 이미지는 그대로, HTML은 sandbox iframe의 srcdoc으로 보여준다.
+ * srcdoc 문서는 관리 화면 CSP를 물려받아 스크립트와 바깥 요청이 막힌다 (답변 Markdown에서 이미지를 막는 것과 같은 이유).
+ * 그 밖의 형식은 내려받기만 한다.
+ */
+function FileView(props: { file: ChatFile }) {
+  const { file } = props;
+  const [html, setHtml] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isHtml = file.mime_type === "text/html";
+  useEffect(() => {
+    if (!isHtml) return;
+    fetch(file.url, { credentials: "same-origin" })
+      .then(async (res) => (res.ok ? setHtml(await res.text()) : setError(`HTTP ${res.status}`)))
+      .catch((err: unknown) => setError(String(err)));
+  }, [file.url]);
+  return (
+    <div class="file-card">
+      <div class="row">
+        <span class="mono grow">{file.path}</span>
+        <span class="muted small-text">
+          {file.mime_type} · {formatBytes(file.size)}
+        </span>
+        <a href={file.url} download={file.filename}>
+          내려받기
+        </a>
+      </div>
+      {file.mime_type.startsWith("image/") && <img class="file-preview" src={file.url} alt={file.filename} />}
+      {isHtml && html !== null && <iframe class="file-preview file-frame" sandbox="" srcdoc={html} title={file.filename} />}
+      {isHtml && <div class="muted small-text">{error ? `불러오지 못했습니다: ${error}` : "미리보기에서는 스크립트와 외부 리소스를 실행하지 않습니다."}</div>}
     </div>
   );
 }

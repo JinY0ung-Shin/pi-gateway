@@ -23,4 +23,5 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AdminContext): voi
   app.post("/chat", async (req, reply) => chat.respond(req, reply));
   app.post("/chat/:id/cancel", async (req, reply) => chat.cancel(req, reply));
   app.post("/chat/preview", async (req, reply) => chat.preview(req, reply));
+  app.get("/chat/file", async (req, reply) => chat.file(req, reply));
 }

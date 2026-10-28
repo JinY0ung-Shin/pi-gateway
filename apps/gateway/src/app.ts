@@ -7,6 +7,7 @@ import { Authenticator } from "./auth/auth.js";
 import type { GatewayConfig } from "./config.js";
 import type { McpRegistry, PluginResources, PromptService } from "./contracts.js";
 import { type Db, openDatabase } from "./db.js";
+import { sendWorkspaceFile } from "./api/files.js";
 import { cancelResponse, createResponse, previewSession, type ResponsesDeps } from "./api/responses.js";
 import { ApiError, shuttingDownError } from "./errors.js";
 import { McpToolCache } from "./mcp-client/connections.js";
@@ -125,6 +126,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),
         preview: (req, reply) => sendApiErrors(reply, () => previewSession(responses, req.body)),
+        file: (req, reply) => sendApiErrors(reply, () => sendWorkspaceFile(responses, req, reply, { kind: "service" })),
         forwardHeaders: () => mcpRegistry.forwardHeaders(),
       },
     },

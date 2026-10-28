@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Harness, last, parseSse, startHarness } from "./helpers.js";
 
@@ -17,6 +19,19 @@ const chat = (body: unknown, auth: string | null = `Bearer ${ADMIN_KEY}`) =>
     headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
     body: JSON.stringify(body),
   });
+
+describe("GET /admin/api/chat/file", () => {
+  it("serves the given user's workspace file with the admin login", async () => {
+    writeFileSync(join(h.sandbox.workspaceOf("tester"), "page.html"), "<p>hi</p>");
+    const get = (auth: string | null) =>
+      fetch(`${h.url}/admin/api/chat/file?user=tester&path=/workspace/page.html`, { headers: auth ? { authorization: auth } : {} });
+    const res = await get(`Bearer ${ADMIN_KEY}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<p>hi</p>");
+    expect(res.headers.get("content-security-policy")).toBe("sandbox");
+    expect((await get(null)).status).toBe(401);
+  });
+});
 
 describe("POST /admin/api/chat", () => {
   it("runs a /v1/responses turn as the given user with the admin login", async () => {
