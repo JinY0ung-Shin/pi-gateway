@@ -33,7 +33,8 @@ export async function sendWorkspaceFile(deps: ResponsesDeps, req: FastifyRequest
   }
   if (file.truncated) throw apiError(413, `File '${path}' is larger than ${MAX_PRESENT_BYTES} bytes`);
 
-  const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+  // RFC 5987: encodeURIComponent가 남기는 ' ( ) *도 인코딩한다.
+  const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return reply
     .headers({
       "content-type": mimeTypeOf(path),

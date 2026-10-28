@@ -73,6 +73,10 @@ describe("GET /v1/files/content", () => {
     expect(res.headers.get("content-security-policy")).toBe("sandbox");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 
+    writeFileSync(join(h.sandbox.workspaceOf("alice"), "it's (1).png"), PNG);
+    const quoted = await download(`path=${encodeURIComponent("it's (1).png")}`);
+    expect(quoted.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''it%27s%20%281%29.png");
+
     const html = await download("path=report.html");
     expect(html.headers.get("content-type")).toMatch(/^text\/html/);
     expect(html.headers.get("content-security-policy")).toBe("sandbox");
