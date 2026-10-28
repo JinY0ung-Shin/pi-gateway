@@ -203,13 +203,7 @@ describe("6-8. empty replies, merged questions, cache isolation", () => {
   beforeAll(async () => {
     h = await startHarness({
       sandboxServers: [
-        McpServerConfig.parse({
-          id: "plugin",
-          runIn: "sandbox",
-          scope: "per-user",
-          source: { kind: "plugin", pluginId: "demo@mkt", version: "1.0.0" },
-          transport: { type: "stdio", command: process.execPath, args: [stdioServer] },
-        }),
+        McpServerConfig.parse({ id: "plugin", runIn: "sandbox", scope: "per-user", transport: { type: "stdio", command: process.execPath, args: [stdioServer] } }),
       ],
     });
     // 8번 테스트용: alice가 자기 workspace에 도구 설명을 심어 둔다 (첫 세션 전에)
@@ -260,13 +254,12 @@ describe("6-8. empty replies, merged questions, cache isolation", () => {
   });
 
   it("8. a tool description planted in alice's workspace never reaches bob", async () => {
-    const a = h.llm.requests.length;
-    await h.post({ input: "alice" });
-    const aliceUpload = h.llm.requests[a]!.tools!.find((t) => t.function.name === "mcp__plugin__upload")!;
-    expect(aliceUpload.function.description).toBe("ALICE-PLANTED description");
-    const b = h.llm.requests.length;
-    await h.post({ input: "bob" }, { key: BOB_KEY });
-    const bobUpload = h.llm.requests[b]!.tools!.find((t) => t.function.name === "mcp__plugin__upload")!;
-    expect(bobUpload.function.description).toBe("upload a file");
+    const search = (id: string) => ({ toolCalls: [{ id, name: "mcp_search", arguments: { query: "upload" } }] });
+    h.llm.enqueue(search("u1"), { text: "ok" });
+    const alice = await h.stream({ input: "alice" });
+    expect(String(ofType(alice.events, "response.tool_result")[0]!.data.content)).toContain("## mcp__plugin__upload\nALICE-PLANTED description\n");
+    h.llm.enqueue(search("u2"), { text: "ok" });
+    const bob = await h.stream({ input: "bob" }, { key: BOB_KEY });
+    expect(String(ofType(bob.events, "response.tool_result")[0]!.data.content)).toContain("## mcp__plugin__upload\nupload a file\n");
   });
 });

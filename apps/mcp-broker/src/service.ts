@@ -90,7 +90,6 @@ export class BrokerService {
       const view: VisibleServer = { id: server.config.id, timeoutSec: this.#effectiveTimeoutSec(server) };
       if (server.config.displayName) view.displayName = server.config.displayName;
       if (server.config.description) view.description = server.config.description;
-      if (server.config.source.kind === "plugin") view.plugin = true;
       out.push(view);
     }
     return out;

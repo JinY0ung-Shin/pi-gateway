@@ -3,7 +3,8 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 /**
- * 관리 화면에서 등록한 MCP 서버의 도구는 모델에게 하나씩 선언하지 않고 고정된 두 도구로 쓴다.
+ * MCP 서버의 도구는 모델에게 하나씩 선언하지 않고 고정된 두 도구로 쓴다.
+ * plugin MCP도 같다: skill에 적힌 이름은 검색 없이 mcp_call로 바로 부르면 된다.
  * - mcp_search: 도구를 찾아 schema를 결과로 돌려준다.
  * - mcp_call: 이름과 인자로 도구를 실행한다.
  * 선언 목록이 세션 내내 바뀌지 않아 prefix cache가 깨지지 않고, 모델이 부르는 이름은 늘 선언된 것이라
@@ -86,7 +87,7 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 /** McpConnectionSet이 만든 도구의 label은 `<server id>/<MCP 도구 이름>`이다 (도구 이름은 64자에서 잘릴 수 있다). */
 const serverOf = (tool: ToolDefinition) => tool.label.slice(0, tool.label.indexOf("/"));
 
-/** tools: 관리 화면 MCP 서버의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다. */
+/** tools: MCP 서버들의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다. */
 export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedServer[]): ToolDefinition[] {
   if (tools.length === 0) return [];
   const byName = new Map(tools.map((t) => [t.name, t]));
@@ -120,7 +121,7 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
   const call: ToolDefinition = {
     name: MCP_CALL_TOOL,
     label: "MCP call",
-    description: `Run a tool of a connected service by the exact name ${MCP_SEARCH_TOOL} returned, with arguments that match its parameter schema.`,
+    description: `Run a tool of a connected service by its exact name, with arguments that match its parameter schema. When a skill or the user already names the tool, call it directly; otherwise find it with ${MCP_SEARCH_TOOL} first.`,
     parameters: Type.Object({
       name: Type.String({ description: "Tool name, for example mcp__<service>__<tool>." }),
       arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Arguments for the tool." })),

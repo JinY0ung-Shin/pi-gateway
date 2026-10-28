@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 
 describe("MCP via the broker", () => {
-  it("offers admin-registered servers through mcp_search and mcp_call with a fresh JWT carrying the user and forwarded headers", async () => {
+  it("offers MCP servers through mcp_search and mcp_call with a fresh JWT carrying the user and forwarded headers", async () => {
     h.llm.enqueue({ toolCalls: [{ id: "m1", name: "mcp_call", arguments: { name: "mcp__demo__echo", arguments: { text: "hi" } } }] }, { text: "done" });
     const before = h.llm.requests.length;
     const res = await h.stream({ input: "use mcp" }, { headers: { "x-user-token": "tok-123", "x-other": "not-forwarded" } });
@@ -202,10 +202,10 @@ describe("sandbox MCP plugin integration", () => {
     p.llm.enqueue({ toolCalls: [{ id: "pd1", name: "mcp__plugin-srv__whoami", arguments: {} }] }, { text: "done" });
     const before = p.llm.requests.length;
     const res = await p.stream({ input: "who", metadata: { thread_id: "t-blocked" } });
-    // plugin 서버의 도구는 skill이 이름으로 부르므로 바로 선언하고, 프록시 도구는 만들지 않는다
+    // plugin 서버의 도구도 하나씩 선언하지 않는다. skill에 적힌 이름으로 바로 부르면 실행된다
     const names = (p.llm.requests[before]!.tools ?? []).map((t) => t.function.name);
-    expect(names).toContain("mcp__plugin-srv__whoami");
-    expect(names).not.toContain("mcp_search");
+    expect(names).toContain("mcp_call");
+    expect(names).not.toContain("mcp__plugin-srv__whoami");
     const result = ofType(res.events, "response.tool_result")[0]!.data;
     expect(result.is_error).toBe(false);
     const routes = p.sandbox.calls.map((c) => c.route);

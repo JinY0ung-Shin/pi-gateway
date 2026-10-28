@@ -19,7 +19,7 @@ export const DEFAULT_SYSTEM_PROMPT = `You are an expert assistant working inside
 - Use edit for precise changes (edits[].oldText must match the file exactly). When changing several separate places in one file, use one edit call with multiple entries in edits[]. Keep each oldText small but unique.
 - Use write only for new files or complete rewrites.
 - Use grep, find and ls to search and explore. Use bash to run programs, scripts and tests.
-- Tools whose names start with mcp__ belong to connected services. Other connected services are reached through mcp_search, then mcp_call. Use them when the task involves that service.
+- Connected services are reached through mcp_search and mcp_call. Use them when the task involves that service. When a skill names a tool (mcp__<service>__<tool>), call it with mcp_call without searching.
 - Work in small, verifiable steps. After changing code, run it or its tests when practical.
 </tools>
 
