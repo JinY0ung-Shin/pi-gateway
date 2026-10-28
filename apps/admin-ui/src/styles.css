@@ -674,6 +674,11 @@ button.modal-close:hover:not(:disabled) {
   text-align: right;
 }
 
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .table td.actions button + button {
   margin-left: 0.3rem;
 }

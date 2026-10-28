@@ -22,6 +22,7 @@ import type { SessionRecord } from "../sessions/store.js";
 import { installTurnEndGuard } from "../tools/ask-user.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolSettings } from "../tools/settings.js";
+import type { ToolStats } from "../tools/stats.js";
 import { createStructuredOutputTool } from "../tools/structured-output.js";
 import type { GatewayModels } from "./runtime.js";
 import { createSubagentTools } from "./subagents.js";
@@ -50,6 +51,7 @@ export interface AgentFactoryDeps {
   plugins: PluginResources;
   tools: ToolRegistry;
   toolSettings: Pick<ToolSettings, "disabled" | "revision">;
+  toolStats: Pick<ToolStats, "handle">;
   log: Logger;
   /** 테스트용 pi settings 덮어쓰기 (예: retry 끄기) */
   settingsOverrides?: Record<string, unknown>;
@@ -191,6 +193,14 @@ async function createPiSession(
       },
       { projectTrusted: false },
     ),
+  });
+  // 하위 agent 세션도 여기서 만들어지므로 그 도구 호출도 센다. 리스너가 던지면 실행이 깨질 수 있어 잡는다.
+  session.subscribe((event) => {
+    try {
+      deps.toolStats.handle(event);
+    } catch (err) {
+      deps.log.warn({ err }, "tool stats update failed");
+    }
   });
   return session;
 }

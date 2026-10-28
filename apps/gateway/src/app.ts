@@ -22,6 +22,7 @@ import { SessionStore } from "./sessions/store.js";
 import { createDefaultToolProviders, ToolRegistry } from "./tools/registry.js";
 import { AdminRequests } from "./tools/request-admin.js";
 import { ToolSettings } from "./tools/settings.js";
+import { ToolStats } from "./tools/stats.js";
 
 /**
  * gateway 조립: 설정 → DB → 프롬프트·plugin·MCP 서비스 → pi runtime → 도구 → 세션 → HTTP 서버.
@@ -70,6 +71,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   });
   const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));
   const toolSettings = new ToolSettings(db);
+  const toolStats = new ToolStats(db);
 
   const store = new SessionStore(db);
   const hub = new SessionHub({
@@ -82,6 +84,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       plugins,
       tools,
       toolSettings,
+      toolStats,
       log: logger.child({ component: "agent" }),
       ...(overrides.piSettings ? { settingsOverrides: overrides.piSettings } : {}),
     },
@@ -124,6 +127,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       sandboxes: () => sandboxClient.list(),
       llm: models,
       toolSettings,
+      toolStats,
       adminRequests,
       sessions: store,
       chat: {

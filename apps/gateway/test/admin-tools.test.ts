@@ -9,6 +9,12 @@ beforeAll(async () => {
   h = await startHarness({
     env: { ADMIN_API_KEY: ADMIN_KEY },
     agents: [{ name: "p:scout", description: "Finds things", tools: ["Read", "Bash(git:*)"], prompt: "You are the scout." }],
+    brokerServers: {
+      demo: [
+        { name: "echo", handler: () => ({ text: "ok" }) },
+        { name: "fail", handler: () => ({ text: "refused", isError: true }) },
+      ],
+    },
   });
 });
 afterAll(async () => {
@@ -51,5 +57,34 @@ describe("built-in tool switches", () => {
   it("only built-in tools can be switched", async () => {
     expect((await admin("POST", "/tools/nope/disable")).status).toBe(404);
     expect((await admin("POST", "/tools/mcp__docs__search/disable")).status).toBe(404);
+  });
+});
+
+describe("tool stats", () => {
+  it("counts executed calls per tool, MCP tools by server/tool and subagent calls too", async () => {
+    h.llm.enqueue(
+      {
+        toolCalls: [
+          { id: "s1", name: "mcp_call", arguments: { name: "mcp__demo__echo" } },
+          { id: "s2", name: "mcp__demo__fail", arguments: {} },
+          { id: "s3", name: "nope", arguments: {} },
+        ],
+      },
+      { toolCalls: [{ id: "s4", name: "Agent", arguments: { subagent_type: "p:scout", description: "read x", prompt: "Read x." } }] },
+      { toolCalls: [{ id: "s5", name: "read", arguments: { path: "x.txt" } }] },
+      { text: "x read" },
+      { text: "Done." },
+    );
+    await h.post({ input: "use tools" });
+
+    const status = (await (await admin("GET", "/status")).json()) as { tools: { tool: string; calls: number; errors: number }[] };
+    const stat = (tool: string) => status.tools.find((t) => t.tool === tool);
+    expect(stat("demo/echo")).toMatchObject({ calls: 1, errors: 0 });
+    expect(stat("demo/fail")).toMatchObject({ calls: 1, errors: 1 });
+    expect(stat("read")).toMatchObject({ calls: 1 });
+    expect(stat("Agent")).toBeDefined();
+    // 실행되지 않은 호출(없는 도구)은 세지 않는다
+    expect(stat("nope")).toBeUndefined();
+    expect(stat("mcp_call")).toBeUndefined();
   });
 });

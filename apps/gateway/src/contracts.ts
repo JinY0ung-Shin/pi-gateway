@@ -11,6 +11,7 @@ import type { PromptManager } from "./prompts/service.js";
 import type { SessionStore } from "./sessions/store.js";
 import type { AdminRequests } from "./tools/request-admin.js";
 import type { ToolSettings } from "./tools/settings.js";
+import type { ToolStats } from "./tools/stats.js";
 
 /**
  * 세션(src/agent, src/api, src/tools, src/sessions)이 쓰는 프롬프트·plugin·MCP 인터페이스와 관리 화면 의존성.
@@ -95,6 +96,8 @@ export interface AdminDeps {
   llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update">;
   /** 기본 도구 켜고 끄기 (메모리의 세션도 다음 턴부터 적용된다) */
   toolSettings: Pick<ToolSettings, "disabled" | "setEnabled">;
+  /** 도구별 호출 통계 (최근 30일) */
+  toolStats: Pick<ToolStats, "summary">;
   /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`·`…/{id}/cancel`과 같은 처리를 한다 (body.user·?user=를 믿는다) */
   chat: {
     respond: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;

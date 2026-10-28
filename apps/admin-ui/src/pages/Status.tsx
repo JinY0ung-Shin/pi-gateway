@@ -1,6 +1,10 @@
+import { useState } from "preact/hooks";
 import { formatBytes, formatTime } from "../api";
-import { Badge, Notice, Section, useLoad } from "../components";
-import type { ServiceCheck, StatusView } from "../types";
+import { Badge, Modal, Notice, Section, useLoad } from "../components";
+import type { ServiceCheck, StatusView, ToolStat } from "../types";
+
+/** 상태 화면에 바로 보이는 도구 수. 나머지는 전체 보기에서 */
+const TOP_TOOLS = 10;
 
 export function StatusPage() {
   const { data: status, error } = useLoad<StatusView>("/status", 10_000);
@@ -84,6 +88,7 @@ export function StatusPage() {
           </tbody>
         </table>
       </Section>
+      <ToolStats tools={status.tools} />
       <Section title="sandbox">
         {status.sandboxes.error && <Notice tone="error">sandboxd 조회 실패: {status.sandboxes.error}</Notice>}
         <table class="table">
@@ -115,6 +120,58 @@ export function StatusPage() {
         </table>
       </Section>
     </>
+  );
+}
+
+function ToolStats(props: { tools: ToolStat[] }) {
+  const [all, setAll] = useState(false);
+  const { tools } = props;
+  const more = tools.length > TOP_TOOLS && (
+    <button class="small" onClick={() => setAll(true)}>
+      전체 {tools.length}개 보기
+    </button>
+  );
+  return (
+    <Section title="도구 사용 (최근 30일)" actions={more}>
+      <ToolTable tools={tools.slice(0, TOP_TOOLS)} />
+      {all && (
+        <Modal title="도구 사용 (최근 30일)" onClose={() => setAll(false)}>
+          <ToolTable tools={tools} />
+        </Modal>
+      )}
+    </Section>
+  );
+}
+
+function ToolTable(props: { tools: ToolStat[] }) {
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          <th>도구</th>
+          <th class="num">호출</th>
+          <th class="num">오류율</th>
+          <th class="num">평균 시간</th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.tools.length === 0 && (
+          <tr>
+            <td colSpan={4} class="muted">
+              아직 호출된 도구가 없습니다.
+            </td>
+          </tr>
+        )}
+        {props.tools.map((t) => (
+          <tr key={t.tool}>
+            <td class="mono">{t.tool}</td>
+            <td class="num">{t.calls.toLocaleString()}</td>
+            <td class="num">{t.errors > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "0%"}</td>
+            <td class="num">{t.avgMs < 1000 ? `${t.avgMs}ms` : `${(t.avgMs / 1000).toFixed(1)}s`}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

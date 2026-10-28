@@ -165,6 +165,15 @@ export interface StatusView {
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };
+  /** 최근 30일 도구별 호출 (호출이 많은 순). MCP 도구는 `<server id>/<도구 이름>` */
+  tools: ToolStat[];
+}
+
+export interface ToolStat {
+  tool: string;
+  calls: number;
+  errors: number;
+  avgMs: number;
 }
 
 /** 새 세션을 열면 모델이 받는 것 (pi가 조립한 시스템 프롬프트와 도구 선언) */

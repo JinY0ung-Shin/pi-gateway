@@ -57,6 +57,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
       },
       plugins: { installed: plugins.length, enabled: plugins.filter((p) => p.enabled).length },
       prompt: { name: live.name, version: live.version, isDefault: live.isDefault },
+      tools: ctx.toolStats.summary(),
     };
   });
 }
