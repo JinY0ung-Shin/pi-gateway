@@ -42,6 +42,8 @@ services:
     build:
       context: ./images/sandbox
       args: *mirror-args
+      # pip 미러가 사내 CA를 쓸 때 (.env의 NODE_EXTRA_CA_CERTS)
+      secrets: [extra_ca]
     command: ["true"]
     network_mode: none
     read_only: true
@@ -268,3 +270,6 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_jwt_secret
   broker_kek:
     file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_kek
+  # 사내 CA PEM (.env의 NODE_EXTRA_CA_CERTS). sandbox 이미지 빌드에서만 쓴다. 비우면 빈 파일
+  extra_ca:
+    file: ${NODE_EXTRA_CA_CERTS:-/dev/null}

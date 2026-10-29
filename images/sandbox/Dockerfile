@@ -41,9 +41,15 @@ RUN apt-get update \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # 데이터 분석·차트용 Python 패키지 (사내 미러: .env의 PIP_INDEX_URL). 차트의 한글은 나눔고딕으로 그린다.
+# 미러가 사내 CA를 쓰면 빌드 secret extra_ca(.env의 NODE_EXTRA_CA_CERTS)의 CA를 이 설치에서만 믿는다 (이미지에 남기지 않는다).
 ARG PIP_INDEX_URL=""
-RUN pip install --no-cache-dir --root-user-action=ignore ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
+RUN --mount=type=secret,id=extra_ca \
+    if [ -s /run/secrets/extra_ca ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/extra_ca > /tmp/ca-bundle.pem && export PIP_CERT=/tmp/ca-bundle.pem; \
+    fi \
+ && pip install --no-cache-dir --root-user-action=ignore ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
       numpy pandas openpyxl matplotlib \
+ && rm -f /tmp/ca-bundle.pem \
  && printf 'font.family: NanumGothic\naxes.unicode_minus: False\n' > /etc/matplotlibrc
 
 # Node 22 (공식 바이너리) + npm
