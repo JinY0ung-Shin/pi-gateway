@@ -35,9 +35,16 @@ FROM debian
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl wget git jq ripgrep fd-find procps less file \
-      zip unzip xz-utils libstdc++6 \
+      zip unzip xz-utils libstdc++6 fonts-nanum \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
+ && find /usr/share/fonts/truetype/nanum -type f ! -name NanumGothic.ttf ! -name NanumGothicBold.ttf -delete \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# 데이터 분석·차트용 Python 패키지 (사내 미러: .env의 PIP_INDEX_URL). 차트의 한글은 나눔고딕으로 그린다.
+ARG PIP_INDEX_URL=""
+RUN pip install --no-cache-dir --root-user-action=ignore ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
+      numpy pandas openpyxl matplotlib \
+ && printf 'font.family: NanumGothic\naxes.unicode_minus: False\n' > /etc/matplotlibrc
 
 # Node 22 (공식 바이너리) + npm
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -72,6 +79,7 @@ ENV HOME=/workspace/.home \
     NPM_CONFIG_CACHE=/workspace/.home/.npm \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NODE_PATH=/usr/local/lib/node_modules \
+    MATPLOTLIBRC=/etc/matplotlibrc \
     TMPDIR=/tmp \
     LANG=C.UTF-8
 

@@ -172,6 +172,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 |---|---|
 | 셸·기본 | bash, coreutils, procps, less, file, zip/unzip, xz |
 | 언어 | Python 3.12 (pip, venv), Node 22 (npm) |
+| Python 패키지 | numpy, pandas, openpyxl, matplotlib (한글 폰트: 나눔고딕) |
 | 네트워크·Git | git, curl, wget |
 | 검색·처리 | jq, ripgrep, fd |
 

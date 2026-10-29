@@ -17,6 +17,7 @@ x-mirror-args: &mirror-args
   APT_MIRROR_URL: ${APT_MIRROR_URL:-}
   APT_SECURITY_MIRROR_URL: ${APT_SECURITY_MIRROR_URL:-}
   NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+  PIP_INDEX_URL: ${PIP_INDEX_URL:-}
   GOPROXY: ${GOPROXY:-}
 
 x-hardening: &hardening
