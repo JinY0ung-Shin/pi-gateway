@@ -77,6 +77,7 @@ interface NewSession {
   model: string;
   thinkingLevel: string | undefined;
   outputFormat: OutputFormat | null;
+  disabledTools: string[];
 }
 
 interface TurnPlan {
@@ -174,7 +175,12 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     const model = body.model ?? defaultModel;
     const modelConfig = deps.models.config(model);
     if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
-    newSession = { model, thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig), outputFormat };
+    newSession = {
+      model,
+      thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig),
+      outputFormat,
+      disabledTools: [...new Set(body.disabled_tools ?? [])].sort(),
+    };
   }
 
   const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession };
@@ -221,7 +227,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
   const id = typeof model === "string" && model ? model : deps.models.defaultModel();
   if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
-  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null }, null));
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, disabledTools: [] }, null));
 }
 
 function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
@@ -245,6 +251,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     appendPrompt: append.join("\n\n"),
     skillNames: deps.plugins.skills().map((s) => s.name),
     outputFormat: plan.outputFormat,
+    disabledTools: plan.disabledTools,
     createdAt: iso,
     lastActiveAt: iso,
   };
@@ -295,6 +302,10 @@ async function runLocked(
     const outputFormat = outputFormatOf(plan.body);
     if (outputFormat && JSON.stringify(outputFormat) !== JSON.stringify(record.outputFormat)) {
       throw badRequest("text.format 'json_schema' is fixed when the session is created. Start a new session to use a different schema.");
+    }
+    const disabledTools = plan.body.disabled_tools;
+    if (disabledTools && [...new Set(disabledTools)].sort().join("\n") !== record.disabledTools.join("\n")) {
+      throw badRequest("disabled_tools is fixed when the session is created. Start a new session to use different tools.");
     }
   }
 

@@ -18,6 +18,7 @@ import { type RequestContext, SANDBOX_WORKSPACE, userKey } from "@pi-gateway/sha
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources } from "../contracts.js";
+import { badRequest } from "../errors.js";
 import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
 import type { SessionRecord } from "../sessions/store.js";
 import { installTurnEndGuard } from "../tools/ask-user.js";
@@ -100,8 +101,8 @@ export async function buildAgentSession(
   if (record.sessionFile && record.turn > 0 && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
   const sandbox = deps.sandboxClient.for(record.principal, record.id);
 
-  // 관리 화면에서 끈 기본 도구는 이 세션과 하위 agent 모두에서 뺀다.
-  const disabled = deps.toolSettings.disabled();
+  // 관리 화면에서 끈 기본 도구와 요청의 disabled_tools는 이 세션과 하위 agent 모두에서 뺀다.
+  const disabled = new Set([...deps.toolSettings.disabled(), ...record.disabledTools]);
   const enabled = (t: ToolDefinition) => !disabled.has(t.name);
   const created = await deps.tools.createSessionTools({
     principal: record.principal,
@@ -146,14 +147,21 @@ export async function buildAgentSession(
         sessionManager,
         countStats,
       }),
-  }).filter(enabled);
+  });
+  // 새 세션의 disabled_tools에 없는 이름이 있으면 400으로 알린다 (오타가 조용히 무시되지 않게).
+  const known = [...created, ...subagentTools].map((t) => t.name);
+  const unknown = record.turn === 0 ? record.disabledTools.filter((n) => !known.includes(n)) : [];
+  if (unknown.length > 0) {
+    await deps.tools.disposeSession(record.id);
+    throw badRequest(`Unknown tool in disabled_tools: ${unknown.join(", ")}. Available: ${known.join(", ")}`, "unknown_tool");
+  }
 
   const session = await createPiSession(deps, {
     model,
     thinkingLevel: record.thinkingLevel,
     loader,
     // StructuredOutput은 이 세션의 최종 답용이라 하위 agent에는 주지 않는다.
-    tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],
+    tools: [...customTools, ...subagentTools.filter(enabled), ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],
     sessionManager,
     countStats,
   });

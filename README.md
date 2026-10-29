@@ -45,6 +45,9 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.
   - call_id가 다르면 400이다. 대기 중에 일반 메시지가 오면 409다.
+- **도구 빼기:** `disabled_tools`에 도구 이름을 주면 그 세션(하위 agent 포함)에서 뺀다. 사용자와 주고받을 수 없는 요청이면 `["AskUserQuestion"]`을 준다.
+  - 없는 이름이면 400 `unknown_tool`이고, 메시지에 쓸 수 있는 도구 이름이 나온다.
+  - 세션을 만들 때 정해진다. 이어가는 턴에 같은 목록을 다시 보내는 것은 되고, 다른 목록이면 400이다.
 - **구조화된 출력:** `text.format`에 `json_schema`(최상위 `type: "object"`)를 주면 최종 답이 그 스키마의 JSON이 된다.
   - 결과는 `structured_output`에 객체로, `output_text`에 JSON 문자열로 나간다. 모델이 끝까지 답을 내지 않으면 `structured_output_missing`으로 실패한다.
   - 스키마는 세션을 만들 때 정해진다. 이어가는 턴에 같은 스키마를 다시 보내는 것은 되고, 다른 스키마면 400이다.

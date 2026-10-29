@@ -28,6 +28,8 @@ export interface SessionRecord {
   skillNames: string[];
   /** 첫 요청의 text.format json_schema. 세션 동안 바뀌지 않는다. */
   outputFormat: OutputFormat | null;
+  /** 첫 요청의 disabled_tools. 세션 동안 바뀌지 않는다. */
+  disabledTools: string[];
   createdAt: string;
   lastActiveAt: string;
 }
@@ -44,6 +46,7 @@ interface Row {
   append_prompt: string;
   skill_names: string;
   output_format: string | null;
+  disabled_tools: string;
   created_at: string;
   last_active_at: string;
 }
@@ -92,6 +95,7 @@ const MIGRATIONS = [
    INSERT INTO session_turns (session_id, turn, leaf_id, pending_tool_call)
      SELECT id, turn, leaf_id, pending_tool_call FROM sessions WHERE turn > 0;
    ALTER TABLE sessions DROP COLUMN pending_tool_call`,
+  `ALTER TABLE sessions ADD COLUMN disabled_tools TEXT NOT NULL DEFAULT '[]'`,
 ];
 
 /** commit된 turn이 끝난 지점. 그 응답에서 이어갈 때 pi leaf를 여기로 옮긴다. */
@@ -120,6 +124,7 @@ function fromRow(row: Row): SessionRecord {
     appendPrompt: row.append_prompt,
     skillNames: JSON.parse(row.skill_names) as string[],
     outputFormat: row.output_format ? (JSON.parse(row.output_format) as OutputFormat) : null,
+    disabledTools: JSON.parse(row.disabled_tools) as string[],
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
   };
@@ -139,9 +144,9 @@ export class SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
-           append_prompt, skill_names, output_format, created_at, updated_at, last_active_at)
+           append_prompt, skill_names, output_format, disabled_tools, created_at, updated_at, last_active_at)
          VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
-           @append_prompt, @skill_names, @output_format, @created_at, @created_at, @last_active_at)`,
+           @append_prompt, @skill_names, @output_format, @disabled_tools, @created_at, @created_at, @last_active_at)`,
       )
       .run({
         id: record.id,
@@ -155,6 +160,7 @@ export class SessionStore {
         append_prompt: record.appendPrompt,
         skill_names: JSON.stringify(record.skillNames),
         output_format: record.outputFormat ? JSON.stringify(record.outputFormat) : null,
+        disabled_tools: JSON.stringify(record.disabledTools),
         created_at: record.createdAt,
         last_active_at: record.lastActiveAt,
       });
