@@ -134,26 +134,19 @@ describe("AskUserQuestion", () => {
     expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("User responded: SQLite");
   });
 
-  it("disabled_tools removes AskUserQuestion for the whole session", async () => {
+  it("interactive: false removes AskUserQuestion for the whole session", async () => {
     h.llm.enqueue({ text: "ok" }, { text: "ok again" }, { text: "and again" });
-    const res = await h.post({ input: "run unattended", disabled_tools: ["AskUserQuestion"] });
+    const res = await h.post({ input: "run unattended", interactive: false });
     expect(res.status).toBe(200);
     expect(h.llm.requests.at(-1)!.tools!.map((t: any) => t.function.name)).not.toContain("AskUserQuestion");
 
-    // 같은 목록이거나 보내지 않으면 이어가고, 다른 목록이면 400
+    // 같은 값이거나 보내지 않으면 이어가고, 다른 값이면 400
     const next = await h.post({ input: "again", previous_response_id: res.json.id });
     expect(next.status).toBe(200);
     expect(h.llm.requests.at(-1)!.tools!.map((t: any) => t.function.name)).not.toContain("AskUserQuestion");
-    const same = await h.post({ input: "x", previous_response_id: next.json.id, disabled_tools: ["AskUserQuestion"] });
+    const same = await h.post({ input: "x", previous_response_id: next.json.id, interactive: false });
     expect(same.status).toBe(200);
-    expect((await h.post({ input: "x", previous_response_id: same.json.id, disabled_tools: [] })).status).toBe(400);
-  });
-
-  it("disabled_tools rejects unknown names and lists the available ones", async () => {
-    const res = await h.post({ input: "x", disabled_tools: ["AskUser"] });
-    expect(res.status).toBe(400);
-    expect(res.json.error.code).toBe("unknown_tool");
-    expect(res.json.error.message).toContain("AskUserQuestion");
+    expect((await h.post({ input: "x", previous_response_id: same.json.id, interactive: true })).status).toBe(400);
   });
 
   it("an invalid AskUserQuestion call is a normal tool error, not a pause", async () => {

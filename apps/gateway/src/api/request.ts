@@ -40,8 +40,8 @@ export const ResponseCreateRequest = z
     metadata: z.record(z.string(), z.string()).nullish(),
     user: z.string().nullish(),
     reasoning: z.object({ effort: z.string().nullish() }).passthrough().nullish(),
-    /** 이 세션에서 뺄 도구 이름 (예: 사용자와 주고받을 수 없는 요청이면 AskUserQuestion) */
-    disabled_tools: z.array(z.string().min(1)).nullish(),
+    /** false면 사용자에게 묻는 도구(AskUserQuestion 등)를 뺀다. 사용자가 답할 수 없는 요청용. 기본 true */
+    interactive: z.boolean().nullish(),
     text: z
       .object({
         format: z

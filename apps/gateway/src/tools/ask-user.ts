@@ -11,6 +11,9 @@ import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.js";
 
 export const ASK_USER_TOOL = "AskUserQuestion";
 
+/** 사용자의 답을 기다리는 도구. 요청이 interactive: false면 세션에서 뺀다. */
+export const INTERACTIVE_TOOLS = [ASK_USER_TOOL];
+
 export const AskUserQuestionParams = Type.Object({
   questions: Type.Array(
     Type.Object({

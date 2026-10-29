@@ -77,7 +77,7 @@ interface NewSession {
   model: string;
   thinkingLevel: string | undefined;
   outputFormat: OutputFormat | null;
-  disabledTools: string[];
+  interactive: boolean;
 }
 
 interface TurnPlan {
@@ -179,7 +179,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
       model,
       thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig),
       outputFormat,
-      disabledTools: [...new Set(body.disabled_tools ?? [])].sort(),
+      interactive: body.interactive ?? true,
     };
   }
 
@@ -227,7 +227,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
   const id = typeof model === "string" && model ? model : deps.models.defaultModel();
   if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
-  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, disabledTools: [] }, null));
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, interactive: true }, null));
 }
 
 function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
@@ -251,7 +251,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     appendPrompt: append.join("\n\n"),
     skillNames: deps.plugins.skills().map((s) => s.name),
     outputFormat: plan.outputFormat,
-    disabledTools: plan.disabledTools,
+    interactive: plan.interactive,
     createdAt: iso,
     lastActiveAt: iso,
   };
@@ -303,9 +303,8 @@ async function runLocked(
     if (outputFormat && JSON.stringify(outputFormat) !== JSON.stringify(record.outputFormat)) {
       throw badRequest("text.format 'json_schema' is fixed when the session is created. Start a new session to use a different schema.");
     }
-    const disabledTools = plan.body.disabled_tools;
-    if (disabledTools && [...new Set(disabledTools)].sort().join("\n") !== record.disabledTools.join("\n")) {
-      throw badRequest("disabled_tools is fixed when the session is created. Start a new session to use different tools.");
+    if (plan.body.interactive != null && plan.body.interactive !== record.interactive) {
+      throw badRequest("interactive is fixed when the session is created. Start a new session to change it.");
     }
   }
 
