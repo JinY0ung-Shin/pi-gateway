@@ -1,4 +1,6 @@
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { subagentTools } from "../src/agent/subagents.js";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
 import { type Harness, startHarness } from "./helpers.js";
 
@@ -55,5 +57,11 @@ describe("Agent / SendMessage", () => {
     const res = await h.post({ input: "ping" });
     expect(res.status).toBe(200);
     expect(toolResult(h.llm.requests.at(-1)!)).toContain("agent '0123456789abcdef' not found");
+  });
+
+  it("gives mcp_search and mcp_call to an agent whose frontmatter tools name MCP tools", () => {
+    const tools = ["read", "bash", "mcp_search", "mcp_call"].map((name) => ({ name }) as ToolDefinition);
+    const agent = { name: "p:mcp", description: "", prompt: "", filePath: "", tools: ["Read", "mcp__plugin_p_srv__fetch"] };
+    expect(subagentTools(agent, tools).map((t) => t.name)).toEqual(["read", "mcp_search", "mcp_call"]);
   });
 });

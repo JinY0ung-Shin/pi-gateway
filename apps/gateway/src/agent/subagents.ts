@@ -6,6 +6,7 @@ import { type AgentSession, SessionManager, type ToolDefinition } from "@earendi
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import type { SubagentDefinition } from "../contracts.js";
+import { MCP_CALL_TOOL, MCP_SEARCH_TOOL } from "../mcp-client/proxy.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL } from "../tools/present-file.js";
 import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
@@ -46,13 +47,17 @@ export interface SubagentContext {
   open(input: { systemPrompt: string; tools: ToolDefinition[]; sessionManager: SessionManager }): Promise<AgentSession>;
 }
 
-/** agent가 쓸 도구: frontmatter `tools`가 있으면 그 목록만 (모르는 이름은 무시한다) */
+/**
+ * agent가 쓸 도구: frontmatter `tools`가 있으면 그 목록만 (모르는 이름은 무시한다).
+ * MCP 도구 이름(`mcp__…`)이 하나라도 있으면 MCP 도구를 대신 부르는 mcp_search·mcp_call을 준다.
+ */
 export function subagentTools(agent: SubagentDefinition, tools: ToolDefinition[]): ToolDefinition[] {
   const usable = tools.filter((t) => t.name !== ASK_USER_TOOL && t.name !== PRESENT_FILE_TOOL && t.name !== REQUEST_ADMIN_TOOL);
   if (!agent.tools) return usable;
   const allowed = new Set(
     agent.tools.flatMap((name) => {
       const base = name.replace(/\(.*\)$/, "").trim(); // Bash(git:*) → Bash
+      if (base.startsWith("mcp__")) return [MCP_SEARCH_TOOL, MCP_CALL_TOOL];
       return CLAUDE_TOOLS[base] ?? [base];
     }),
   );
