@@ -10,3 +10,4 @@ coverage/
 /var/
 apps/admin-ui/dist/
 apps/gateway/public/
+/scripts/run-local.ts
