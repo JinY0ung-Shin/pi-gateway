@@ -7,7 +7,7 @@ import type { ToolProvider } from "../provider.js";
 /**
  * MCP provider. 서버는 두 가지다.
  * - broker 서버: 비밀키가 필요한 서버. 연결은 broker로만 가고, broker가 키를 붙인다.
- * - sandbox 서버: 비밀키가 없는 stdio 서버. 사용자 sandbox 안에서 실행된다.
+ * - sandbox 서버: 비밀키가 없는 stdio 서버. 사용자 sandbox 안에서 실행된다. 명령을 실행하는 것이라 read_only 세션에는 붙이지 않는다.
  * 도구는 하나씩 선언하지 않고 mcp_search·mcp_call로 쓴다 (mcp-client/proxy.ts).
  * broker가 안 되거나 서버 하나가 실패해도 나머지 도구로 세션을 연다 (brokerServersFor, McpConnectionSet.tools).
  * 목록을 못 받은 서버는 mcp_search·mcp_call이 나중에 다시 물어본다 (McpConnectionSet.retryFailed).
@@ -34,7 +34,7 @@ export function createMcpToolProvider(deps: McpProviderDeps): ToolProvider {
           handle: { kind: "broker" as const, id: s.id, timeoutSec: s.timeoutSec, ...(s.displayName ? { displayName: s.displayName } : {}) },
           info: s,
         })),
-        ...deps.registry.sandboxServers().map((config) => ({
+        ...(ctx.readOnly ? [] : deps.registry.sandboxServers()).map((config) => ({
           handle: {
             kind: "sandbox" as const,
             id: config.id,

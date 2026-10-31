@@ -30,6 +30,8 @@ export interface SessionRecord {
   outputFormat: OutputFormat | null;
   /** 첫 요청의 interactive. false면 사용자에게 묻는 도구를 뺀다. 세션 동안 바뀌지 않는다. */
   interactive: boolean;
+  /** 첫 요청의 read_only. true면 sandbox를 바꾸거나 명령을 실행하는 도구를 뺀다. 세션 동안 바뀌지 않는다. */
+  readOnly: boolean;
   createdAt: string;
   lastActiveAt: string;
 }
@@ -47,6 +49,7 @@ interface Row {
   skill_names: string;
   output_format: string | null;
   interactive: number;
+  read_only: number;
   created_at: string;
   last_active_at: string;
 }
@@ -100,6 +103,7 @@ const MIGRATIONS = [
   `ALTER TABLE sessions ADD COLUMN interactive INTEGER NOT NULL DEFAULT 1;
    UPDATE sessions SET interactive = 0 WHERE disabled_tools LIKE '%"AskUserQuestion"%';
    ALTER TABLE sessions DROP COLUMN disabled_tools`,
+  `ALTER TABLE sessions ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`,
 ];
 
 /** commit된 turn이 끝난 지점. 그 응답에서 이어갈 때 pi leaf를 여기로 옮긴다. */
@@ -129,6 +133,7 @@ function fromRow(row: Row): SessionRecord {
     skillNames: JSON.parse(row.skill_names) as string[],
     outputFormat: row.output_format ? (JSON.parse(row.output_format) as OutputFormat) : null,
     interactive: row.interactive === 1,
+    readOnly: row.read_only === 1,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
   };
@@ -148,9 +153,9 @@ export class SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions (id, principal, model, thinking_level, turn, session_file, leaf_id, prompt_text,
-           append_prompt, skill_names, output_format, interactive, created_at, updated_at, last_active_at)
+           append_prompt, skill_names, output_format, interactive, read_only, created_at, updated_at, last_active_at)
          VALUES (@id, @principal, @model, @thinking_level, @turn, @session_file, @leaf_id, @prompt_text,
-           @append_prompt, @skill_names, @output_format, @interactive, @created_at, @created_at, @last_active_at)`,
+           @append_prompt, @skill_names, @output_format, @interactive, @read_only, @created_at, @created_at, @last_active_at)`,
       )
       .run({
         id: record.id,
@@ -165,6 +170,7 @@ export class SessionStore {
         skill_names: JSON.stringify(record.skillNames),
         output_format: record.outputFormat ? JSON.stringify(record.outputFormat) : null,
         interactive: record.interactive ? 1 : 0,
+        read_only: record.readOnly ? 1 : 0,
         created_at: record.createdAt,
         last_active_at: record.lastActiveAt,
       });

@@ -107,6 +107,7 @@ export async function buildAgentSession(
     principal: record.principal,
     sessionId: record.id,
     sandbox,
+    readOnly: record.readOnly,
     requestContext,
     log: deps.log.child({ session: record.id }),
     signal,

@@ -78,6 +78,7 @@ interface NewSession {
   thinkingLevel: string | undefined;
   outputFormat: OutputFormat | null;
   interactive: boolean;
+  readOnly: boolean;
 }
 
 interface TurnPlan {
@@ -180,6 +181,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
       thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig),
       outputFormat,
       interactive: body.interactive ?? true,
+      readOnly: body.read_only ?? false,
     };
   }
 
@@ -227,7 +229,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   if (!isValidUserId(user)) throw badRequest(`Invalid user '${user}'`);
   const id = typeof model === "string" && model ? model : deps.models.defaultModel();
   if (!id || !deps.models.config(id)) throw badRequest(`Model '${id ?? ""}' is not configured`);
-  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, interactive: true }, null));
+  return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, interactive: true, readOnly: false }, null));
 }
 
 function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
@@ -252,6 +254,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     skillNames: deps.plugins.skills().map((s) => s.name),
     outputFormat: plan.outputFormat,
     interactive: plan.interactive,
+    readOnly: plan.readOnly,
     createdAt: iso,
     lastActiveAt: iso,
   };
@@ -305,6 +308,9 @@ async function runLocked(
     }
     if (plan.body.interactive != null && plan.body.interactive !== record.interactive) {
       throw badRequest("interactive is fixed when the session is created. Start a new session to change it.");
+    }
+    if (plan.body.read_only != null && plan.body.read_only !== record.readOnly) {
+      throw badRequest("read_only is fixed when the session is created. Start a new session to change it.");
     }
   }
 

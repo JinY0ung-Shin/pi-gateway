@@ -42,6 +42,8 @@ export const ResponseCreateRequest = z
     reasoning: z.object({ effort: z.string().nullish() }).passthrough().nullish(),
     /** false면 사용자에게 묻는 도구(AskUserQuestion 등)를 뺀다. 사용자가 답할 수 없는 요청용. 기본 true */
     interactive: z.boolean().nullish(),
+    /** true면 sandbox를 바꾸거나 명령을 실행하는 도구(write·edit·bash, sandbox MCP 서버)를 뺀다. 남이 쓴 내용이 이 사용자의 sandbox를 움직이는 요청용. 기본 false */
+    read_only: z.boolean().nullish(),
     text: z
       .object({
         format: z

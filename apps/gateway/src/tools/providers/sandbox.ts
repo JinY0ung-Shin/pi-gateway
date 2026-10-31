@@ -19,6 +19,7 @@ import { createRemoteFs, mapHomePath, PathNamespace } from "../remote-fs.js";
  * - ls/find: pi 정의 + 원격 operations (pi가 로컬 파일시스템을 보지 않는다)
  * - bash/grep: pi 스키마에 execute만 sandbox 실행으로 바꾼 것
  * - present_file: workspace 파일을 클라이언트에 보여준다 (present-file.ts)
+ * read_only 세션에는 sandbox를 바꾸거나 명령을 실행하는 write/edit/bash를 주지 않는다.
  */
 
 function preparePath(def: ToolDefinition, map: (path: string) => string): ToolDefinition["prepareArguments"] {
@@ -67,11 +68,15 @@ export function createSandboxToolProvider(): ToolProvider {
       const cwd = SANDBOX_WORKSPACE;
       return [
         withNamespace(createReadToolDefinition(cwd, { operations: fs.read }) as ToolDefinition, ns),
-        withNamespace(createWriteToolDefinition(cwd, { operations: fs.write }) as ToolDefinition, ns),
-        withNamespace(createEditToolDefinition(cwd, { operations: fs.edit }) as ToolDefinition, ns),
+        ...(ctx.readOnly
+          ? []
+          : [
+              withNamespace(createWriteToolDefinition(cwd, { operations: fs.write }) as ToolDefinition, ns),
+              withNamespace(createEditToolDefinition(cwd, { operations: fs.edit }) as ToolDefinition, ns),
+            ]),
         withHomeMapping(createLsToolDefinition(cwd, { operations: fs.ls }) as ToolDefinition),
         withHomeMapping(createFindToolDefinition(cwd, { operations: fs.find }) as ToolDefinition),
-        createSandboxBashTool(ctx.sandbox),
+        ...(ctx.readOnly ? [] : [createSandboxBashTool(ctx.sandbox)]),
         createSandboxGrepTool(ctx.sandbox),
         createPresentFileTool(ctx.sandbox) as unknown as ToolDefinition,
       ];

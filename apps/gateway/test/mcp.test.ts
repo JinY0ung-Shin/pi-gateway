@@ -148,6 +148,27 @@ describe("mcp_search and mcp_call", () => {
   });
 });
 
+describe("read_only sessions", () => {
+  it("drop the tools that change the sandbox or run commands, for the whole session", async () => {
+    h.llm.enqueue({ text: "ok" }, { text: "ok again" });
+    const names = () => (h.llm.requests.at(-1)!.tools ?? []).map((t) => t.function.name);
+    const res = await h.post({ input: "look only", read_only: true });
+    expect(res.status).toBe(200);
+    expect(names()).toEqual(expect.arrayContaining(["read", "ls", "find", "grep", "mcp_search", "mcp_call"]));
+    for (const tool of ["write", "edit", "bash"]) expect(names()).not.toContain(tool);
+    // broker 서버는 남고, sandbox 안에서 명령을 띄우는 sandbox 서버는 빠진다
+    const search = h.llm.requests.at(-1)!.tools!.find((t) => t.function.name === "mcp_search")!.function.description;
+    expect(search).toContain("- demo");
+    expect(search).not.toContain("- local");
+
+    // 보내지 않으면 그대로 이어가고, 다른 값이면 400
+    const next = await h.post({ input: "again", previous_response_id: res.json.id });
+    expect(next.status).toBe(200);
+    expect(names()).not.toContain("bash");
+    expect((await h.post({ input: "x", previous_response_id: next.json.id, read_only: false })).status).toBe(400);
+  });
+});
+
 describe("long MCP results", () => {
   it("shows the head and saves the full text inside the sandbox", async () => {
     h.llm.enqueue({ toolCalls: [{ id: "big1", name: "mcp__demo__rows", arguments: {} }] }, { text: "ok" });

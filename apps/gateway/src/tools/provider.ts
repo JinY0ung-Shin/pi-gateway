@@ -21,6 +21,8 @@ export interface ToolSessionContext {
   sessionId: string;
   /** 이 세션 전용 sandbox 핸들 */
   sandbox: SandboxHandle;
+  /** 요청의 read_only. true면 sandbox를 바꾸거나 명령을 실행하는 도구를 만들지 않는다. */
+  readOnly: boolean;
   /** 현재 요청의 전달 헤더·metadata (allowlist를 거친 값). 턴마다 바뀔 수 있어 함수로 준다. */
   requestContext: () => RequestContext;
   log: Logger;

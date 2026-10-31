@@ -47,6 +47,8 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - call_id가 다르면 400이다. 대기 중에 일반 메시지가 오면 409다.
 - **interactive:** 사용자가 답할 수 없는 요청이면 `interactive: false`를 준다 (기본 `true`). 그 세션(하위 agent 포함)에서 사용자에게 묻는 도구(지금은 `AskUserQuestion`)를 뺀다.
   - 세션을 만들 때 정해진다. 이어가는 턴에 같은 값을 다시 보내는 것은 되고, 다른 값이면 400이다.
+- **read_only:** 남이 쓴 내용이 이 사용자의 sandbox를 움직이는 요청이면 `read_only: true`를 준다 (기본 `false`). 그 세션(하위 agent 포함)에서 sandbox를 바꾸거나 명령을 실행하는 도구(`write`, `edit`, `bash`, sandbox에서 도는 MCP 서버)를 뺀다. `read`, `ls`, `find`, `grep`, `present_file`과 broker MCP 서버는 남는다.
+  - 세션을 만들 때 정해진다. 이어가는 턴에 같은 값을 다시 보내는 것은 되고, 다른 값이면 400이다.
 - **구조화된 출력:** `text.format`에 `json_schema`(최상위 `type: "object"`)를 주면 최종 답이 그 스키마의 JSON이 된다.
   - 결과는 `structured_output`에 객체로, `output_text`에 JSON 문자열로 나간다. 모델이 끝까지 답을 내지 않으면 `structured_output_missing`으로 실패한다.
   - 스키마는 세션을 만들 때 정해진다. 이어가는 턴에 같은 스키마를 다시 보내는 것은 되고, 다른 스키마면 400이다.
