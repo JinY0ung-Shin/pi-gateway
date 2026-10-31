@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { type AgentSession, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentSession, type AgentSessionEvent, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import type { SubagentDefinition } from "../contracts.js";
@@ -18,6 +18,7 @@ import { limitToolCalls, MAX_TOOL_CALLS_PER_TURN } from "./tool-call-limit.js";
  *   같은 sandbox에서, 비밀키가 필요한 호출은 broker에서 실행되므로 격리 규칙이 그대로 지켜진다.
  * - 호출이 끝나면 하위 세션을 바로 정리한다. 기록은 JSONL로 남기고, SendMessage가 그 기록을 다시 열어 이어서 실행한다.
  * - 하위 세션에는 Agent·SendMessage·AskUserQuestion·present_file·request_admin을 주지 않는다 (깊이 1, 사용자와는 부모만 대화한다).
+ * - 하위 세션의 도구 이벤트는 부모 도구 호출의 update로 넘긴다. mapper가 `parent_tool_use_id`를 붙여 부모 응답 스트림에 보낸다.
  */
 
 export const AGENT_TOOL = "Agent";
@@ -25,6 +26,22 @@ export const SEND_MESSAGE_TOOL = "SendMessage";
 /** 하위 세션 JSONL에 agent 종류를 남기는 custom entry */
 const SUBAGENT_ENTRY = "subagent";
 const AGENT_ID = /^[a-f0-9]{16}$/;
+
+/** tool_execution_update의 details. 하위 agent의 도구 이벤트 하나를 담는다 (mapper.ts가 SSE로 바꾼다). */
+export interface SubagentEventDetails {
+  subagentEvent: AgentSessionEvent;
+}
+
+/** 부모 스트림에 넘길 하위 세션 이벤트: 도구 호출의 시작·인자·실행·결과 */
+function forwarded(event: AgentSessionEvent): boolean {
+  if (event.type === "message_update") {
+    const t = event.assistantMessageEvent.type;
+    return event.message.role === "assistant" && (t === "toolcall_start" || t === "toolcall_end");
+  }
+  return event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end";
+}
+
+type OnUpdate = (update: { content: []; details: SubagentEventDetails }) => void;
 
 /** Claude Code 도구 이름 → gateway 도구 이름 */
 const CLAUDE_TOOLS: Record<string, string[]> = {
@@ -70,13 +87,13 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
   /** 실행 중인 agent_id. 같은 JSONL에 두 실행이 동시에 쓰지 않게 한다. */
   const busy = new Set<string>();
 
-  const run = async (agentId: string, agent: SubagentDefinition, sessionManager: SessionManager, text: string, signal?: AbortSignal) => {
+  const run = async (agentId: string, agent: SubagentDefinition, sessionManager: SessionManager, text: string, signal?: AbortSignal, onUpdate?: OnUpdate) => {
     if (busy.has(agentId)) throw new Error(`agent '${agentId}' is still running`);
     busy.add(agentId);
     try {
       const session = await ctx.open({ systemPrompt: agent.prompt, tools: subagentTools(agent, ctx.tools), sessionManager });
       try {
-        return result(agentId, await prompt(session, text, signal));
+        return result(agentId, await prompt(session, text, signal, onUpdate));
       } finally {
         session.dispose();
       }
@@ -99,13 +116,13 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
       `${SEND_MESSAGE_TOOL} to continue the same agent with its context.\n\nAvailable agents:\n` +
       ctx.agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
     parameters: agentParams,
-    async execute(_toolCallId, params, signal) {
+    async execute(_toolCallId, params, signal, onUpdate) {
       const agent = byName.get(params.subagent_type);
       if (!agent) throw new Error(`unknown subagent_type '${params.subagent_type}'`);
       const agentId = randomBytes(8).toString("hex");
       const sessionManager = SessionManager.create(SANDBOX_WORKSPACE, ctx.dir, { id: agentId });
       sessionManager.appendCustomEntry(SUBAGENT_ENTRY, { type: agent.name });
-      return run(agentId, agent, sessionManager, params.prompt, signal);
+      return run(agentId, agent, sessionManager, params.prompt, signal, onUpdate as OnUpdate | undefined);
     },
   };
 
@@ -118,7 +135,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
     label: "Send message",
     description: `Send a follow-up message to a subagent started with ${AGENT_TOOL}. It continues with its previous context and returns its new final answer.`,
     parameters: sendParams,
-    async execute(_toolCallId, params, signal) {
+    async execute(_toolCallId, params, signal, onUpdate) {
       const file = AGENT_ID.test(params.to) ? transcriptFile(ctx.dir, params.to) : undefined;
       if (!file) throw new Error(`agent '${params.to}' not found`);
       const sessionManager = SessionManager.open(file, ctx.dir, SANDBOX_WORKSPACE);
@@ -126,7 +143,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
       const type = entry?.type === "custom" ? (entry.data as { type?: string } | undefined)?.type : undefined;
       const agent = type ? byName.get(type) : undefined;
       if (!agent) throw new Error(`agent type '${type ?? "unknown"}' is no longer available`);
-      return run(params.to, agent, sessionManager, params.message, signal);
+      return run(params.to, agent, sessionManager, params.message, signal, onUpdate as OnUpdate | undefined);
     },
   };
 
@@ -134,18 +151,24 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
 }
 
 /** 하위 세션에 한 번 묻고 마지막 응답 텍스트를 돌려준다. 실패하면 던져서 부모가 도구 오류로 보게 한다. */
-async function prompt(session: AgentSession, text: string, signal: AbortSignal | undefined): Promise<string> {
+async function prompt(session: AgentSession, text: string, signal: AbortSignal | undefined, onUpdate: OnUpdate | undefined): Promise<string> {
   const onAbort = () => {
     void session.abort();
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   const stopLimit = limitToolCalls(session);
+  const unsubscribe = onUpdate
+    ? session.subscribe((event) => {
+        if (forwarded(event)) onUpdate({ content: [], details: { subagentEvent: event } });
+      })
+    : undefined;
   let limited = false;
   try {
     if (signal?.aborted) throw new Error("aborted");
     await session.prompt(text, { expandPromptTemplates: false });
   } finally {
     signal?.removeEventListener("abort", onAbort);
+    unsubscribe?.();
     limited = stopLimit();
   }
   if (limited) throw new Error(`subagent stopped after ${MAX_TOOL_CALLS_PER_TURN} tool calls`);

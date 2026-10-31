@@ -41,6 +41,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
+  - 하위 agent(`Agent`·`SendMessage`)가 부른 도구도 같은 도구 이벤트로 나간다. 각 이벤트에 `parent_tool_use_id`(부른 `Agent`·`SendMessage` 호출의 `tool_use_id`)가 붙는다. 하위 agent의 텍스트는 나가지 않고, 최종 답은 부모 호출의 `tool_result`로 온다.
 - **AskUserQuestion:**
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.

@@ -2,7 +2,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { subagentTools } from "../src/agent/subagents.js";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
-import { type Harness, startHarness } from "./helpers.js";
+import { type Harness, ofType, startHarness } from "./helpers.js";
 
 let h: Harness;
 beforeAll(async () => {
@@ -50,6 +50,30 @@ describe("Agent / SendMessage", () => {
     expect(JSON.stringify(resumed.messages)).toContain("Find x.");
     expect(JSON.stringify(resumed.messages)).toContain("x is in a.txt");
     expect(toolResult(h.llm.requests.at(-1)!)).toContain("y is in b.txt");
+  });
+
+  it("streams the subagent's tool calls tagged with the Agent call as parent_tool_use_id", async () => {
+    h.llm.enqueue(
+      { toolCalls: [{ id: "call_p", name: "Agent", arguments: { subagent_type: "p:scout", description: "look", prompt: "Look." } }] },
+      { toolCalls: [{ id: "call_c", name: "bash", arguments: { command: "echo from-child" } }] },
+      { text: "child done" },
+      { text: "parent done" },
+    );
+    const res = await h.stream({ input: "look" });
+    const tools = res.events.filter((e) => e.type.startsWith("response.tool_"));
+    const child = tools.filter((e) => e.data.tool_use_id === "call_c");
+    expect(child.map((e) => e.type)).toEqual(expect.arrayContaining(["response.tool_use_started", "response.tool_use", "response.tool_result"]));
+    for (const e of child) expect(e.data.parent_tool_use_id).toBe("call_p");
+    expect(child.find((e) => e.type === "response.tool_use")!.data).toMatchObject({ name: "bash", input: { command: "echo from-child" } });
+    expect(String(child.find((e) => e.type === "response.tool_result")!.data.content)).toContain("from-child");
+    // 부모 호출의 이벤트는 그대로다: parent_tool_use_id가 없고, 결과는 하위 도구 결과 뒤에 온다.
+    const parent = tools.filter((e) => e.data.tool_use_id === "call_p");
+    expect(parent.map((e) => e.type)).toEqual(["response.tool_use_started", "response.tool_use", "response.tool_result"]);
+    for (const e of parent) expect(e.data).not.toHaveProperty("parent_tool_use_id");
+    expect(tools.indexOf(parent[2]!)).toBeGreaterThan(tools.indexOf(child.at(-1)!));
+    expect(String(parent[2]!.data.content)).toContain("child done");
+    // 하위 agent의 텍스트는 부모 응답의 텍스트가 되지 않는다
+    expect(ofType(res.events, "response.output_text.delta").map((e) => e.data.delta).join("")).toBe("parent done");
   });
 
   it("returns a tool error for an unknown agent_id", async () => {

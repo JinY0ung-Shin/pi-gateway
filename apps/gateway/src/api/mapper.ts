@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { SubagentEventDetails } from "../agent/subagents.js";
 import type { McpProgressDetails } from "../mcp-client/connections.js";
 import type { PendingToolCall } from "../sessions/store.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
@@ -85,6 +86,9 @@ function toolResultText(result: unknown): string {
     .join("\n");
 }
 
+/** 하위 agent가 부른 도구의 이벤트에 붙이는 부모(Agent·SendMessage) 도구 호출 id */
+const tag = (parent: string | undefined) => (parent ? { parent_tool_use_id: parent } : {});
+
 export class ResponseEventMapper {
   /** 완료된 출력 항목 (스트림 순서) */
   readonly items: (MessageItem | ReasoningItem | FileItem)[] = [];
@@ -94,8 +98,8 @@ export class ResponseEventMapper {
   structuredOutput: Record<string, unknown> | null = null;
   /** 마지막 assistant 메시지 (결과 판정용) */
   lastAssistant: AssistantMessage | null = null;
-  /** 이 턴에서 실행 중인 도구 (keepalive 때 tool_progress를 보낸다) */
-  readonly running = new Map<string, { name: string; startedAt: number }>();
+  /** 이 턴에서 실행 중인 도구 (keepalive 때 tool_progress를 보낸다). parent는 하위 agent 도구를 부른 부모 도구 호출 */
+  readonly running = new Map<string, { name: string; startedAt: number; parent?: string }>();
 
   private outputIndex = 0;
   private message: { id: string; text: string; outputIndex: number } | null = null;
@@ -285,17 +289,10 @@ export class ResponseEventMapper {
           case "thinking_end":
             this.closeReasoning();
             return;
-          case "toolcall_start": {
-            const block = ae.partial.content[ae.contentIndex] as ToolCall | undefined;
-            if (block?.type === "toolCall" && block.id && block.name) this.toolUseStarted(block.id, block.name);
+          case "toolcall_start":
+          case "toolcall_end":
+            this.toolCall(ae);
             return;
-          }
-          case "toolcall_end": {
-            const call = ae.toolCall;
-            this.toolUseStarted(call.id, call.name);
-            this.send("response.tool_use", { tool_use_id: call.id, name: call.name, input: call.arguments ?? {} });
-            return;
-          }
           default:
             return;
         }
@@ -316,12 +313,51 @@ export class ResponseEventMapper {
         return;
       }
       case "tool_execution_start":
-        if (event.parentToolCallId) return;
-        this.running.set(event.toolCallId, { name: event.toolName, startedAt: Date.now() });
+      case "tool_execution_update":
+      case "tool_execution_end":
+        this.toolExecution(event);
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** 모델이 쓰는 도구 호출: 시작(이름)과 완성된 인자 */
+  private toolCall(ae: AssistantMessageEvent, parent?: string): void {
+    if (ae.type === "toolcall_start") {
+      const block = ae.partial.content[ae.contentIndex] as ToolCall | undefined;
+      if (block?.type === "toolCall" && block.id && block.name) this.toolUseStarted(block.id, block.name, parent);
+    } else if (ae.type === "toolcall_end") {
+      const call = ae.toolCall;
+      this.toolUseStarted(call.id, call.name, parent);
+      this.send("response.tool_use", { tool_use_id: call.id, name: call.name, input: call.arguments ?? {}, ...tag(parent) });
+    }
+  }
+
+  /**
+   * 도구 실행. parent가 있으면 하위 agent(Agent·SendMessage)가 부른 도구다: 이벤트에 `parent_tool_use_id`를 붙이고,
+   * 하위 agent에는 없는 AskUserQuestion·present_file·StructuredOutput 처리는 하지 않는다.
+   */
+  private toolExecution(
+    event: Extract<AgentSessionEvent, { type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end" }>,
+    parent?: string,
+  ): void {
+    if (event.parentToolCallId) return;
+    switch (event.type) {
+      case "tool_execution_start":
+        this.running.set(event.toolCallId, { name: event.toolName, startedAt: Date.now(), ...(parent ? { parent } : {}) });
         return;
       case "tool_execution_update": {
-        if (event.parentToolCallId) return;
-        const progress = (event.partialResult as { details?: Partial<McpProgressDetails> } | undefined)?.details?.mcpProgress;
+        const details = (event.partialResult as { details?: Partial<McpProgressDetails & SubagentEventDetails> } | undefined)?.details;
+        const child = details?.subagentEvent;
+        if (child && !parent) {
+          if (child.type === "message_update") this.toolCall(child.assistantMessageEvent, event.toolCallId);
+          else if (child.type === "tool_execution_start" || child.type === "tool_execution_update" || child.type === "tool_execution_end") {
+            this.toolExecution(child, event.toolCallId);
+          }
+          return;
+        }
+        const progress = details?.mcpProgress;
         if (!progress) return;
         const started = this.running.get(event.toolCallId)?.startedAt ?? Date.now();
         this.send("response.tool_progress", {
@@ -332,13 +368,15 @@ export class ResponseEventMapper {
           ...(progress.message ? { message: progress.message } : {}),
           progress: progress.progress,
           ...(progress.total !== undefined ? { total: progress.total } : {}),
+          ...tag(parent),
         });
         return;
       }
       case "tool_execution_end": {
-        if (event.parentToolCallId) return;
         this.running.delete(event.toolCallId);
-        if (event.toolName === ASK_USER_TOOL) {
+        // 하위 agent가 끝나면 끝을 알리지 못한 하위 도구도 더 이상 실행 중이 아니다.
+        for (const [id, t] of this.running) if (t.parent === event.toolCallId) this.running.delete(id);
+        if (event.toolName === ASK_USER_TOOL && !parent) {
           // AskUserQuestion의 결과는 내부용 자리표시자라서 클라이언트에 보내지 않는다. 질문은 결과 details에 있다.
           if (!event.isError) this.addPendingQuestion(event.toolCallId, { questions: event.result?.details?.questions ?? [] });
           return;
@@ -347,14 +385,14 @@ export class ResponseEventMapper {
           tool_use_id: event.toolCallId,
           content: toolResultText(event.result),
           is_error: event.isError === true,
+          ...tag(parent),
         });
+        if (parent) return;
         const details = (event.result as { details?: { file?: PresentedFile; output?: Record<string, unknown> } } | undefined)?.details;
         if (event.toolName === PRESENT_FILE_TOOL && !event.isError && details?.file) this.addFile(details.file);
         if (event.toolName === STRUCTURED_OUTPUT_TOOL && !event.isError && details?.output) this.addStructuredOutput(details.output);
         return;
       }
-      default:
-        return;
     }
   }
 
@@ -395,10 +433,10 @@ export class ResponseEventMapper {
     this.closeMessage();
   }
 
-  private toolUseStarted(id: string, name: string): void {
+  private toolUseStarted(id: string, name: string, parent?: string): void {
     if (this.startedTools.has(id)) return;
     this.startedTools.add(id);
-    this.send("response.tool_use_started", { tool_use_id: id, name });
+    this.send("response.tool_use_started", { tool_use_id: id, name, ...tag(parent) });
   }
 
   /** keepalive마다 실행 중인 도구의 경과 시간을 알린다 */
@@ -410,6 +448,7 @@ export class ResponseEventMapper {
         name: t.name,
         elapsed_seconds: Math.floor((now - t.startedAt) / 1000),
         source: "gateway",
+        ...tag(t.parent),
       });
     }
   }
