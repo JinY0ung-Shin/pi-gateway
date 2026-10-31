@@ -41,6 +41,8 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
+  - 대화 요약: context가 차서 pi가 앞 대화를 요약하면 `response.compaction`이 `status: "in_progress"`로 시작해 `"completed"` | `"failed"`로 끝난다.
+- **usage:** `input_tokens`(캐시 읽기·쓰기 포함), `output_tokens`, `input_tokens_details.context_tokens`(마지막 호출의 context 크기, 요약 뒤에는 그 추정치), `context_window`(세션 모델의 context window).
 - **AskUserQuestion:**
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.
