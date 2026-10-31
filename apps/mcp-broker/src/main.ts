@@ -1,8 +1,12 @@
+import { createCachedLookup } from "@pi-gateway/shared";
+import { Agent, setGlobalDispatcher } from "undici";
 import { createBroker, createLogger } from "./app.js";
 import { loadBrokerConfig } from "./config.js";
 
 // broker가 만드는 파일(DB)은 broker uid만 읽을 수 있게 한다.
 process.umask(0o077);
+// upstream MCP 서버로 가는 연결이 이름을 매번 새로 찾지 않게 한다 (createCachedLookup).
+setGlobalDispatcher(new Agent({ connect: { lookup: createCachedLookup() } }));
 
 const log = createLogger(process.env.LOG_LEVEL ?? "info");
 const config = loadBrokerConfig();

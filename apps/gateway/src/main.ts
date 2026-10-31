@@ -1,9 +1,13 @@
+import { createCachedLookup } from "@pi-gateway/shared";
 import pino from "pino";
+import { Agent, setGlobalDispatcher } from "undici";
 import { createGateway } from "./app.js";
 import { loadConfig } from "./config.js";
 
 // gateway가 만드는 파일(DB, 세션 JSONL)은 소유자만 읽게 한다.
 process.umask(0o077);
+// broker·sandboxd·LLM으로 가는 연결이 이름을 매번 새로 찾지 않게 한다 (createCachedLookup).
+setGlobalDispatcher(new Agent({ connect: { lookup: createCachedLookup() } }));
 
 const config = loadConfig();
 const log = pino({

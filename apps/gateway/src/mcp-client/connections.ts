@@ -127,8 +127,63 @@ function configHash(config: McpServerConfig): string {
   return createHash("sha256").update(JSON.stringify(config.transport)).digest("hex").slice(0, 16);
 }
 
-/** 세션을 만들 때 서버 하나의 도구 목록을 기다리는 최대 시간 (서버 timeout이 더 짧으면 그것). 넘으면 그 서버는 이번 세션에서 빠진다. */
+/** 서버 하나의 도구 목록을 기다리는 최대 시간 (서버 timeout이 더 짧으면 그것). 넘으면 그 서버는 빼 두고 나중에 retryFailed가 다시 묻는다. */
 const MCP_LIST_TIMEOUT_MS = 15_000;
+
+/** 목록을 못 받은 서버를 다시 물어보는 최소 간격 (계속 실패하는 서버가 도구 검색마다 기다리게 하지 않는다). */
+const RETRY_INTERVAL_MS = 30_000;
+
+/**
+ * broker에 동시에 묻는 도구 목록 수 (gateway 전체).
+ * 세션이 한꺼번에 몰리면 목록 요청 수천 개가 한 번에 broker로 가서 broker의 accept 대기열이 넘치고,
+ * 연결이 끊기거나 connect timeout에 걸린다. 이만큼만 보내고 나머지는 차례를 기다린다.
+ */
+const BROKER_LIST_CONCURRENCY = 32;
+/** 차례를 기다리는 최대 시간. 넘으면 그 서버는 이번에는 빠지고 나중에 retryFailed가 다시 묻는다. */
+const BROKER_LIST_WAIT_MS = 30_000;
+
+/** 동시에 n개까지. 자리가 나면 먼저 기다린 쪽에 바로 넘긴다. */
+class Slots {
+  private active = 0;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(private readonly max: number) {}
+
+  take(signal: AbortSignal): Promise<() => void> {
+    if (this.active < this.max && this.waiters.length === 0) {
+      this.active++;
+      return Promise.resolve(this.releaser());
+    }
+    return new Promise((resolve, reject) => {
+      const grant = () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(this.releaser());
+      };
+      const onAbort = () => {
+        const i = this.waiters.indexOf(grant);
+        if (i >= 0) this.waiters.splice(i, 1);
+        reject(new Error("too many MCP tool lists in flight; gave up waiting for a turn"));
+      };
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push(grant);
+    });
+  }
+
+  private releaser(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.waiters.shift();
+      // 기다리는 쪽이 있으면 자리를 그대로 넘긴다.
+      if (next) next();
+      else this.active--;
+    };
+  }
+}
+
+const brokerListSlots = new Slots(BROKER_LIST_CONCURRENCY);
 
 /** promise를 signal과 경쟁시킨다 (promise 자체는 취소되지 않는다). */
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -155,40 +210,62 @@ export class McpConnectionSet {
   /** 세션이 정리되면 abort된다: 진행 중인 attach·연결 시도를 끊는다. */
   private readonly lifetime = new AbortController();
   private closed = false;
+  /** 도구 목록을 아직 못 받은 서버. retryFailed가 다시 물어본다. */
+  private readonly failedServers = new Map<string, McpServerHandle>();
+  private lastListAt = 0;
+  private retrying: Promise<ToolDefinition[]> | undefined;
+  private readonly names = new Set<string>();
 
   constructor(private readonly deps: McpConnectionDeps) {}
 
+  /** 도구 목록을 못 받은 서버의 id */
+  get failed(): ReadonlySet<string> {
+    return new Set(this.failedServers.keys());
+  }
+
   /**
    * 서버들의 도구 정의. 서버마다 병렬로, 각자 제한 시간 안에서 목록을 가져온다.
-   * 실패하거나 늦은 서버는 경고만 남기고 이번 세션에서 뺀다 (턴을 막지 않는다).
+   * 실패하거나 늦은 서버는 경고만 남기고 빼 둔다 (턴을 막지 않는다). 나중에 retryFailed로 다시 받는다.
    */
   async tools(servers: McpServerHandle[], signal?: AbortSignal): Promise<ToolDefinition[]> {
+    this.lastListAt = Date.now();
     const sorted = [...servers].sort((a, b) => a.id.localeCompare(b.id));
-    const listed = await Promise.allSettled(
-      sorted.map((server) => {
-        const deadline = AbortSignal.timeout(Math.min(MCP_LIST_TIMEOUT_MS, requestTimeoutMs(server)));
-        return this.listTools(server, signal ? AbortSignal.any([signal, deadline]) : deadline);
-      }),
-    );
+    const listed = await Promise.allSettled(sorted.map((server) => this.listWithin(server, signal)));
     const definitions: ToolDefinition[] = [];
-    const seen = new Set<string>();
     listed.forEach((result, i) => {
       const server = sorted[i]!;
       if (result.status === "rejected") {
         // 늦거나 실패한 연결은 버린다. 다음 사용 때 새로 연결한다.
         this.drop(server);
+        this.failedServers.set(server.id, server);
         this.deps.log.warn({ err: result.reason, server: server.id, kind: server.kind }, "MCP tools/list failed; server skipped");
         return;
       }
+      this.failedServers.delete(server.id);
       for (const tool of [...result.value].sort((a, b) => a.name.localeCompare(b.name))) {
         if (server.config && !isToolAllowed(server.config, tool.name)) continue;
         const name = mcpToolName(server.id, tool.name);
-        if (seen.has(name)) continue;
-        seen.add(name);
+        if (this.names.has(name)) continue;
+        this.names.add(name);
         definitions.push(this.toolDefinition(server, tool, name));
       }
     });
     return definitions;
+  }
+
+  /**
+   * 세션을 만들 때 목록을 못 받은 서버(예: 세션이 한꺼번에 몰려 broker가 바빴다)를 다시 물어보고, 새로 받은 도구를 돌려준다.
+   * 실패한 서버가 없거나 마지막 시도 뒤 RETRY_INTERVAL_MS가 지나지 않았으면 묻지 않는다.
+   * 동시에 부르면 한 번만 묻고(세션 수명에 묶인다), 부른 쪽은 자기 signal로만 기다린다.
+   */
+  retryFailed(signal?: AbortSignal): Promise<ToolDefinition[]> {
+    if (!this.retrying) {
+      if (this.closed || this.failedServers.size === 0 || Date.now() - this.lastListAt < RETRY_INTERVAL_MS) return Promise.resolve([]);
+      this.retrying = this.tools([...this.failedServers.values()], this.lifetime.signal).finally(() => {
+        this.retrying = undefined;
+      });
+    }
+    return raceAbort(this.retrying, signal);
   }
 
   /**
@@ -198,6 +275,18 @@ export class McpConnectionSet {
   private cacheKey(server: McpServerHandle): string {
     const base = `${server.id}:${configHash(server.config!)}:${this.deps.principal}`;
     return server.config!.scope === "per-session" ? `${base}:${this.deps.sessionId}` : base;
+  }
+
+  /** 서버 하나의 목록을 제한 시간 안에서 받는다. broker 서버는 brokerListSlots의 차례를 기다린 뒤 시간을 잰다. */
+  private async listWithin(server: McpServerHandle, signal?: AbortSignal): Promise<Tool[]> {
+    const wait = AbortSignal.timeout(BROKER_LIST_WAIT_MS);
+    const release = server.kind === "broker" ? await brokerListSlots.take(signal ? AbortSignal.any([signal, wait]) : wait) : undefined;
+    try {
+      const deadline = AbortSignal.timeout(Math.min(MCP_LIST_TIMEOUT_MS, requestTimeoutMs(server)));
+      return await this.listTools(server, signal ? AbortSignal.any([signal, deadline]) : deadline);
+    } finally {
+      release?.();
+    }
   }
 
   private async listTools(server: McpServerHandle, signal: AbortSignal): Promise<Tool[]> {

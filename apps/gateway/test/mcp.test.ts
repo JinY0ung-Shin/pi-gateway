@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
+import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
-import { searchTerms } from "../src/mcp-client/proxy.js";
+import { createMcpProxyTools, searchTerms } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
@@ -122,6 +124,27 @@ describe("mcp_search and mcp_call", () => {
   it("splits Korean into two-letter terms so particles do not block a match", () => {
     expect(searchTerms("결함을 조회")).toEqual(["결함", "함을", "조회"]);
     expect(searchTerms("listIssues v2")).toEqual(["list", "issues", "v2"]);
+  });
+
+  it("lists a server whose tool list failed, and fetches it again when the model needs it", async () => {
+    const late: ToolDefinition = {
+      name: "mcp__late__ping",
+      label: "late/ping",
+      description: "ping the late service",
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: "pong" }], details: {} }),
+    };
+    let retries = 0;
+    const [search, call] = createMcpProxyTools([], [{ id: "late", displayName: "Late" }], {
+      failed: new Set(["late"]),
+      retryFailed: async () => (retries++ === 0 ? [late] : []),
+    });
+    expect(search!.description).toContain("- late (Late)");
+    const result = await call!.execute("c1", { name: "mcp__late__ping", arguments: {} }, undefined, undefined, undefined as never);
+    expect(result.content).toEqual([{ type: "text", text: "pong" }]);
+    const found = await search!.execute("s1", { query: "ping" }, undefined, undefined, undefined as never);
+    expect(JSON.stringify(found.content)).toContain("## mcp__late__ping");
+    expect(retries).toBe(2);
   });
 });
 

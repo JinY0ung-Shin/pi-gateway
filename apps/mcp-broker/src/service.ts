@@ -133,9 +133,10 @@ export class BrokerService {
     };
   }
 
-  async #acquire(prepared: Prepared): Promise<Lease> {
+  /** 연결이 모두 쓰이는 중이면 자리가 날 때까지 기다린다 (signal까지). */
+  async #acquire(prepared: Prepared, signal: AbortSignal): Promise<Lease> {
     const { server, rendered, key } = prepared;
-    return this.#pool.acquire({ serverId: server.config.id, ...key }, rendered.transport);
+    return this.#pool.acquire({ serverId: server.config.id, ...key }, rendered.transport, signal);
   }
 
   // ── 도구 ──────────────────────────────────────────────────────────
@@ -161,7 +162,8 @@ export class BrokerService {
     let lease: Lease | undefined;
     try {
       prepared = this.#prepare(server, identity);
-      lease = await this.#acquire(prepared);
+      const deadline = AbortSignal.timeout(this.#config.limits.connectTimeoutSeconds * 1000);
+      lease = await this.#acquire(prepared, signal ? AbortSignal.any([signal, deadline]) : deadline);
       const tools = await this.#fetchTools(lease, server, signal);
       return tools.filter((t) => isToolAllowed(server.config, t.name)).map((t) => prepared!.redactor.redactDeep(t));
     } catch (error) {
@@ -189,7 +191,7 @@ export class BrokerService {
     let lease: Lease | undefined;
     try {
       prepared = this.#prepare(server, identity);
-      lease = await this.#acquire(prepared);
+      lease = await this.#acquire(prepared, signal);
       const redactor = prepared.redactor;
       const onProgress = options.onProgress;
       const result = await lease.client.callTool(

@@ -100,16 +100,38 @@ function resolveAlias(name: string, tools: ToolDefinition[]): ToolDefinition[] {
   return narrowed.length > 0 ? narrowed : matches;
 }
 
-/** tools: MCP 서버들의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다. */
-export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedServer[]): ToolDefinition[] {
-  if (tools.length === 0) return [];
-  const byName = new Map(tools.map((t) => [t.name, t]));
+/** 세션을 만들 때 도구 목록을 못 받은 서버를 나중에 다시 받는다 (McpConnectionSet). */
+export interface McpRecovery {
+  /** 목록을 못 받은 서버의 id */
+  readonly failed: ReadonlySet<string>;
+  /** 새로 받은 도구 정의 (없거나 아직 다시 물어볼 때가 아니면 빈 목록) */
+  retryFailed(signal?: AbortSignal): Promise<ToolDefinition[]>;
+}
+
+/**
+ * tools: MCP 서버들의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다.
+ * recovery가 있으면 목록을 못 받은 서버도 서비스 목록에 넣어 두고, mcp_search와 (모르는 이름의) mcp_call이
+ * 그 서버를 다시 물어본다. 선언은 세션 내내 그대로다 (prefix cache).
+ */
+export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedServer[], recovery?: McpRecovery): ToolDefinition[] {
+  const failed = recovery?.failed ?? new Set<string>();
+  if (tools.length === 0 && failed.size === 0) return [];
+  const hidden = tools.map((t) => t.name);
+  const known = [...tools];
+  const byName = new Map(known.map((t) => [t.name, t]));
   const serverById = new Map(servers.map((s) => [s.id, s]));
-  const documents = tools.map((t) => documentText(t, serverById.get(serverOf(t))));
+  const documents = known.map((t) => documentText(t, serverById.get(serverOf(t))));
   const services = servers
-    .filter((s) => tools.some((t) => serverOf(t) === s.id))
+    .filter((s) => failed.has(s.id) || known.some((t) => serverOf(t) === s.id))
     .map((s) => `- ${s.id}${s.displayName && s.displayName !== s.id ? ` (${s.displayName})` : ""}${s.description ? `: ${s.description.split("\n")[0]}` : ""}`)
     .join("\n");
+  const recover = async (signal: AbortSignal | undefined) => {
+    for (const tool of (await recovery?.retryFailed(signal)) ?? []) {
+      known.push(tool);
+      byName.set(tool.name, tool);
+      documents.push(documentText(tool, serverById.get(serverOf(tool))));
+    }
+  };
 
   const search: ToolDefinition = {
     name: MCP_SEARCH_TOOL,
@@ -120,15 +142,24 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
       limit: Type.Optional(Type.Number({ description: `Maximum number of tools to return. Default ${DEFAULT_LIMIT}, at most ${MAX_LIMIT}.` })),
     }),
     // 도구 목록에서 원래 도구의 선언은 빼고 실행만 되게 둔다.
-    prepareLoadout: () => ({ hiddenDeclarations: [...byName.keys()] }),
-    async execute(_id, params) {
+    prepareLoadout: () => ({ hiddenDeclarations: hidden }),
+    async execute(_id, params, signal) {
       const { query, limit } = params as { query: string; limit?: number };
       const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT)));
-      const found = rank(query, documents, n).map((i) => tools[i]!);
+      await recover(signal);
+      const found = rank(query, documents, n).map((i) => known[i]!);
       if (found.length === 0) return text(`No tools matched "${query}". Try other words or a service name from the list.`);
       const blocks = found.map((t) => `## ${t.name}\n${t.description}\nParameters: ${JSON.stringify(t.parameters)}`);
       return text(`${blocks.join("\n\n")}\n\nRun one with ${MCP_CALL_TOOL} {"name": "<tool name>", "arguments": {...}}.`);
     },
+  };
+
+  const find = (name: string) => {
+    const tool = byName.get(name);
+    if (tool) return tool;
+    const aliases = resolveAlias(name, known);
+    if (aliases.length > 1) throw new Error(`'${name}' matches several tools: ${aliases.map((t) => t.name).join(", ")}. Call one of them.`);
+    return aliases[0];
   };
 
   const call: ToolDefinition = {
@@ -141,11 +172,10 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const { name, arguments: args = {} } = params as { name: string; arguments?: Record<string, unknown> };
-      let tool = byName.get(name);
+      let tool = find(name);
       if (!tool) {
-        const aliases = resolveAlias(name, tools);
-        if (aliases.length > 1) throw new Error(`'${name}' matches several tools: ${aliases.map((t) => t.name).join(", ")}. Call one of them.`);
-        tool = aliases[0];
+        await recover(signal);
+        tool = find(name);
       }
       if (!tool) throw new Error(`Unknown tool '${name}'. Find the exact name with ${MCP_SEARCH_TOOL}.`);
       let validated: Record<string, unknown>;
