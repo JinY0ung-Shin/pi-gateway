@@ -2,8 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { CallToolResult, Progress, Tool } from "@modelcontextprotocol/client";
 import { ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import {
+  describeError,
   isToolAllowed,
   type McpServerView,
+  Redactor,
   type TestServerResponse,
   type ToolSummary,
   type VisibleServer,
@@ -11,7 +13,6 @@ import {
 import type { Logger } from "pino";
 import type { BrokerConfig } from "./config.js";
 import { type Lease, PoolCapacityError, type UpstreamPool, UpstreamBackoffError } from "./pool.js";
-import { describeError, Redactor } from "./redact.js";
 import {
   ConfigError,
   effectiveScope,

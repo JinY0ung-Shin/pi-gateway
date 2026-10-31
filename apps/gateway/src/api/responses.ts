@@ -25,6 +25,7 @@ import {
   parseResponseId,
   type ResponseCreateRequest,
   responseId,
+  sandboxEnvOf,
   thinkingLevelFor,
 } from "./request.js";
 import { SseWriter } from "./sse.js";
@@ -91,6 +92,8 @@ interface TurnPlan {
   input: ParsedInput;
   /** 새 세션일 때만. 이어지는 세션은 세션의 모델을 쓴다. */
   newSession: NewSession | null;
+  /** 이번 턴의 bash env. 세션 기록에 남기지 않는다. */
+  sandboxEnv: Record<string, string>;
 }
 
 export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDeps): void {
@@ -142,6 +145,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
   const input = parseInput(body);
 
   const principal = userOf(auth, body.user);
+  const sandboxEnv = sandboxEnvOf(body, auth);
 
   const prev = body.previous_response_id ?? null;
   let sessionId: string;
@@ -185,7 +189,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     };
   }
 
-  const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession };
+  const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession, sandboxEnv };
 
   // 클라이언트가 연결을 끊으면 실행을 멈춘다.
   const abort = new AbortController();
@@ -331,7 +335,7 @@ async function runLocked(
 
   let live: LiveSession;
   try {
-    live = await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, plan.body.metadata, deps));
+    live = await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, plan.body.metadata, deps), plan.sandboxEnv);
   } catch (err) {
     if (plan.newSession) await deps.hub.discardLocked(record.id);
     if (err instanceof SessionTranscriptMissingError) {

@@ -14,14 +14,16 @@ import {
   type Skill,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type RequestContext, SANDBOX_WORKSPACE, userKey } from "@pi-gateway/shared";
+import { SANDBOX_WORKSPACE, userKey } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources } from "../contracts.js";
 import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
 import type { SessionRecord } from "../sessions/store.js";
 import { INTERACTIVE_TOOLS, installTurnEndGuard } from "../tools/ask-user.js";
+import type { ToolSessionContext } from "../tools/provider.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { redactSandboxEnv } from "../tools/sandbox-env.js";
 import type { ToolSettings } from "../tools/settings.js";
 import type { ToolStats } from "../tools/stats.js";
 import { createStructuredOutputTool } from "../tools/structured-output.js";
@@ -92,7 +94,8 @@ export function subagentDirFor(config: GatewayConfig, record: Pick<SessionRecord
 export async function buildAgentSession(
   deps: AgentFactoryDeps,
   record: SessionRecord,
-  requestContext: () => RequestContext,
+  /** 현재 턴 요청의 값들. 턴마다 바뀌어 함수로 준다. */
+  turn: Pick<ToolSessionContext, "requestContext" | "sandboxEnv">,
   signal: AbortSignal,
 ): Promise<BuiltAgent> {
   const model = deps.models.get(record.model);
@@ -103,16 +106,17 @@ export async function buildAgentSession(
   // 관리 화면에서 끈 기본 도구와, interactive: false 세션의 사용자에게 묻는 도구는 이 세션과 하위 agent 모두에서 뺀다.
   const disabled = new Set([...deps.toolSettings.disabled(), ...(record.interactive ? [] : INTERACTIVE_TOOLS)]);
   const enabled = (t: ToolDefinition) => !disabled.has(t.name);
+  const redacted = redactSandboxEnv(turn.sandboxEnv);
   const created = await deps.tools.createSessionTools({
     principal: record.principal,
     sessionId: record.id,
     sandbox,
     readOnly: record.readOnly,
-    requestContext,
+    ...turn,
     log: deps.log.child({ session: record.id }),
     signal,
   });
-  const customTools = created.filter(enabled);
+  const customTools = created.filter(enabled).map(redacted);
 
   const skillNames = new Set(record.skillNames);
   const skills = deps.plugins.skills().filter((s) => skillNames.has(s.name));
@@ -147,7 +151,9 @@ export async function buildAgentSession(
         sessionManager,
         countStats,
       }),
-  }).filter(enabled);
+  })
+    .filter(enabled)
+    .map(redacted);
 
   const session = await createPiSession(deps, {
     model,

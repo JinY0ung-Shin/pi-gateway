@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { REDACTED, secretVariants } from "../src/redact.js";
+import { REDACTED, secretVariants } from "@pi-gateway/shared";
 import { startHttpFixture, type HttpFixture } from "./fixtures/http-server.js";
 import { piClient, startTestBroker, type TestBroker, textOf } from "./helpers.js";
 

@@ -15,6 +15,8 @@ export interface LiveSession {
   agent: BuiltAgent;
   /** 현재 턴 요청의 전달 헤더·metadata. MCP 호출이 이 값을 쓴다. */
   requestContext: RequestContext;
+  /** 현재 턴 요청의 sandbox_env. bash가 쓰고 도구 결과에서 값을 가린다. 메모리에만 있다 (DB·JSONL에 쓰지 않는다). */
+  sandboxEnv: Record<string, string>;
   lastActive: number;
   activeTurn: AbortController | null;
   /** 이 세션을 만들 때의 설정 revision (LLM 연결·기본 도구). 설정이 바뀌면 다음 턴에 다시 연다. */
@@ -56,10 +58,10 @@ export class SessionHub {
   constructor(private readonly deps: SessionHubDeps) {}
 
   /**
-   * 세션을 메모리에 올리고 이번 요청의 컨텍스트(전달 헤더·metadata)를 붙인다.
+   * 세션을 메모리에 올리고 이번 요청의 컨텍스트(전달 헤더·metadata·sandbox_env)를 붙인다.
    * 호출하는 쪽이 세션 lock을 잡고 있어야 한다.
    */
-  async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext = {}): Promise<LiveSession> {
+  async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext = {}, sandboxEnv: Record<string, string> = {}): Promise<LiveSession> {
     let existing = this.live.get(record.id);
     if (existing && existing.revision !== this.settingsRevision()) {
       // LLM 설정(주소·키·모델)이나 기본 도구 설정이 바뀌었다. 기록은 JSONL에 있으므로 새 설정으로 다시 연다.
@@ -69,14 +71,20 @@ export class SessionHub {
     if (existing) {
       existing.record = record;
       existing.requestContext = requestContext;
+      existing.sandboxEnv = sandboxEnv;
       existing.lastActive = Date.now();
       return existing;
     }
     // 도구를 만드는 동안(예: sandbox MCP 서버 목록 조회)에도 이번 요청의 컨텍스트가 보이게 한다.
     const holder: { live?: LiveSession; ctx: RequestContext } = { ctx: requestContext };
     const revision = this.settingsRevision();
-    const agent = await buildAgentSession(this.deps.factory, record, () => holder.live?.requestContext ?? holder.ctx, signal);
-    const live: LiveSession = { record, agent, requestContext, lastActive: Date.now(), activeTurn: null, revision };
+    const agent = await buildAgentSession(
+      this.deps.factory,
+      record,
+      { requestContext: () => holder.live?.requestContext ?? holder.ctx, sandboxEnv: () => holder.live?.sandboxEnv ?? sandboxEnv },
+      signal,
+    );
+    const live: LiveSession = { record, agent, requestContext, sandboxEnv, lastActive: Date.now(), activeTurn: null, revision };
     holder.live = live;
     this.live.set(record.id, live);
     return live;
@@ -85,7 +93,7 @@ export class SessionHub {
   /** 기록으로 세션을 열어 프롬프트와 도구만 읽고 바로 정리한다 (메모리·JSONL에 남기지 않는다). */
   async preview(record: SessionRecord): Promise<SessionPreview> {
     const abort = new AbortController();
-    const agent = await buildAgentSession(this.deps.factory, record, () => ({}), abort.signal);
+    const agent = await buildAgentSession(this.deps.factory, record, { requestContext: () => ({}), sandboxEnv: () => ({}) }, abort.signal);
     try {
       const { session } = agent;
       return {
@@ -94,7 +102,7 @@ export class SessionHub {
         tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
       };
     } finally {
-      await this.teardown({ record, agent, requestContext: {}, lastActive: 0, activeTurn: abort, revision: "" });
+      await this.teardown({ record, agent, requestContext: {}, sandboxEnv: {}, lastActive: 0, activeTurn: abort, revision: "" });
     }
   }
 

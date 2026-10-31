@@ -12,6 +12,7 @@ import type { SandboxHandle } from "../sandbox/client.js";
 /**
  * bash 도구 — pi 정의(이름·스키마·설명)는 그대로 쓰고 execute만 sandbox 실행으로 바꾼다.
  * pi 내장 execute는 gateway의 process.env 전체를 넘기고 긴 출력을 gateway /tmp에 쓰기 때문이다.
+ * env는 이번 턴 요청의 sandbox_env만 넘긴다 (출력에서 값을 가리는 것은 sandbox-env.ts).
  */
 
 /** sandbox에서 받아 둘 출력 상한. 이보다 많으면 앞부분은 버리고 sandbox의 전체 출력 파일을 안내한다. */
@@ -20,7 +21,7 @@ const UPDATE_THROTTLE_MS = 100;
 
 const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
 
-export function createSandboxBashTool(sandbox: SandboxHandle): ToolDefinition {
+export function createSandboxBashTool(sandbox: SandboxHandle, sandboxEnv: () => Record<string, string>): ToolDefinition {
   const base = createBashToolDefinition(SANDBOX_WORKSPACE, { exposeSessionEnvironment: false });
   const definition: typeof base = {
     ...base,
@@ -57,12 +58,14 @@ export function createSandboxBashTool(sandbox: SandboxHandle): ToolDefinition {
       };
 
       let result: Awaited<ReturnType<SandboxHandle["exec"]>>;
+      const env = sandboxEnv();
       try {
         onUpdate?.({ content: [], details: undefined });
         result = await sandbox.exec(
           {
             argv: ["bash", "-c", command],
             cwd,
+            ...(Object.keys(env).length > 0 ? { env } : {}),
             ...(timeout && timeout > 0 ? { timeoutSec: Math.ceil(timeout) } : {}),
           },
           { onStdout: onData, onStderr: onData, signal },

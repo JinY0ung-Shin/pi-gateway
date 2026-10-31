@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { secretVariants } from "../src/redact.js";
+import { secretVariants } from "@pi-gateway/shared";
 import { startTestBroker, type TestBroker } from "./helpers.js";
 
 const httpServer = (id: string, extra: Record<string, unknown> = {}) => ({

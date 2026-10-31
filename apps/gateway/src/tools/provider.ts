@@ -11,7 +11,8 @@ import type { SandboxHandle } from "../sandbox/client.js";
  * 1. 사용자 영향을 받는 코드를 실행하거나 파일을 만지는 도구는 반드시 sandbox(sandboxd)를 거친다.
  *    gateway 프로세스에서 사용자 파일을 열거나 명령을 띄우지 않는다.
  * 2. 비밀값(API 키, 토큰)이 필요한 도구는 반드시 broker(MCP)를 거친다.
- *    gateway env·설정·디스크에 비밀을 두지 않는다.
+ *    gateway env·설정·디스크에 비밀을 두지 않는다. 예외는 하나: 서비스 키 요청의 sandbox_env는
+ *    그 턴의 bash env로만 넘기고 (메모리에만 둔다) 모든 도구 결과에서 가린다 (sandbox-env.ts).
  * 3. gateway 안에서 직접 실행하는 도구는 오케스트레이션 용도만 둔다 (예: AskUserQuestion).
  */
 
@@ -25,6 +26,8 @@ export interface ToolSessionContext {
   readOnly: boolean;
   /** 현재 요청의 전달 헤더·metadata (allowlist를 거친 값). 턴마다 바뀔 수 있어 함수로 준다. */
   requestContext: () => RequestContext;
+  /** 현재 요청의 sandbox_env. bash 실행 env로만 쓴다. 턴마다 바뀔 수 있어 함수로 준다. */
+  sandboxEnv: () => Record<string, string>;
   log: Logger;
   /** 세션 생성이 취소되면 abort된다 */
   signal: AbortSignal;

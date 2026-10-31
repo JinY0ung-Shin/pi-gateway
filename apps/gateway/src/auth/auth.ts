@@ -9,9 +9,10 @@ import { unauthorized } from "../errors.js";
  * - API_KEY(서비스 키): body.user를 그대로 믿는다 (BFF 패턴).
  * - 키가 하나도 없고 AUTH_DISABLED=1: 인증 없이 서비스 키처럼 허용 (개발용).
  * 키 비교는 해시 후 상수 시간으로 한다.
+ * 관리 화면 채팅은 관리자 로그인이라 `admin`이다. body.user를 믿는 것은 서비스 키와 같지만 서비스 키 전용 필드(sandbox_env)는 못 쓴다.
  */
 
-export type AuthResult = { kind: "user"; user: string } | { kind: "service" };
+export type AuthResult = { kind: "user"; user: string } | { kind: "service" } | { kind: "admin" };
 
 const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
 
