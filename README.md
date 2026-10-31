@@ -43,6 +43,8 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
   - 하위 agent(`Agent`·`SendMessage`)가 부른 도구도 같은 도구 이벤트로 나간다. 각 이벤트에 `parent_tool_use_id`(부른 `Agent`·`SendMessage` 호출의 `tool_use_id`)가 붙는다. 하위 agent의 텍스트는 나가지 않고, 최종 답은 부모 호출의 `tool_result`로 온다.
+  - 대화 요약: context가 차서 pi가 앞 대화를 요약하면 `response.compaction`이 `status: "in_progress"`로 시작해 `"completed"` | `"failed"`로 끝난다.
+- **usage:** `input_tokens`(캐시 읽기·쓰기 포함), `output_tokens`, `input_tokens_details.context_tokens`(마지막 호출의 context 크기, 요약 뒤에는 그 추정치), `context_window`(세션 모델의 context window).
 - **AskUserQuestion:**
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.

@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compactionTokens } from "../src/agent/session-factory.js";
-import { BOB_KEY, type Harness, last, startHarness } from "./helpers.js";
+import type { ResponseUsage } from "../src/api/mapper.js";
+import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
@@ -164,5 +165,33 @@ describe("compaction thresholds", () => {
   it("keep pi defaults for large models and scale down for small ones", () => {
     expect(compactionTokens(200_000)).toEqual({ reserveTokens: 16384, keepRecentTokens: 20000 });
     expect(compactionTokens(32768)).toEqual({ reserveTokens: 8192, keepRecentTokens: 8192 });
+  });
+});
+
+describe("compaction events", () => {
+  let h: Harness;
+  beforeAll(async () => {
+    // 짧은 대화도 요약되도록 최근 유지 분량을 줄인다 (test-model context 32000, reserve 8000)
+    h = await startHarness({
+      overrides: { piSettings: { retry: { enabled: false }, compaction: { enabled: true, reserveTokens: 8000, keepRecentTokens: 10 } } },
+    });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it("streams response.compaction around pi's compaction and reports the context after it", async () => {
+    h.llm.enqueue({ text: "First answer with some history to summarize." });
+    const first = await h.post({ input: "first question" });
+    h.llm.enqueue({ text: "Second answer.", usage: { prompt_tokens: 30000, completion_tokens: 20 } }, { text: "Summary of the conversation." });
+    const res = await h.stream({ input: "second question", previous_response_id: first.json.id });
+    const compaction = ofType(res.events, "response.compaction").map((e) => e.data.status);
+    expect(compaction).toEqual(["in_progress", "completed"]);
+    const done = last(res.events);
+    expect(done.type).toBe("response.completed");
+    const { usage } = done.data.response as { usage: ResponseUsage };
+    expect(usage.context_window).toBe(32000);
+    // 요약 전 크기(30000)가 아니라 요약 뒤의 추정치
+    expect(usage.input_tokens_details.context_tokens).toBeLessThan(30000);
   });
 });

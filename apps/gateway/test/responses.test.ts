@@ -37,6 +37,7 @@ describe("POST /v1/responses — non-stream", () => {
       output_tokens: 20,
       total_tokens: 120,
       input_tokens_details: { cached_tokens: 30, cache_creation_tokens: 0, context_tokens: 100 },
+      context_window: 32000,
     });
     expect(body).toMatchObject({ error: null, incomplete_details: null, structured_output: null, background: null, metadata: {} });
   });

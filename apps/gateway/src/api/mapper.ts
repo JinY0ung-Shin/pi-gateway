@@ -55,6 +55,8 @@ export interface ResponseUsage {
   output_tokens: number;
   total_tokens: number;
   input_tokens_details: { cached_tokens: number; cache_creation_tokens: number; context_tokens?: number | null };
+  /** 세션 모델의 context window (token). 사용률 표시용 */
+  context_window?: number;
 }
 
 const hex = () => randomBytes(12).toString("hex");
@@ -112,7 +114,11 @@ export class ResponseEventMapper {
   /** assistant 응답 시도가 시작될 때의 상태. pi가 같은 응답을 다시 시도하면 그 시도에서 나온 항목을 버린다. */
   private checkpoint: { items: number; messageId: string | null; messageTextLength: number } | null = null;
 
-  constructor(private readonly emit: EmitFn | null) {}
+  /** contextWindow: 세션 모델의 context window (usage.context_window) */
+  constructor(
+    private readonly emit: EmitFn | null,
+    private readonly contextWindow?: number,
+  ) {}
 
   private send(type: string, payload: Record<string, unknown>): void {
     this.emit?.(type, payload);
@@ -250,7 +256,14 @@ export class ResponseEventMapper {
       case "auto_retry_start":
         this.discardAttempt();
         return;
+      // pi가 대화를 요약하는 동안 클라이언트가 멈춘 것처럼 보이지 않게 알린다.
+      case "compaction_start":
+        this.send("response.compaction", { status: "in_progress" });
+        return;
       case "compaction_end":
+        // 요약 뒤의 context 크기 (모르면 비운다). 다음 응답의 usage가 오면 그것으로 바뀐다.
+        if (event.result) this.contextTokens = event.result.estimatedTokensAfter ?? null;
+        this.send("response.compaction", { status: event.result ? "completed" : "failed" });
         if (event.willRetry) this.discardAttempt();
         return;
       case "message_update": {
@@ -466,6 +479,7 @@ export class ResponseEventMapper {
         cache_creation_tokens: cacheWrite,
         ...(this.contextTokens !== null ? { context_tokens: this.contextTokens } : {}),
       },
+      ...(this.contextWindow ? { context_window: this.contextWindow } : {}),
     };
   }
 

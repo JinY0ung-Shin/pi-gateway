@@ -381,6 +381,7 @@ async function runLocked(
   const failed = (error: { code: string; message: string } | undefined) => body("failed", [], emptyUsage(), { error });
   const log = deps.log.child({ session: record.id, turn });
   const leafBefore = live.agent.session.sessionManager.getLeafId();
+  const contextWindow = live.agent.session.model?.contextWindow;
 
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
@@ -430,7 +431,7 @@ async function runLocked(
     reply.hijack();
     const sse = new SseWriter(reply.raw);
     sse.start();
-    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload));
+    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload), contextWindow);
     try {
       await streamTurn();
     } catch (err) {
@@ -484,7 +485,7 @@ async function runLocked(
   }
 
   // 비스트리밍
-  const mapper = new ResponseEventMapper(null);
+  const mapper = new ResponseEventMapper(null, contextWindow);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
