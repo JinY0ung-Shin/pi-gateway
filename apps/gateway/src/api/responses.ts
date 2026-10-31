@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
-import { type GatewayModels, thinkingLevelOf } from "../agent/runtime.js";
+import { type GatewayModels, type LlmModelConfig, thinkingLevelOf } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
@@ -100,9 +100,11 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
 
   app.get("/v1/models", async (req) => {
     deps.auth.authenticate(req.headers.authorization);
+    // default: model을 주지 않은 새 세션이 쓰는 모델. 이어가는 턴은 model을 빼면 세션의 모델을 그대로 쓰므로, 기본 모델로 바꾸려면 이 id를 보낸다.
+    const defaultModel = deps.models.defaultModel();
     return {
       object: "list",
-      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: m.server })),
+      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: m.server, default: m.id === defaultModel })),
     };
   });
 
@@ -174,8 +176,7 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     const defaultModel = deps.models.defaultModel();
     if (!defaultModel) throw apiError(503, "LLM is not configured. Set it on the LLM page of the admin UI.", { type: "server_error", code: "llm_not_configured" });
     const model = body.model ?? defaultModel;
-    const modelConfig = deps.models.config(model);
-    if (!modelConfig) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
+    const modelConfig = requireModel(deps, model);
     newSession = {
       model,
       thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig),
@@ -245,7 +246,7 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     id: plan.sessionId,
     principal: plan.principal,
     model: plan.model,
-    thinkingLevel: plan.thinkingLevel ?? (modelConfig?.reasoning ? thinkingLevelOf(modelConfig.defaultEffort) : "off"),
+    thinkingLevel: plan.thinkingLevel ?? (modelConfig ? defaultThinkingLevel(modelConfig) : "off"),
     turn: 0,
     sessionFile: null,
     leafId: null,
@@ -259,6 +260,15 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
     lastActiveAt: iso,
   };
 }
+
+function requireModel(deps: ResponsesDeps, model: string): LlmModelConfig {
+  const config = deps.models.config(model);
+  if (!config) throw badRequest(`Model '${model}' is not supported. Available: ${deps.models.list().map((m) => m.id).join(", ")}`);
+  return config;
+}
+
+/** reasoning.effort를 보내지 않았을 때의 thinking level */
+const defaultThinkingLevel = (model: LlmModelConfig): string => (model.reasoning ? thinkingLevelOf(model.defaultEffort) : "off");
 
 function requireImageInput(deps: ResponsesDeps, model: string, input: ParsedInput): void {
   if (input.kind === "prompt" && input.images.length > 0 && !deps.models.config(model)?.input.includes("image")) {
@@ -288,19 +298,18 @@ async function runLocked(
     const found = deps.store.get(plan.sessionId);
     if (!found || found.principal !== plan.principal) throw notFoundSession(plan.prev!);
     record = found;
-    const sessionModel = deps.models.config(record.model);
+    // model·reasoning.effort는 이어지는 턴에서도 바꿀 수 있다. 대화 기록과 도구는 그대로 두고 다음 턴부터 새 설정으로 돈다.
+    const modelChanged = plan.body.model != null && plan.body.model !== record.model;
+    const sessionModel = modelChanged ? requireModel(deps, plan.body.model!) : deps.models.config(record.model);
     if (!sessionModel) {
       throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
     }
-    requireImageInput(deps, record.model, plan.input);
+    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel) ?? (modelChanged ? defaultThinkingLevel(sessionModel) : record.thinkingLevel);
+    requireImageInput(deps, sessionModel.id, plan.input);
     // 예전 응답이면 그 지점에서 갈라진다 (메시지 수정·재생성). 대화 기록만 갈라지고 workspace 파일은 그대로다.
     const point = deps.store.turnPoint(record.id, plan.prevTurn);
     if (!point) throw conflict(`previous_response_id '${plan.prev}' can no longer be continued`);
     from = point;
-    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel);
-    if (thinkingLevel && thinkingLevel !== record.thinkingLevel) {
-      throw badRequest("reasoning.effort is fixed when the session is created");
-    }
     // 클라이언트는 보통 매 턴 같은 설정을 다시 보낸다. 같으면 통과, 다르면 거부한다 (도구가 세션을 만들 때 정해진다).
     const outputFormat = outputFormatOf(plan.body);
     if (outputFormat && JSON.stringify(outputFormat) !== JSON.stringify(record.outputFormat)) {
@@ -311,6 +320,11 @@ async function runLocked(
     }
     if (plan.body.read_only != null && plan.body.read_only !== record.readOnly) {
       throw badRequest("read_only is fixed when the session is created. Start a new session to change it.");
+    }
+    if (sessionModel.id !== record.model || thinkingLevel !== record.thinkingLevel) {
+      // 유휴 뒤 JSONL에서 다시 열 때도 새 설정을 쓰도록 바로 남긴다. 메모리의 세션은 hub.acquire가 새 설정으로 다시 연다.
+      record = { ...record, model: sessionModel.id, thinkingLevel };
+      deps.store.setModel(record.id, record.model, record.thinkingLevel);
     }
   }
 

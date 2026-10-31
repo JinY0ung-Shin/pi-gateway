@@ -61,8 +61,12 @@ export class SessionHub {
    */
   async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext = {}): Promise<LiveSession> {
     let existing = this.live.get(record.id);
-    if (existing && existing.revision !== this.settingsRevision()) {
-      // LLM 설정(주소·키·모델)이나 기본 도구 설정이 바뀌었다. 기록은 JSONL에 있으므로 새 설정으로 다시 연다.
+    if (
+      existing &&
+      (existing.revision !== this.settingsRevision() || existing.record.model !== record.model || existing.record.thinkingLevel !== record.thinkingLevel)
+    ) {
+      // LLM 설정(주소·키·모델)이나 기본 도구 설정이 바뀌었거나, 이어지는 턴이 model·reasoning.effort를 바꿨다.
+      // 기록은 JSONL에 있으므로 새 설정으로 다시 연다 (하위 agent와 compaction 기준도 모델을 따라가야 해서 setModel을 쓰지 않는다).
       await this.teardown(existing);
       existing = undefined;
     }
