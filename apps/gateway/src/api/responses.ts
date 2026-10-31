@@ -107,6 +107,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
   });
 
   app.post("/v1/responses/:id/cancel", async (req) => cancelResponse(deps, req, deps.auth.authenticate(req.headers.authorization)));
+  app.post("/v1/responses/:id/input", async (req) => queueResponseInput(deps, req, deps.auth.authenticate(req.headers.authorization)));
 }
 
 /**
@@ -128,6 +129,42 @@ export function cancelResponse(deps: ResponsesDeps, req: FastifyRequest, auth: A
   }
   active.abort(USER_CANCELLED);
   return { id, object: "response", status: "cancelling" };
+}
+
+/**
+ * 진행 중인 응답에 사용자 입력을 넣는다 (`POST …/{id}/input?user=`, body `{client_id, text}`). 세션 lock은 잡지 않는다.
+ * pi가 다음 도구 호출 경계에서 모델에 넣고, 그때 스트림에 `response.input_consumed {client_id}`가 나간다.
+ * 턴이 끝날 때까지 들어가지 못한 입력은 최종 응답의 `undelivered_input`에 실리고 버려진다.
+ */
+export async function queueResponseInput(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
+  const { id } = req.params as { id: string };
+  const user = userOf(auth, (req.query as { user?: string }).user);
+  const { client_id: clientId, text } = (req.body ?? {}) as { client_id?: unknown; text?: unknown };
+  if (typeof clientId !== "string" || !clientId) throw badRequest("client_id is required");
+  if (typeof text !== "string" || !text.trim()) throw badRequest("text is required");
+  const parsed = parseResponseId(id);
+  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
+  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  const live = deps.hub.get(record.id);
+  const mapper = live?.activeMapper;
+  const notRunning = () =>
+    apiError(409, `Response '${id}' is no longer running and cannot take input.`, { type: "invalid_request_error", code: "response_not_running" });
+  if (!live || !mapper || parsed.turn !== record.turn + 1) {
+    if (parsed.turn <= record.turn) throw notRunning();
+    throw notFound(`Response '${id}' not found`);
+  }
+  // AskUserQuestion·StructuredOutput이 불린 턴은 곧 끝난다.
+  if (!mapper.acceptsInput) throw notRunning();
+  mapper.queueInput(clientId);
+  try {
+    await live.agent.session.steer(text);
+  } catch (err) {
+    mapper.dropInput(clientId);
+    throw badRequest(err instanceof Error ? err.message : String(err));
+  }
+  // 넣는 동안 턴이 끝났으면 pi 큐에 남은 것이 다음 턴으로 새지 않게 비운다 (client_id는 미전달로 이미 알렸다).
+  if (live.activeMapper === null) live.agent.session.clearQueue();
+  return { id, object: "response.input", client_id: clientId, status: "queued" };
 }
 
 /**
@@ -356,12 +393,15 @@ async function runLocked(
   const metadata = plan.body.metadata ?? {};
   const createdAt = Math.floor(Date.now() / 1000);
   const base = { id: respId, object: "response", created_at: createdAt, model: record.model };
+  /** 턴이 끝날 때까지 전달되지 않은 턴 도중 입력의 client_id */
+  let undelivered: string[] = [];
   const body = (status: string, output: unknown[], usage: ResponseUsage, extra: Record<string, unknown> = {}) => ({
     ...base,
     status,
     output,
     usage,
     metadata,
+    ...(undelivered.length > 0 ? { undelivered_input: undelivered } : {}),
     ...extra,
   });
   const failed = (error: { code: string; message: string } | undefined) => body("failed", [], emptyUsage(), { error });
@@ -370,6 +410,7 @@ async function runLocked(
 
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
+    live.activeMapper = mapper;
     try {
       const outcome = await executeTurn({ live, text, images, expandTemplates, mapper, signal: abort.signal, log });
       if (outcome.status === "aborted" && abort.signal.reason === USER_CANCELLED) {
@@ -379,6 +420,11 @@ async function runLocked(
     } catch (err) {
       log.error({ err }, "turn crashed");
       return { status: "failed", error: { code: "server_error", message: "Internal server error" }, leafBefore };
+    } finally {
+      // 전달되지 않은 입력은 다음 턴으로 넘기지 않는다: pi 큐를 비우고 최종 응답에 알린다.
+      live.activeMapper = null;
+      live.agent.session.clearQueue();
+      undelivered = mapper.takeUndeliveredInputs();
     }
   };
 

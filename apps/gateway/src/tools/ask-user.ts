@@ -61,13 +61,17 @@ const TURN_ENDING_TOOLS = new Set([ASK_USER_TOOL, STRUCTURED_OUTPUT_TOOL]);
 /**
  * AskUserQuestion·StructuredOutput이 다른 도구와 같은 배치로 호출되면 `terminate`가 적용되지 않는다.
  * 그런 턴도 끝나도록 AgentSession의 finishTurn을 감싼다 (세션 쪽 boundary 처리는 먼저 실행).
+ * 큐에 턴 도중 입력이 남아 있으면 pi가 턴을 이어가므로 비운다 (전달하지 못한 입력은 응답이 알린다).
  */
 export function installTurnEndGuard(session: AgentSession): void {
   const agent = session.agent;
   const previous = agent.finishTurn;
   agent.finishTurn = async (turn, signal) => {
     const decision = await previous?.(turn, signal);
-    if (turn.toolResults.some((r) => TURN_ENDING_TOOLS.has(r.toolName) && !r.isError)) return { action: "end" };
+    if (turn.toolResults.some((r) => TURN_ENDING_TOOLS.has(r.toolName) && !r.isError)) {
+      session.clearQueue();
+      return { action: "end" };
+    }
     return decision ?? undefined;
   };
 }

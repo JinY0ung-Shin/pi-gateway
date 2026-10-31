@@ -107,6 +107,10 @@ export class ResponseEventMapper {
   private contextTokens: number | null = null;
   /** assistant 응답 시도가 시작될 때의 상태. pi가 같은 응답을 다시 시도하면 그 시도에서 나온 항목을 버린다. */
   private checkpoint: { items: number; messageId: string | null; messageTextLength: number } | null = null;
+  /** 턴 도중 받은 입력의 client_id (pi 큐 순서). pi가 전달하면 앞에서부터 빠진다. */
+  private readonly queuedInputs: string[] = [];
+  /** 턴의 첫 user 메시지(이번 요청의 입력)를 지났는가. 그 뒤의 user 메시지는 턴 도중 입력이다. */
+  private promptSeen = false;
 
   constructor(private readonly emit: EmitFn | null) {}
 
@@ -241,6 +245,14 @@ export class ResponseEventMapper {
       case "message_start":
         if (event.message.role === "assistant") {
           this.checkpoint = { items: this.items.length, messageId: this.message?.id ?? null, messageTextLength: this.message?.text.length ?? 0 };
+        }
+        if (event.message.role === "user") {
+          // pi는 user 메시지를 이번 요청의 입력, 그다음 턴 도중 입력(steer)을 받은 순서대로 넣는다.
+          if (!this.promptSeen) this.promptSeen = true;
+          else {
+            const clientId = this.queuedInputs.shift();
+            if (clientId !== undefined) this.send("response.input_consumed", { client_id: clientId });
+          }
         }
         return;
       case "auto_retry_start":
@@ -393,6 +405,26 @@ export class ResponseEventMapper {
     m.text = JSON.stringify(output);
     this.send("response.output_text.delta", { item_id: m.id, output_index: m.outputIndex, content_index: 0, delta: m.text, logprobs: [] });
     this.closeMessage();
+  }
+
+  /** 턴 도중 입력을 더 받을 수 있는가. AskUserQuestion·StructuredOutput이 불린 턴은 곧 끝나므로 받지 않는다. */
+  get acceptsInput(): boolean {
+    return !this.pending && !this.structuredOutput;
+  }
+
+  queueInput(clientId: string): void {
+    this.queuedInputs.push(clientId);
+  }
+
+  /** pi 큐에 넣지 못한 입력을 뺀다 */
+  dropInput(clientId: string): void {
+    const i = this.queuedInputs.lastIndexOf(clientId);
+    if (i !== -1) this.queuedInputs.splice(i, 1);
+  }
+
+  /** 턴이 끝날 때 아직 전달되지 않은 입력 (응답의 `undelivered_input`) */
+  takeUndeliveredInputs(): string[] {
+    return this.queuedInputs.splice(0);
   }
 
   private toolUseStarted(id: string, name: string): void {

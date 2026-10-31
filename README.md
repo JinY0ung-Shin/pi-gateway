@@ -34,6 +34,10 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **취소:** `POST /v1/responses/{id}/cancel`(서비스 키면 `?user=`)은 진행 중인 턴을 멈춘다.
   - 스트림은 `response.incomplete`(`user_cancelled`)로 끝나고, 그 id로 다음 턴을 이어갈 수 있다.
   - 이미 끝난 응답이면 409 `response_not_cancellable`, 다른 사용자의 응답이거나 없는 응답이면 404다.
+- **턴 도중 입력:** `POST /v1/responses/{id}/input`(서비스 키면 `?user=`), body `{client_id, text}`는 진행 중인 턴에 사용자 메시지를 넣는다. 응답은 `{id, object: "response.input", client_id, status: "queued"}`다.
+  - pi가 다음 도구 호출 경계(다음 LLM 호출 전)에 모델에 넣고, 그때 스트림에 `response.input_consumed {client_id}`가 나간다. 여러 개면 넣은 순서대로 들어간다. 마지막 답을 쓰는 중에 온 입력도 그 답 뒤에 같은 턴에서 들어간다.
+  - 턴이 끝날 때까지 들어가지 못한 입력(AskUserQuestion·StructuredOutput·취소·도구 호출 상한·실패로 끝난 턴, 또는 턴이 끝나는 순간에 온 입력)은 최종 응답의 `undelivered_input: [client_id…]`에 실리고 버려진다. 다음 턴으로 넘어가지 않으므로 클라이언트가 다시 보낸다. 없으면 필드가 없다.
+  - 이미 끝났거나 AskUserQuestion·StructuredOutput을 불러 끝나는 중인 응답이면 409 `response_not_running`, 다른 사용자의 응답이거나 없는(아직 시작 전인) 응답이면 404다.
 - **도구 호출 상한:** 한 턴에서 모델이 도구를 200번 넘게 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다.
 - **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id). LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
 - **관리 화면 채팅 테스트:** `/admin`의 "채팅 테스트"는 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (`POST /admin/api/chat`, 중지는 `POST /admin/api/chat/{id}/cancel?user=`). 입력한 user의 workspace·MCP·skill로 실행된다.
@@ -41,6 +45,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
+  - 턴 도중 입력: `response.input_consumed`
 - **AskUserQuestion:**
   - 질문이 오면 `status: "requires_action"`과 `function_call` 항목을 보낸다.
   - 답은 `function_call_output`으로 받는다.
