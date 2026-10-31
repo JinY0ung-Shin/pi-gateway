@@ -135,10 +135,10 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       adminRequests,
       sessions: store,
       chat: {
-        respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "service" })),
-        cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "service" })),
+        respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "admin" })),
+        cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "admin" })),
         preview: (req, reply) => sendApiErrors(reply, () => previewSession(responses, req.body)),
-        file: (req, reply) => sendApiErrors(reply, () => sendWorkspaceFile(responses, req, reply, { kind: "service" })),
+        file: (req, reply) => sendApiErrors(reply, () => sendWorkspaceFile(responses, req, reply, { kind: "admin" })),
         forwardHeaders: () => mcpRegistry.forwardHeaders(),
       },
     },

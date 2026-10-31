@@ -162,7 +162,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 - `./scripts/security-check/check-secret-files.sh`가 실행 중인 컨테이너에서 다음을 확인한다 ([§8](#8-보안-점검)).
   - 각 서비스의 `/run/secrets/*` 소유자와 권한.
   - sandbox 컨테이너에 `/run/secrets`가 없는지.
-- 비밀값은 sandbox 컨테이너, gateway의 일반 환경변수, 로그에 들어가지 않는다.
+- 비밀값은 sandbox 컨테이너, gateway의 일반 환경변수, 로그에 들어가지 않는다. 예외는 클라이언트(BFF)가 요청마다 보내는 `sandbox_env`로, 그 턴의 `bash` 프로세스 env에만 들어가고 gateway 메모리 밖에 남지 않는다 (README `/v1/responses` 절).
 
 ## 5. sandbox에 도구 추가하기
 

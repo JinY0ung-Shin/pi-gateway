@@ -10,6 +10,7 @@ agent가 쓸 수 있는 도구를 늘리는 방법이에요. 대부분은 코드
    gateway 프로세스 안에서 사용자 파일을 열거나 명령을 띄우면 안 돼요. sandbox 컨테이너에는 그 사용자의 workspace만 있고 비밀이 없어요.
 2. **비밀값(API 키, 토큰)이 필요한 도구는 반드시 broker(MCP)를 거쳐요.**
    gateway의 env, 설정 파일, 디스크에 비밀을 두지 않아요. 키는 mcp-broker에만 있고, agent도 gateway도 원문을 보지 않아요.
+   유일한 예외는 서비스 키 요청의 `sandbox_env`예요 (BFF가 자기 사용자의 셸에 넘기는 값, README `/v1/responses` 절). 그 턴의 `bash` env로만 가고, 새 도구가 이 값을 쓰게 하지 않아요.
 3. **gateway 안에서 직접 실행하는 도구는 흐름 제어용만 둬요.**
    예: AskUserQuestion (질문을 보여주고 턴을 끝내는 것뿐, 파일·명령·비밀을 만지지 않아요).
 

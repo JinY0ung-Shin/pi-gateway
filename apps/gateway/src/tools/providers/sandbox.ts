@@ -76,7 +76,7 @@ export function createSandboxToolProvider(): ToolProvider {
             ]),
         withHomeMapping(createLsToolDefinition(cwd, { operations: fs.ls }) as ToolDefinition),
         withHomeMapping(createFindToolDefinition(cwd, { operations: fs.find }) as ToolDefinition),
-        ...(ctx.readOnly ? [] : [createSandboxBashTool(ctx.sandbox)]),
+        ...(ctx.readOnly ? [] : [createSandboxBashTool(ctx.sandbox, ctx.sandboxEnv)]),
         createSandboxGrepTool(ctx.sandbox),
         createPresentFileTool(ctx.sandbox) as unknown as ToolDefinition,
       ];

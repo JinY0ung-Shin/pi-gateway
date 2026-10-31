@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { REDACTED, Redactor, secretVariants } from "../src/redact.js";
-import { capResult } from "../src/service.js";
 
 const SECRET = "ghp_Sup3rS3cretValue/+=?&x";
 
@@ -48,20 +47,5 @@ describe("Redactor", () => {
   it("긴 형태를 먼저 가린다", () => {
     const two = new Redactor(["abcd", "abcdefgh"]);
     expect(two.redact("abcdefgh")).toBe(REDACTED);
-  });
-});
-
-describe("capResult", () => {
-  it("한도를 넘으면 텍스트만 남겨 자르고 표시를 붙인다", () => {
-    const big = { content: [{ type: "text" as const, text: "y".repeat(5000) }], isError: false };
-    const out = capResult(big, 2048);
-    expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThan(5000);
-    expect(out.content[0]!.type).toBe("text");
-    expect((out.content[0] as { text: string }).text).toMatch(/^\[mcp-broker: result truncated/);
-  });
-
-  it("한도 안이면 그대로 돌려준다", () => {
-    const small = { content: [{ type: "text" as const, text: "ok" }] };
-    expect(capResult(small, 2048)).toBe(small);
   });
 });

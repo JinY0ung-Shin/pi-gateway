@@ -1,7 +1,8 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { type LlmModelConfig, REASONING_EFFORTS, type ReasoningEffort, thinkingLevelOf } from "../agent/runtime.js";
-import { badRequest, validationError } from "../errors.js";
+import type { AuthResult } from "../auth/auth.js";
+import { apiError, badRequest, validationError } from "../errors.js";
 import { checkImage } from "../tools/image-guard.js";
 
 /** POST /v1/responses 요청 — oh-my-gateway가 받던 필드 중 v1이 지원하는 것 */
@@ -44,6 +45,8 @@ export const ResponseCreateRequest = z
     interactive: z.boolean().nullish(),
     /** true면 sandbox를 바꾸거나 명령을 실행하는 도구(write·edit·bash, sandbox MCP 서버)를 뺀다. 남이 쓴 내용이 이 사용자의 sandbox를 움직이는 요청용. 기본 false */
     read_only: z.boolean().nullish(),
+    /** 이번 턴의 bash에 넣을 환경변수 (서비스 키 전용). 메모리에만 두고 매 요청 새로 받는다 (sandboxEnvOf 참고). */
+    sandbox_env: z.record(z.string(), z.string()).nullish(),
     text: z
       .object({
         format: z
@@ -83,6 +86,36 @@ export function outputFormatOf(body: ResponseCreateRequest): OutputFormat | null
   if (format.type !== "json_schema") throw badRequest(`text.format '${format.type}' is not supported`);
   if (!format.schema || format.schema.type !== "object") throw badRequest("text.format.schema must be a JSON schema with type 'object'");
   return { name: format.name ?? null, schema: format.schema };
+}
+
+/** sandbox_env 상한. 비밀값 몇 개를 넘기는 용도라 넉넉히 잡는다. */
+const SANDBOX_ENV_MAX_NAMES = 64;
+const SANDBOX_ENV_MAX_BYTES = 256 * 1024;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** sandbox가 쓰는 이름(프록시·경로·셸 동작)은 덮어쓰지 못한다. 대소문자는 가리지 않는다. */
+const RESERVED_ENV = /^(PATH|HOME|USER|SHELL|PWD|OLDPWD|TMPDIR|LANG|TERM|IFS|ENV|HOSTNAME|PS4|PROMPT_COMMAND|SHELLOPTS)$|^(LD_|BASH|LC_)|_PROXY$/i;
+
+/**
+ * 요청의 sandbox_env. 서비스 키 요청만 쓸 수 있다 (BFF가 사용자 대신 자기 사용자의 비밀값을 넘긴다).
+ * 값은 오류 메시지에 싣지 않는다. 없으면 빈 객체 — 그 턴의 bash에는 아무것도 넣지 않는다.
+ */
+export function sandboxEnvOf(body: ResponseCreateRequest, auth: AuthResult): Record<string, string> {
+  const env = body.sandbox_env;
+  if (!env || Object.keys(env).length === 0) return {};
+  if (auth.kind !== "service") {
+    throw apiError(403, "sandbox_env can only be sent with the service API key", { type: "invalid_request_error", code: "sandbox_env_not_allowed" });
+  }
+  const names = Object.keys(env);
+  if (names.length > SANDBOX_ENV_MAX_NAMES) throw badRequest(`sandbox_env accepts at most ${SANDBOX_ENV_MAX_NAMES} names`);
+  let bytes = 0;
+  for (const name of names) {
+    if (!ENV_NAME.test(name)) throw badRequest(`sandbox_env name '${name.slice(0, 64)}' is not a valid environment variable name`);
+    if (RESERVED_ENV.test(name)) throw badRequest(`sandbox_env name '${name}' is reserved by the sandbox`);
+    if (env[name]!.includes("\0")) throw badRequest(`sandbox_env value of '${name}' contains a NUL byte`);
+    bytes += Buffer.byteLength(name) + Buffer.byteLength(env[name]!);
+  }
+  if (bytes > SANDBOX_ENV_MAX_BYTES) throw badRequest(`sandbox_env exceeds ${SANDBOX_ENV_MAX_BYTES} bytes`);
+  return env;
 }
 
 export type ParsedInput =

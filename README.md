@@ -16,7 +16,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
 ## 보안 경계
 
 - **agent loop와 도구 실행을 분리한다.** agent loop는 gateway에서 돌고, `read`·`write`·`edit`·`ls`·`find`·`bash`·`grep`과 sandbox MCP는 사용자 컨테이너에서 돈다.
-- **sandbox 컨테이너에는 비밀이 없다.**
+- **sandbox 컨테이너에는 비밀이 없다.** 예외는 클라이언트가 서비스 키로 보낸 `sandbox_env` 하나다 (아래 `/v1/responses` 절). 그 턴의 `bash` 프로세스 env로만 넘어가고, gateway는 그 값을 컨테이너 설정·gateway DB·세션 기록에 쓰지 않는다.
   - mount는 본인 workspace(`/workspace`), plugin(`/opt/plugins`, 읽기 전용), egress 프록시 socket(`/run/pi-proxy`, 읽기 전용) 세 개뿐이다.
   - 읽기 전용 rootfs, capability 없음, 네트워크 없음이다.
 - **MCP 키는 broker에만 있다.** 암호화해 저장하고, 관리 API로는 쓸 수만 있다. 접속 대상이 바뀌면 키가 지워진다.
@@ -53,6 +53,11 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 세션을 만들 때 정해진다. 이어가는 턴에 같은 값을 다시 보내는 것은 되고, 다른 값이면 400이다.
 - **read_only:** 남이 쓴 내용이 이 사용자의 sandbox를 움직이는 요청이면 `read_only: true`를 준다 (기본 `false`). 그 세션(하위 agent 포함)에서 sandbox를 바꾸거나 명령을 실행하는 도구(`write`, `edit`, `bash`, sandbox에서 도는 MCP 서버)를 뺀다. `read`, `ls`, `find`, `grep`, `present_file`과 broker MCP 서버는 남는다.
   - 세션을 만들 때 정해진다. 이어가는 턴에 같은 값을 다시 보내는 것은 되고, 다른 값이면 400이다.
+- **sandbox_env:** 서비스 키 요청은 `sandbox_env`(이름→값 문자열 객체)로 그 턴의 `bash` 명령 env를 줄 수 있다. BFF가 자기 사용자의 비밀값을 그 사용자의 셸에 넘기는 용도다.
+  - 사용자 키 요청이나 관리 화면 채팅이 보내면 403 `sandbox_env_not_allowed`다. 이름은 env 문법이어야 하고, sandbox가 쓰는 이름(`PATH`, `HOME`, `*_PROXY`, `LD_*`, `BASH*`, `LC_*` 등)은 400이다. 최대 64개, 합계 256KiB.
+  - 매 요청마다 다시 보낸다. gateway는 그 요청의 값만 쓰고 메모리에만 둔다 — DB·세션 JSONL·로그·관리 화면에 남기지 않으므로 재시작이나 유휴 정리 뒤에도 다음 요청의 값이 그대로 쓰인다. 보내지 않은 턴(AskUserQuestion 답 포함)의 `bash`에는 아무것도 들어가지 않는다.
+  - `bash`(하위 agent 포함)에만 넘기고 다른 도구·sandbox MCP 서버에는 넘기지 않는다.
+  - 값(원문·base64·hex·URL·JSON 형태, 4자 이상)은 모든 도구의 결과·진행 상황·오류에서 `[REDACTED]`로 바뀐 뒤 모델·클라이언트·세션 기록으로 간다. workspace 파일 내용(`GET /v1/files/content`)은 가리지 않는다.
 - **구조화된 출력:** `text.format`에 `json_schema`(최상위 `type: "object"`)를 주면 최종 답이 그 스키마의 JSON이 된다.
   - 결과는 `structured_output`에 객체로, `output_text`에 JSON 문자열로 나간다. 모델이 끝까지 답을 내지 않으면 `structured_output_missing`으로 실패한다.
   - 스키마는 세션을 만들 때 정해진다. 이어가는 턴에 같은 스키마를 다시 보내는 것은 되고, 다른 스키마면 400이다.

@@ -28,3 +28,9 @@ Proceed only if the user still wants it.
 Fixes needed to uphold the security requirements count as confirmed defects:
 - OS-level isolation of everything outside the user's workspace;
 - MCP credentials never exposed to the agent.
+
+The one sanctioned exception: a service-key request's `sandbox_env` (the BFF handing its own user's
+secrets to that user's shell). It reaches only that turn's `bash` exec env, lives only in the live
+session's memory (never the DB, session JSONL, logs or admin UI), and every tool result, progress
+update and error is redacted of its values before the model, the client or the transcript sees it.
+Never widen it (other tools, sandbox MCP servers, user-key requests, persistence).
