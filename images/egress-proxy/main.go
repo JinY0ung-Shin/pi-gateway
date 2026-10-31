@@ -8,8 +8,9 @@
 //   - HTTP CONNECT(HTTPS 등)와 절대 URI의 일반 HTTP 요청을 받는다.
 //
 //   - 허용 목록(SANDBOX_EGRESS_ALLOW)에 있는 목적지만 연다. 나머지는 모두 거부한다.
-//     항목은 도메인(정확히 일치) 또는 IP/CIDR이고, ":PORT"를 붙이면 그 포트만 연다 (쉼표·공백 구분).
-//     예: github.corp.com:443, 10.1.2.3, 10.20.0.0/16:8080
+//     항목은 도메인(정확히 일치), "*.도메인"(그 아래의 모든 하위 도메인) 또는 IP/CIDR이고,
+//     ":PORT"를 붙이면 그 포트만 연다 (쉼표·공백 구분).
+//     예: github.corp.com:443, *.corp.net:443, 10.1.2.3, 10.20.0.0/16:8080
 //
 //   - 목적지 이름은 프록시가 직접 해석하고, 해석된 IP로 연결한다 (DNS rebinding 방지).
 //     loopback·link-local(169.254/16, metadata 포함)은 허용한 도메인이 그 주소로 해석돼도 거부한다.
@@ -63,10 +64,19 @@ func splitList(raw string) []string {
 }
 
 // allowEntry: SANDBOX_EGRESS_ALLOW의 한 항목. domain과 net 중 하나만 있다. port 0 = 모든 포트
+// wildcard면 domain 자신이 아니라 그 아래의 하위 도메인에 맞는다 ("*.corp.net" → a.corp.net, a.b.corp.net).
 type allowEntry struct {
-	domain string
-	net    *net.IPNet
-	port   int
+	domain   string
+	wildcard bool
+	net      *net.IPNet
+	port     int
+}
+
+func (e allowEntry) matchesDomain(host string) bool {
+	if e.wildcard {
+		return strings.HasSuffix(host, "."+e.domain)
+	}
+	return e.domain == host
 }
 
 var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
@@ -101,10 +111,18 @@ func parseEntry(entry string) (allowEntry, error) {
 		return allowEntry{net: n, port: port}, nil
 	}
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if !domainRe.MatchString(host) {
-		return allowEntry{}, fmt.Errorf("invalid domain in %q (wildcards are not supported)", entry)
+	wildcard := strings.HasPrefix(host, "*.")
+	if wildcard {
+		host = host[2:]
+		// "*.com"처럼 최상위 도메인 전체를 여는 항목은 받지 않는다.
+		if !strings.Contains(host, ".") {
+			return allowEntry{}, fmt.Errorf("wildcard in %q must cover at least two labels (e.g. *.corp.net)", entry)
+		}
 	}
-	return allowEntry{domain: host, port: port}, nil
+	if !domainRe.MatchString(host) {
+		return allowEntry{}, fmt.Errorf("invalid domain in %q (a wildcard is only allowed as a leading \"*.\")", entry)
+	}
+	return allowEntry{domain: host, wildcard: wildcard, port: port}, nil
 }
 
 func parseAllow() ([]allowEntry, error) {
@@ -146,7 +164,7 @@ func (d allowDecider) Decide(args acl.DecideArgs) (acl.Decision, error) {
 		if e.port != 0 && e.port != port {
 			continue
 		}
-		if (ip != nil && e.net != nil && e.net.Contains(ip)) || (ip == nil && e.domain == host) {
+		if (ip != nil && e.net != nil && e.net.Contains(ip)) || (ip == nil && e.domain != "" && e.matchesDomain(host)) {
 			return acl.Decision{Result: acl.Allow, Reason: "in SANDBOX_EGRESS_ALLOW"}, nil
 		}
 	}
