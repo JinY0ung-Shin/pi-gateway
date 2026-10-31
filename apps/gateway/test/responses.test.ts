@@ -350,6 +350,79 @@ describe("POST /v1/responses/{id}/cancel", () => {
   });
 });
 
+describe("POST /v1/responses/{id}/input", () => {
+  const input = (id: string, body: unknown, key = ALICE_KEY, query = "") =>
+    fetch(`${h.url}/v1/responses/${id}/input${query}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  /** 다음 턴을 시작하고, 그 턴의 첫 LLM 요청이 들어올 때까지 기다린다 (응답은 delayMs 동안 오지 않는다) */
+  const startTurn = async (prev: string, input: string) => {
+    const before = h.llm.requests.length;
+    const streaming = h.stream({ input, previous_response_id: prev });
+    for (let i = 0; i < 100 && h.llm.requests.length === before; i++) await new Promise((r) => setTimeout(r, 20));
+    return { streaming };
+  };
+  const QUESTIONS = { questions: [{ question: "Which one?", header: "Pick", multiSelect: false, options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }] };
+
+  it("delivers input into the running turn at the next tool boundary", async () => {
+    const first = await h.post({ input: "hi" });
+    const id2 = first.json.id.replace(/_1$/, "_2");
+    h.llm.enqueue({ toolCalls: [{ id: "t_ls", name: "ls", arguments: { path: "." } }], delayMs: 300 }, { text: "done" });
+    const { streaming } = await startTurn(first.json.id, "work");
+    const res = await input(id2, { client_id: "c1", text: "also check the README" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: id2, object: "response.input", client_id: "c1", status: "queued" });
+
+    const { events } = await streaming;
+    expect(ofType(events, "response.input_consumed").map((e) => e.data.client_id)).toEqual(["c1"]);
+    const end = last(events);
+    expect(end.type).toBe("response.completed");
+    expect((end.data.response as any).undelivered_input).toBeUndefined();
+    // 도구 결과 뒤의 다음 LLM 요청에 들어간다
+    const messages = JSON.stringify(h.llm.requests.at(-1)!.messages);
+    expect(messages).toContain("t_ls");
+    expect(messages).toContain("also check the README");
+  });
+
+  it("reports input a turn ended without delivering (AskUserQuestion) and never carries it into the next turn", async () => {
+    const first = await h.post({ input: "hi" });
+    const id2 = first.json.id.replace(/_1$/, "_2");
+    h.llm.enqueue({ toolCalls: [{ id: "call_ask_in", name: "AskUserQuestion", arguments: QUESTIONS }], delayMs: 300 });
+    const before = h.llm.requests.length;
+    const { streaming } = await startTurn(first.json.id, "ask me");
+    expect((await input(id2, { client_id: "c2", text: "LEFTOVER-NOTE" })).status).toBe(200);
+
+    const { events } = await streaming;
+    expect(ofType(events, "response.input_consumed")).toHaveLength(0);
+    const end = last(events);
+    expect((end.data.response as any).status).toBe("requires_action");
+    expect((end.data.response as any).undelivered_input).toEqual(["c2"]);
+    // 질문에서 턴이 끝난다: 남은 입력으로 LLM을 다시 부르지 않는다
+    expect(h.llm.requests.length - before).toBe(1);
+
+    const finished = await input(id2, { client_id: "c3", text: "late" });
+    expect(finished.status).toBe(409);
+    expect(((await finished.json()) as any).error.code).toBe("response_not_running");
+
+    const answered = await h.post({ previous_response_id: id2, input: [{ type: "function_call_output", call_id: "call_ask_in", output: "A" }] });
+    expect(answered.json.status).toBe("completed");
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).not.toContain("LEFTOVER-NOTE");
+  });
+
+  it("404 for another user's, an unknown or a not yet started response; 400 for a bad body", async () => {
+    const first = await h.post({ input: "hi" });
+    const body = { client_id: "c", text: "x" };
+    expect((await input(first.json.id, body, BOB_KEY)).status).toBe(404);
+    expect((await input("resp_nope_1", body)).status).toBe(404);
+    expect((await input(first.json.id.replace(/_1$/, "_2"), body)).status).toBe(404);
+    expect((await input(first.json.id, body, SERVICE_KEY)).status).toBe(400);
+    expect((await input(first.json.id, { client_id: "c" })).status).toBe(400);
+    expect((await input(first.json.id, body, SERVICE_KEY, "?user=alice")).status).toBe(409);
+  });
+});
+
 describe("input_image", () => {
   const dataUrl = (buf: Buffer) => `data:image/png;base64,${buf.toString("base64")}`;
   const withImage = (model: string, image_url: string) => ({

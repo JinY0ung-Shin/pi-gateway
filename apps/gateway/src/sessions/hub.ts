@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import { type AgentFactoryDeps, type BuiltAgent, buildAgentSession, subagentDirFor } from "../agent/session-factory.js";
+import type { ResponseEventMapper } from "../api/mapper.js";
 import { KeyedMutex } from "./limiter.js";
 import type { SessionRecord, SessionStore } from "./store.js";
 
@@ -19,6 +20,8 @@ export interface LiveSession {
   sandboxEnv: Record<string, string>;
   lastActive: number;
   activeTurn: AbortController | null;
+  /** 진행 중인 턴의 이벤트 mapper. 턴 도중 입력(`POST /v1/responses/{id}/input`)이 여기로 들어간다. */
+  activeMapper: ResponseEventMapper | null;
   /** 이 세션을 만들 때의 설정 revision (LLM 연결·기본 도구). 설정이 바뀌면 다음 턴에 다시 연다. */
   revision: string;
 }
@@ -88,7 +91,7 @@ export class SessionHub {
       { requestContext: () => holder.live?.requestContext ?? holder.ctx, sandboxEnv: () => holder.live?.sandboxEnv ?? sandboxEnv },
       signal,
     );
-    const live: LiveSession = { record, agent, requestContext, sandboxEnv, lastActive: Date.now(), activeTurn: null, revision };
+    const live: LiveSession = { record, agent, requestContext, sandboxEnv, lastActive: Date.now(), activeTurn: null, activeMapper: null, revision };
     holder.live = live;
     this.live.set(record.id, live);
     return live;
@@ -106,7 +109,7 @@ export class SessionHub {
         tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
       };
     } finally {
-      await this.teardown({ record, agent, requestContext: {}, sandboxEnv: {}, lastActive: 0, activeTurn: abort, revision: "" });
+      await this.teardown({ record, agent, requestContext: {}, sandboxEnv: {}, lastActive: 0, activeTurn: abort, activeMapper: null, revision: "" });
     }
   }
 
