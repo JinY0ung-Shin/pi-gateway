@@ -184,14 +184,20 @@ describe("continuation", () => {
     expect(sent).not.toContain("forget me");
   });
 
-  it("checks reasoning.effort against the session's model when model is omitted", async () => {
+  it("a continuing turn can change reasoning.effort; the session keeps it, also after a reload", async () => {
     const first = await h.post({ model: "think-model", input: "a", reasoning: { effort: "high" } });
     expect(first.status).toBe(200);
-    const same = await h.post({ input: "b", reasoning: { effort: "high" }, previous_response_id: first.json.id });
-    expect(same.status).toBe(200);
-    const changed = await h.post({ input: "c", reasoning: { effort: "low" }, previous_response_id: same.json.id });
-    expect(changed.status).toBe(400);
-    expect(changed.json.error.message).toBe("reasoning.effort is fixed when the session is created");
+    const changed = await h.post({ input: "b", reasoning: { effort: "low" }, previous_response_id: first.json.id });
+    expect(changed.status).toBe(200);
+    expect(h.llm.requests.at(-1)).toMatchObject({ reasoning_effort: "low" });
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain('"a"');
+    await h.gateway.hub.evict(/^resp_(.+)_2$/.exec(changed.json.id)![1]!);
+    const omitted = await h.post({ input: "c", previous_response_id: changed.json.id });
+    expect(omitted.status).toBe(200);
+    expect(h.llm.requests.at(-1)).toMatchObject({ reasoning_effort: "low" });
+    const unsupported = await h.post({ input: "d", reasoning: { effort: "medium" }, previous_response_id: omitted.json.id });
+    expect(unsupported.status).toBe(400);
+    expect(unsupported.json.error.code).toBe("unsupported_reasoning_effort");
   });
 
   it("uses the model's default effort and rejects efforts the model does not take", async () => {
@@ -207,11 +213,24 @@ describe("continuation", () => {
     expect(rejected.json.error.code).toBe("unsupported_reasoning_effort");
   });
 
-  it("continues with the session's model and ignores body.model", async () => {
+  it("a continuing turn can switch the model and keeps the history; later turns stay on the new model", async () => {
+    const first = await h.post({ model: "test-model", input: "a" });
+    const switched = await h.post({ model: "think-model", input: "b", previous_response_id: first.json.id });
+    expect(switched.status).toBe(200);
+    expect(switched.json.model).toBe("think-model");
+    // effort를 주지 않았으므로 새 모델의 기본 effort
+    expect(h.llm.requests.at(-1)).toMatchObject({ model: "think-model", reasoning_effort: "high" });
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain('"a"');
+    const next = await h.post({ input: "c", previous_response_id: switched.json.id });
+    expect(next.json.model).toBe("think-model");
+    expect(h.llm.requests.at(-1)!.model).toBe("think-model");
+  });
+
+  it("rejects switching a continuing turn to an unconfigured model", async () => {
     const first = await h.post({ model: "think-model", input: "a" });
     const next = await h.post({ model: "nope", input: "b", previous_response_id: first.json.id });
-    expect(next.status).toBe(200);
-    expect(next.json.model).toBe("think-model");
+    expect(next.status).toBe(400);
+    expect(next.json.error.message).toContain("Model 'nope' is not supported");
   });
 });
 
@@ -258,12 +277,13 @@ describe("system prompt", () => {
 });
 
 describe("GET /v1/models", () => {
-  it("lists the configured models and requires a key", async () => {
+  it("lists the configured models, marks the default one, and requires a key", async () => {
     const res = await fetch(`${h.url}/v1/models`, { headers: { authorization: `Bearer ${ALICE_KEY}` } });
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.object).toBe("list");
     expect(body.data.map((m: { id: string }) => m.id)).toEqual(["test-model", "think-model", "vision-model"]);
+    expect(body.data.map((m: { default: boolean }) => m.default)).toEqual([true, false, false]);
     expect(body.data[0]).toMatchObject({ object: "model" });
     expect((await fetch(`${h.url}/v1/models`)).status).toBe(401);
   });

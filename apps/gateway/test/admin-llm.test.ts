@@ -92,8 +92,8 @@ describe("/admin/api/llm", () => {
         models: [{ id: "second-model", contextWindow: 8000, maxTokens: 1000 }],
       };
       expect((await putLlm({ ...base, servers: [...base.servers, second] })).status).toBe(200);
-      expect(await models()).toContainEqual({ id: "second-model", object: "model", owned_by: "second" });
-      expect(await models()).toContainEqual({ id: "test-model", object: "model", owned_by: "test" });
+      expect(await models()).toContainEqual(expect.objectContaining({ id: "second-model", object: "model", owned_by: "second" }));
+      expect(await models()).toContainEqual(expect.objectContaining({ id: "test-model", object: "model", owned_by: "test" }));
 
       const res = await h.post({ model: "second-model", input: "hi" });
       expect(res.status).toBe(200);

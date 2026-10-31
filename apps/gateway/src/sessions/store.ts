@@ -207,6 +207,11 @@ export class SessionStore {
     this.db.prepare("UPDATE sessions SET session_file = ? WHERE id = ? AND session_file IS NULL").run(sessionFile, id);
   }
 
+  /** 이어지는 턴에서 바꾼 model·thinking level. 다음에 세션을 열 때부터 쓴다. */
+  setModel(id: string, model: string, thinkingLevel: string): void {
+    this.db.prepare("UPDATE sessions SET model = ?, thinking_level = ? WHERE id = ?").run(model, thinkingLevel, id);
+  }
+
   touch(id: string): void {
     this.db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(new Date().toISOString(), id);
   }

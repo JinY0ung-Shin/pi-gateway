@@ -28,6 +28,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 다른 사용자의 세션이거나 아직 없는 turn이면 404다.
   - 예전 응답 id를 주면 그 지점에서 갈라진다 (메시지 수정·재생성). 새 응답은 다음 turn 번호를 받고, 갈라진 쪽들 모두 계속 이어갈 수 있다.
   - 되돌아가는 것은 대화 기록뿐이다. workspace 파일과 MCP로 한 일은 그대로다.
+  - 이어가는 턴에서도 `model`과 `reasoning.effort`를 바꿀 수 있다. 대화 기록과 도구는 그대로이고 그 턴부터 새 설정으로 돈다 (유휴 뒤 다시 열어도 마찬가지다). 설정하지 않은 모델이면 400이다. 빼면 세션의 설정을 그대로 쓰고, `model`만 바꾸고 effort를 빼면 새 모델의 기본 effort를 쓴다. 기본 모델로 바꾸려면 그 id(`/v1/models`의 `default: true`)를 보낸다.
 - **인증:**
   - `USER_API_KEYS`(키가 사용자를 정함) 또는 `API_KEY`(`user` 필드를 믿음)를 쓴다.
   - 사용자 없는 요청은 400이다.
@@ -35,7 +36,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 스트림은 `response.incomplete`(`user_cancelled`)로 끝나고, 그 id로 다음 턴을 이어갈 수 있다.
   - 이미 끝난 응답이면 409 `response_not_cancellable`, 다른 사용자의 응답이거나 없는 응답이면 404다.
 - **도구 호출 상한:** 한 턴에서 모델이 도구를 200번 넘게 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다.
-- **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id). LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
+- **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id, `default`는 `model`을 주지 않은 새 세션이 쓰는 모델인지). LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
 - **관리 화면 채팅 테스트:** `/admin`의 "채팅 테스트"는 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (`POST /admin/api/chat`, 중지는 `POST /admin/api/chat/{id}/cancel?user=`). 입력한 user의 workspace·MCP·skill로 실행된다.
 - **이미지 입력:** `input_image`는 base64 `data:` URL만 받는다 (25MP·20MB 제한). LLM 설정에서 이미지를 켜지 않은 모델이면 400이다.
 - **SSE 이벤트:**
