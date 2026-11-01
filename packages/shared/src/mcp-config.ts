@@ -85,6 +85,8 @@ const ANY_TEMPLATE = /\{\{([^{}]*)\}\}/g;
 const SECRET_REF = /^secret:([A-Za-z0-9_.-]{1,64})$/;
 const HEADER_REF = /^ctx\.header:([A-Za-z0-9-]{1,128})$/;
 const METADATA_REF = /^metadata:([A-Za-z0-9_.-]{1,128})$/;
+/** gateway에 보내는 자격증명(API 키·관리 화면 쿠키). MCP 서버로 넘기지 않는다. */
+const GATEWAY_CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
 
 function parseRef(body: string): TemplateRef | null {
   const ref = body.trim();
@@ -169,8 +171,7 @@ export function transportTarget(config: Pick<McpServerConfig, "transport">): str
   if (t.type !== "http") return JSON.stringify(t);
   let origin: string;
   try {
-    // 자리표시자가 host에 들어 있으면 그 자체가 행선지를 바꿀 수 있으므로 문자 그대로 비교한다.
-    origin = /\{\{/.test(t.url.split("/").slice(0, 3).join("/")) ? t.url : new URL(t.url).origin;
+    origin = new URL(t.url).origin;
   } catch {
     origin = t.url;
   }
@@ -187,6 +188,8 @@ export function transportTarget(config: Pick<McpServerConfig, "transport">): str
  * 스키마 밖의 규칙 검사. 오류 메시지 목록을 돌려준다 (비어 있으면 통과).
  * - sandbox 서버는 stdio, broker 서버는 http만 쓴다.
  * - sandbox 실행 서버에는 {{secret:…}}, {{ctx.header:…}}를 쓸 수 없다.
+ * - http url의 scheme·host에는 자리표시자를 쓸 수 없다 (요청 값이 비밀키가 갈 곳을 바꾸지 못하게).
+ * - gateway 자체의 자격증명 헤더(authorization·cookie·proxy-authorization)는 {{ctx.header}}로 넘길 수 없다.
  * - stdio 서버는 env·args가 프로세스 시작 시 고정되므로,
  *   {{user}}/{{ctx.header}}를 쓰면 scope가 per-user 이상, {{session}}/{{metadata}}를 쓰면 per-session이어야 한다.
  */
@@ -194,6 +197,10 @@ export function validateMcpServerConfig(config: z.infer<typeof McpServerConfigBa
   const errors: string[] = [];
   const { refs, unknown } = collectTemplateRefs(config);
   for (const u of unknown) errors.push(`unknown template placeholder ${u}`);
+  if (config.transport.type === "http" && config.transport.url.split("/").slice(0, 3).join("/").includes("{{")) {
+    errors.push("http url must not use placeholders in the scheme or host");
+  }
+  for (const r of refs) if (r.kind === "header" && GATEWAY_CREDENTIAL_HEADERS.has(r.name)) errors.push(`{{ctx.header:${r.name}}} is not allowed`);
   if (config.runIn === "sandbox") {
     if (refs.some((r) => r.kind === "secret")) errors.push("sandbox servers must not use {{secret:...}}");
     if (refs.some((r) => r.kind === "header")) errors.push("sandbox servers must not use {{ctx.header:...}}");

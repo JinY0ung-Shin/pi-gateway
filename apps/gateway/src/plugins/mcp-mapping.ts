@@ -2,6 +2,7 @@ import {
   atLeastScope,
   MCP_SERVER_ID_PATTERN,
   McpServerConfig,
+  requiredHeaderNames,
   requiredScope,
   requiredSecretNames,
   SANDBOX_WORKSPACE,
@@ -140,6 +141,8 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
     source: { kind: "plugin", pluginId: ctx.pluginId, version: ctx.version },
   });
   if (!parsed.success) return unsupported(parsed.error.issues.map((i) => i.message).join("; "));
+  // 사용자별 헤더 값은 plugin이 고른 곳으로 보내지 않는다. 필요하면 관리자가 MCP 탭에서 넣는다.
+  if (requiredHeaderNames(parsed.data).length > 0) return unsupported("plugin servers must not use {{ctx.header:...}}; set it in the MCP tab");
   return { name, config: parsed.data, requiredSecrets: requiredSecretNames(parsed.data), warnings };
 }
 

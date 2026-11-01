@@ -86,6 +86,17 @@ describe("MCP server config", () => {
     expect(McpServerConfig.safeParse({ id: "s", runIn: "sandbox", scope: "per-session", transport }).success).toBe(true);
   });
 
+  it("url의 scheme·host에 자리표시자를 쓰거나 gateway 자격증명 헤더를 넘기는 설정은 거부한다", () => {
+    const http = (url: string, headers: Record<string, string> = {}) => McpServerConfig.safeParse({ ...base, transport: { type: "http", url, headers } });
+    expect(http("https://{{metadata:tenant}}.api.corp/mcp").success).toBe(false);
+    expect(http("https://api.corp{{ctx.header:x-h}}/mcp").success).toBe(false);
+    expect(http("https://api.corp/{{metadata:tenant}}/mcp").success).toBe(true);
+    for (const name of ["authorization", "Cookie", "proxy-authorization"]) {
+      expect(http("https://api.corp/mcp", { X: `{{ctx.header:${name}}}` }).success).toBe(false);
+    }
+    expect(http("https://api.corp/mcp", { Cookie: "s={{ctx.header:x-foo-session}}" }).success).toBe(true);
+  });
+
   it("알 수 없는 자리표시자는 거부한다", () => {
     const result = McpServerConfig.safeParse({
       ...base,

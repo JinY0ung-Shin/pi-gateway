@@ -263,6 +263,15 @@ describe("MCP registry", () => {
       });
       expect((merged.transport as { env: Record<string, string> }).env.OLD).toBeUndefined(); // 관리자가 지웠고 plugin 값은 그대로
     });
+
+    it("plugin이 url의 origin을 바꾸면 관리자가 넣은 헤더를 새 곳으로 보내지 않는다", () => {
+      const http = (url: string, headers: Record<string, string>) =>
+        McpServerConfig.parse({ id: "srv", runIn: "broker", source: { kind: "plugin", pluginId: "p@m", version: "1" }, transport: { type: "http", url, headers } });
+      const baseline = http("https://a.example/mcp", {});
+      const current = http("https://a.example/mcp", { Cookie: "s={{ctx.header:x-foo-session}}" });
+      expect(mergeWithBaseline(baseline, current, http("https://a.example/v2", {})).transport).toMatchObject({ headers: { Cookie: "s={{ctx.header:x-foo-session}}" } });
+      expect(mergeWithBaseline(baseline, current, http("https://b.example/mcp", {})).transport).toMatchObject({ headers: {} });
+    });
   });
 });
 

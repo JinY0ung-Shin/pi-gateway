@@ -5,6 +5,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AttachedStdioTransport } from "../src/mcp-client/attached-transport.js";
 import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
 import { createMcpProxyTools, searchTerms } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
@@ -345,5 +346,26 @@ describe("MCP tool cache", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     cache.set("sandbox:local:h:alice:s4", []);
     expect(size()).toBe(1);
+  });
+});
+
+describe("AttachedStdioTransport", () => {
+  it("chunk 경계에서 잘린 UTF-8 글자를 깨뜨리지 않는다", async () => {
+    let push: (chunk: Buffer) => void = () => {};
+    const transport = new AttachedStdioTransport(async () => ({
+      write: () => {},
+      onStdout: (l) => (push = l),
+      onStderr: () => {},
+      onExit: () => {},
+      close: () => {},
+    }));
+    const got: unknown[] = [];
+    transport.onMessage((m) => got.push(m));
+    await transport.start();
+    const bytes = Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", method: "n", params: { text: "한글" } })}\n`);
+    const cut = bytes.indexOf(Buffer.from("한")) + 1; // 글자 중간
+    push(bytes.subarray(0, cut));
+    push(bytes.subarray(cut));
+    expect(got).toEqual([{ jsonrpc: "2.0", method: "n", params: { text: "한글" } }]);
   });
 });

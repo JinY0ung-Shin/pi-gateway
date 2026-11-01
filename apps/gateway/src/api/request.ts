@@ -85,7 +85,15 @@ export function outputFormatOf(body: ResponseCreateRequest): OutputFormat | null
   if (!format || format.type === "text") return null;
   if (format.type !== "json_schema") throw badRequest(`text.format '${format.type}' is not supported`);
   if (!format.schema || format.schema.type !== "object") throw badRequest("text.format.schema must be a JSON schema with type 'object'");
+  if (usesRegex(format.schema)) throw badRequest("text.format.schema must not use 'pattern' or 'patternProperties'");
   return { name: format.name ?? null, schema: format.schema };
+}
+
+/** 스키마의 정규식은 도구 인자를 검사할 때 gateway 메인 스레드에서 돈다. 요청이 보낸 정규식은 받지 않는다 (ReDoS). */
+function usesRegex(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(usesRegex);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, v]) => (key === "pattern" && typeof v === "string") || key === "patternProperties" || usesRegex(v));
 }
 
 /** sandbox_env 상한. 비밀값 몇 개를 넘기는 용도라 넉넉히 잡는다. */

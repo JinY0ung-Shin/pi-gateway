@@ -87,6 +87,10 @@ workspace 파일을 다루는 서버 (sandbox) — 예: `monsemi-frontend`:
 
 stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 `{{user}}`·`{{ctx.header}}`를 쓰면 `scope`가 `per-user` 이상, `{{session}}`·`{{metadata}}`를 쓰면 `per-session`이어야 해요 (설정 검증이 알려줘요).
 
+- http `url`의 scheme·host에는 자리표시자를 쓸 수 없어요. 요청 값이 비밀키가 갈 곳을 바꾸지 못하게 하려는 거예요. 경로·쿼리에는 써도 돼요.
+- `{{ctx.header:authorization}}`·`cookie`·`proxy-authorization`은 쓸 수 없어요. gateway에 보내는 API 키·관리 화면 쿠키라서 MCP 서버로 넘기지 않아요.
+- plugin의 `.mcp.json`에는 `{{ctx.header}}`를 쓸 수 없어요 (지원 안 함으로 기록돼요). 관리자가 MCP 페이지에서 넣어요.
+
 ### 사용자마다 다른 쿠키가 필요한 서버
 
 로그인 쿠키처럼 사용자마다 다른 자격증명은 클라이언트가 요청 헤더로 보내고, broker가 그 값을 MCP 서버 요청에 붙여요. 값은 agent와 sandbox에 들어가지 않고, broker 연결도 사용자별로 나뉘어요.
@@ -113,7 +117,7 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 - `metadata`에는 넣지 않아요. metadata는 sandbox MCP 서버에도 가요.
 - 세션을 처음 열 때 값이 없어 서버가 도구 목록 요청을 거절하면, 그 서버는 빼 두었다가 30초가 지난 뒤 모델이 `mcp_search`나 모르는 이름의 `mcp_call`을 부를 때 그 요청의 값으로 다시 물어봐요.
 - MCP 서버가 `Set-Cookie`로 준 새 쿠키는 클라이언트로 돌아가지 않아요. 만료되면 클라이언트가 새 값을 보내야 해요.
-- plugin이 등록한 서버의 `{{secret:NAME}}`이 사실은 사용자마다 다른 값이면, MCP 페이지에서 그 헤더 값을 `{{ctx.header:…}}`로 바꿔요. 비밀키 목록에서 빠지고, 바꾼 값은 plugin을 업데이트해도 유지돼요.
+- plugin이 등록한 서버의 `{{secret:NAME}}`이 사실은 사용자마다 다른 값이면, MCP 페이지에서 그 헤더 값을 `{{ctx.header:…}}`로 바꿔요. 비밀키 목록에서 빠지고, 바꾼 값은 plugin을 업데이트해도 유지돼요. 업데이트로 url의 origin이 바뀌면 관리자가 바꾼 헤더는 버리고 새 매핑을 써요.
 - MCP 페이지의 연결 확인은 쿠키 없이 해요. 관리 화면 채팅의 헤더 입력칸에 값을 넣어 확인해요.
 
 ### 모델에 보이는 이름

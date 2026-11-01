@@ -1,4 +1,5 @@
 import { basename, relative } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   createGrepToolDefinition,
   DEFAULT_MAX_BYTES,
@@ -65,6 +66,7 @@ export function createSandboxGrepTool(sandbox: SandboxHandle): ToolDefinition {
       let linesTruncated = false;
       let stderr = "";
       let pending = "";
+      const decoder = new StringDecoder("utf8");
       const stop = new AbortController();
       const onOuterAbort = () => stop.abort();
       signal?.addEventListener("abort", onOuterAbort, { once: true });
@@ -102,7 +104,7 @@ export function createSandboxGrepTool(sandbox: SandboxHandle): ToolDefinition {
           { argv, cwd },
           {
             onStdout: (chunk) => {
-              pending += chunk.toString("utf8");
+              pending += decoder.write(chunk);
               let nl = pending.indexOf("\n");
               while (nl >= 0) {
                 handleLine(pending.slice(0, nl));
@@ -116,7 +118,7 @@ export function createSandboxGrepTool(sandbox: SandboxHandle): ToolDefinition {
             signal: stop.signal,
           },
         );
-        handleLine(pending);
+        handleLine(pending + decoder.end());
         exitCode = result.exitCode;
       } catch (err) {
         // 결과 개수 제한에 걸려서 멈춘 것이면 정상이다.

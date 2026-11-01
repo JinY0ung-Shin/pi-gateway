@@ -75,6 +75,13 @@ describe("text.format json_schema", () => {
     expect((await h.post({ input: "x", text: { format: { type: "json_schema", schema: { type: "array" } } } })).status).toBe(400);
   });
 
+  it("rejects schemas with regular expressions (they would run on the gateway's main thread)", async () => {
+    const withPattern = { type: "object", properties: { a: { anyOf: [{ type: "string", pattern: "^(a+)+$" }] } } };
+    expect((await h.post({ input: "x", text: { format: { type: "json_schema", schema: withPattern } } })).status).toBe(400);
+    const withPatternProps = { type: "object", patternProperties: { "^x": { type: "string" } } };
+    expect((await h.post({ input: "x", text: { format: { type: "json_schema", schema: withPatternProps } } })).status).toBe(400);
+  });
+
   it("does not add the tool without text.format", async () => {
     h.llm.enqueue({ text: "hi" });
     const res = await h.post({ input: "hi" });

@@ -65,7 +65,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 매 요청마다 다시 보낸다. gateway는 그 요청의 값만 쓰고 메모리에만 둔다 — DB·세션 JSONL·로그·관리 화면에 남기지 않으므로 재시작이나 유휴 정리 뒤에도 다음 요청의 값이 그대로 쓰인다. 보내지 않은 턴(AskUserQuestion 답 포함)의 `bash`에는 아무것도 들어가지 않는다.
   - `bash`(하위 agent 포함)에만 넘기고 다른 도구·sandbox MCP 서버에는 넘기지 않는다.
   - 값(원문·base64·hex·URL·JSON 형태, 4자 이상)은 모든 도구의 결과·진행 상황·오류에서 `[REDACTED]`로 바뀐 뒤 모델·클라이언트·세션 기록으로 간다. workspace 파일 내용(`GET /v1/files/content`)은 가리지 않는다.
-- **구조화된 출력:** `text.format`에 `json_schema`(최상위 `type: "object"`)를 주면 최종 답이 그 스키마의 JSON이 된다.
+- **구조화된 출력:** `text.format`에 `json_schema`(최상위 `type: "object"`)를 주면 최종 답이 그 스키마의 JSON이 된다. 스키마에 `pattern`·`patternProperties`(정규식)가 있으면 400이다.
   - 결과는 `structured_output`에 객체로, `output_text`에 JSON 문자열로 나간다. 모델이 끝까지 답을 내지 않으면 `structured_output_missing`으로 실패한다.
   - 스키마는 세션을 만들 때 정해진다. 이어가는 턴에 같은 스키마를 다시 보내는 것은 되고, 다른 스키마면 400이다.
 - **파일 보여주기:**

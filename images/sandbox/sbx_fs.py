@@ -60,7 +60,12 @@ def emit(obj):
 def resolve(path):
     if not path:
         raise Fail("invalid_request", "empty path")
-    return path if os.path.isabs(path) else os.path.join(WORKSPACE, path)
+    p = path if os.path.isabs(path) else os.path.join(WORKSPACE, path)
+    # /proc/<pid>/environ에는 다른 턴 bash의 sandbox_env가 있다. 같은 uid라 커널이 막지 않으므로 여기서 막는다.
+    real = os.path.realpath(p)
+    if real == "/proc" or real.startswith("/proc/"):
+        raise Fail("permission_denied", "%s is not accessible" % path)
+    return p
 
 
 def kind_of(mode):

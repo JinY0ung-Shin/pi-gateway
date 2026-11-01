@@ -219,8 +219,9 @@ export class SandboxManager {
         if (e.inflight > 0 || this.now() - e.lastActive < idleMs) continue;
         await this.serialize(e.key, async () => {
           if (e.inflight > 0 || this.now() - e.lastActive < idleMs) return;
-          await this.removeContainer(e.key);
+          // 지우는 동안 들어온 acquire가 이 entry를 쓰지 않고 새 entry로 이 작업 뒤에 컨테이너를 만들게 먼저 뺀다
           if (this.entries.get(e.key) === e) this.entries.delete(e.key);
+          await this.removeContainer(e.key);
           this.log.info({ key: e.key }, "idle sandbox reaped");
         }).catch((err: unknown) => this.log.warn({ key: e.key, err: errorMessage(err) }, "reap failed"));
       }

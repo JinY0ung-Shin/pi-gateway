@@ -308,6 +308,14 @@ export class McpRegistryService implements McpRegistry {
 
 const eq = (a: unknown, b: unknown) => isDeepStrictEqual(a, b);
 
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 /** 세 값 병합: 현재 값이 baseline과 같으면(관리자가 안 바꿨으면) 새 매핑을, 다르면 현재 값을 쓴다. */
 function pick<T>(current: T, base: T, mapped: T): T {
   return eq(current, base) ? mapped : current;
@@ -360,8 +368,10 @@ export function mergeWithBaseline(base: McpServerConfig, current: McpServerConfi
     };
   }
   if (current.transport.type === "http" && mapped.transport.type === "http" && merged.transport.type === "http") {
-    const baseHeaders = base.transport.type === "http" ? base.transport.headers : {};
-    merged.transport = { ...merged.transport, headers: mergeMap(current.transport.headers, baseHeaders, mapped.transport.headers, () => false) };
+    // plugin이 url의 origin을 바꿨으면 관리자가 넣은 헤더(사용자별 헤더 등)를 새 곳으로 보내지 않고 새 매핑을 쓴다
+    if (base.transport.type === "http" && originOf(base.transport.url) === originOf(mapped.transport.url)) {
+      merged.transport = { ...merged.transport, headers: mergeMap(current.transport.headers, base.transport.headers, mapped.transport.headers, () => false) };
+    }
   }
   // 템플릿이 요구하는 최소 scope보다 낮으면 올린다 (예: 관리자가 shared로 둔 서버에 plugin이 {{metadata}}를 추가).
   if (merged.transport.type === "stdio") merged.scope = atLeastScope(merged.scope, requiredScope(merged));

@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import type {
   JsonRpcMessage,
   McpTransport,
@@ -21,6 +22,8 @@ export class AttachedStdioTransport implements McpTransport {
   private readonly closeListeners = new Set<McpTransportCloseListener>();
   private proc: AttachedProcess | undefined;
   private buffer = "";
+  /** chunk 경계에서 잘린 UTF-8 글자를 다음 chunk와 이어 붙인다 */
+  private readonly decoder = new StringDecoder("utf8");
   private closed = false;
 
   constructor(
@@ -40,7 +43,7 @@ export class AttachedStdioTransport implements McpTransport {
   }
 
   private handleStdout(chunk: Buffer): void {
-    this.buffer += chunk.toString("utf8");
+    this.buffer += this.decoder.write(chunk);
     if (this.buffer.length > MAX_LINE_BYTES && !this.buffer.includes("\n")) {
       this.buffer = "";
       this.emitError(new Error("MCP message exceeds the maximum size"));

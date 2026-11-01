@@ -311,6 +311,11 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
     expect((await post(SANDBOXD_ROUTES.fsRead, "alice", { path: "missing.txt" })).status).toBe(404);
     expect((await post(SANDBOXD_ROUTES.fsRead, "alice", { path: "data" })).json.error.code).toBe("is_directory");
     expect((await post(SANDBOXD_ROUTES.fsList, "alice", { path: "data/bin.dat" })).json.error.code).toBe("not_directory");
+    // 다른 프로세스의 env(sandbox_env)를 읽지 못한다. 링크를 거쳐도 마찬가지다
+    await sh("alice", "ln -s /proc/1/environ /workspace/env-link");
+    for (const path of ["/proc/self/environ", "/proc/1/environ", "env-link"]) {
+      expect((await post(SANDBOXD_ROUTES.fsRead, "alice", { path })).json.error.code).toBe("permission_denied");
+    }
     const ro = await post(SANDBOXD_ROUTES.fsWrite, "alice", { path: "/etc/evil", content: "" });
     expect(ro.status).toBe(403);
     expect(ro.json.error.code).toBe("permission_denied");
