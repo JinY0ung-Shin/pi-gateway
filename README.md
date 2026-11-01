@@ -41,6 +41,8 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 이미 끝났거나 AskUserQuestion·StructuredOutput을 불러 끝나는 중인 응답이면 409 `response_not_running`, 다른 사용자의 응답이거나 없는(아직 시작 전인) 응답이면 404다.
 - **도구 호출 상한:** 한 턴에서 모델이 도구를 200번 넘게 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다.
 - **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id, `default`는 `model`을 주지 않은 새 세션이 쓰는 모델인지). LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
+  - `input`은 받는 입력(`["text"]` 또는 `["text", "image"]`)이다. `image`가 없는 모델에 `input_image`를 보내면 400 `unsupported_image_input`이다.
+  - `reasoning`은 reasoning 모델이면 `{efforts, default_effort}`(받는 `reasoning.effort`와 effort를 뺐을 때 쓰는 값), 아니면 `null`(effort는 무시한다)이다. `efforts`에 없는 effort를 보내면 400 `unsupported_reasoning_effort`다.
 - **관리 화면 채팅 테스트:** `/admin`의 "채팅 테스트"는 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (`POST /admin/api/chat`, 중지는 `POST /admin/api/chat/{id}/cancel?user=`). 입력한 user의 workspace·MCP·skill로 실행된다.
 - **이미지 입력:** `input_image`는 base64 `data:` URL만 받는다 (25MP·20MB 제한). LLM 설정에서 이미지를 켜지 않은 모델이면 400이다.
 - **SSE 이벤트:**

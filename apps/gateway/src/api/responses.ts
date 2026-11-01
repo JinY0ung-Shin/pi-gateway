@@ -104,10 +104,18 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
   app.get("/v1/models", async (req) => {
     deps.auth.authenticate(req.headers.authorization);
     // default: model을 주지 않은 새 세션이 쓰는 모델. 이어가는 턴은 model을 빼면 세션의 모델을 그대로 쓰므로, 기본 모델로 바꾸려면 이 id를 보낸다.
+    // input·reasoning: 클라이언트가 400(unsupported_image_input·unsupported_reasoning_effort)을 미리 피하도록 모델 설정을 그대로 알린다.
     const defaultModel = deps.models.defaultModel();
     return {
       object: "list",
-      data: deps.models.list().map((m) => ({ id: m.id, object: "model", owned_by: m.server, default: m.id === defaultModel })),
+      data: deps.models.list().map((m) => ({
+        id: m.id,
+        object: "model",
+        owned_by: m.server,
+        default: m.id === defaultModel,
+        input: m.input,
+        reasoning: m.reasoning ? { efforts: m.efforts, default_effort: m.defaultEffort } : null,
+      })),
     };
   });
 

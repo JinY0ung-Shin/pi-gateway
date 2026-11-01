@@ -278,7 +278,7 @@ describe("system prompt", () => {
 });
 
 describe("GET /v1/models", () => {
-  it("lists the configured models, marks the default one, and requires a key", async () => {
+  it("lists the configured models, marks the default one, reports image input and efforts, and requires a key", async () => {
     const res = await fetch(`${h.url}/v1/models`, { headers: { authorization: `Bearer ${ALICE_KEY}` } });
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -286,6 +286,13 @@ describe("GET /v1/models", () => {
     expect(body.data.map((m: { id: string }) => m.id)).toEqual(["test-model", "think-model", "vision-model"]);
     expect(body.data.map((m: { default: boolean }) => m.default)).toEqual([true, false, false]);
     expect(body.data[0]).toMatchObject({ object: "model" });
+    // 이미지 입력과 받는 effort: 설정 그대로. reasoning 모델이 아니면 null(effort는 무시된다).
+    expect(body.data.map((m: { input: string[] }) => m.input)).toEqual([["text"], ["text"], ["text", "image"]]);
+    expect(body.data.map((m: { reasoning: unknown }) => m.reasoning)).toEqual([
+      null,
+      { efforts: ["none", "low", "high", "xhigh"], default_effort: "high" },
+      null,
+    ]);
     expect((await fetch(`${h.url}/v1/models`)).status).toBe(401);
   });
 });
