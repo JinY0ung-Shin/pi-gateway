@@ -196,7 +196,7 @@ export class McpRegistryService implements McpRegistry {
     await this.#broker.deleteSecret(id, name);
   }
 
-  async test(id: string): Promise<z.infer<typeof TestServerResponse> & { note?: string }> {
+  async test(id: string): Promise<z.infer<typeof TestServerResponse>> {
     const local = this.store.get(id);
     if (local) return this.#staticCheck(local);
     return this.#broker.test(id);

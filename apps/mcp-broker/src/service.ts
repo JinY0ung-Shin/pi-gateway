@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { CallToolResult, Progress, Tool } from "@modelcontextprotocol/client";
-import { ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
+import { ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 import {
   describeError,
   isToolAllowed,
   type McpServerView,
   Redactor,
+  requiredHeaderNames,
   type TestServerResponse,
   type ToolSummary,
   type VisibleServer,
@@ -283,10 +284,17 @@ export class BrokerService {
         await conn.close();
       }
     } catch (error) {
+      // 관리 test에는 요청 헤더가 없어 {{ctx.header:*}}가 빈 값이 된다. 그 401은 서버에 닿았다는 뜻이다.
+      if (error instanceof SdkHttpError && error.status === 401 && requiredHeaderNames(server.config).length > 0) {
+        return { ok: true, note: RUN_TOKEN_NOTE, durationMs: Date.now() - started };
+      }
       return { ok: false, error: describeError(error, redactor, 1000), durationMs: Date.now() - started };
     }
   }
 }
+
+const RUN_TOKEN_NOTE =
+  "서버에 닿았지만 요청 헤더({{ctx.header:*}})로 받는 인증이 없어 401로 답했습니다. 도구 목록은 실제 세션에서만 확인할 수 있습니다.";
 
 function summarize(tool: Tool): ToolSummary {
   const out: ToolSummary = { name: tool.name, inputSchema: tool.inputSchema };

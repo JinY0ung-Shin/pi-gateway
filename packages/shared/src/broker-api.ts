@@ -72,6 +72,8 @@ export const TestServerResponse = z.object({
   ok: z.boolean(),
   tools: z.array(ToolSummary).optional(),
   error: z.string().optional(),
+  /** 연결은 됐지만 도구 목록을 받지 못한 이유 (예: 실제 세션에서만 오는 인증 헤더) */
+  note: z.string().optional(),
   durationMs: z.number(),
 });
 export type TestServerResponse = z.infer<typeof TestServerResponse>;

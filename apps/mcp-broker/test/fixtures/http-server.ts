@@ -115,6 +115,12 @@ export async function startHttpFixture(): Promise<HttpFixture> {
         res.writeHead(405).end();
         return;
       }
+      // /locked: 실행 토큰 없이는 모든 요청을 401로 거절하는 서버 (Noah의 /mcp처럼)
+      if (req.url?.endsWith("/locked") && !/^Bearer \S/.test(req.headers.authorization ?? "")) {
+        res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized: missing or invalid run token" }, id: null }));
+        return;
+      }
       const msg = body as Message;
       if (msg.id === undefined) {
         res.writeHead(202).end();

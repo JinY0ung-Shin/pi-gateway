@@ -198,7 +198,12 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
       {!entry.config.enabled && <Badge>꺼짐</Badge>}
       {missing > 0 && <Badge tone="amber">비밀키 {missing}개 없음</Badge>}
       {check === "checking" && <Badge>확인 중…</Badge>}
-      {check && check !== "checking" && check.ok && entry.store === "broker" && (
+      {check && check !== "checking" && check.ok && entry.store === "broker" && check.note && (
+        <Badge tone="blue" title={check.note}>
+          연결됨 · 실세션에서만 인증
+        </Badge>
+      )}
+      {check && check !== "checking" && check.ok && entry.store === "broker" && !check.note && (
         <Badge tone="green">{`연결됨 · 도구 ${check.tools?.length ?? 0}개 · ${check.durationMs}ms`}</Badge>
       )}
       {check && check !== "checking" && check.ok && entry.store === "sandbox" && (
@@ -581,7 +586,8 @@ function ToolsList(props: { id: string }) {
             action.run(async () => {
               const result = await testServer(props.id);
               if (!result.ok) throw new Error(result.error ?? "연결 실패");
-              setTools(result.tools ?? []);
+              if (!result.tools) throw new Error(result.note ?? "도구 목록을 받지 못했습니다");
+              setTools(result.tools);
             })
           }
         >

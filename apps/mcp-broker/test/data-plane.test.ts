@@ -26,6 +26,8 @@ describe("data plane (pi-mcp client ↔ broker ↔ upstream fixture)", { timeout
       toolAllow: ["headers", "echo_auth"],
     });
     expect((await tb.admin("PUT", "/admin/servers/remote/secrets/TOKEN", { value: "remote-bearer-token-42" })).status).toBe(204);
+    await tb.addHttpServer("runtoken", `${http.url}/locked`, { headers: { Authorization: "Bearer {{ctx.header:x-run-token}}" } });
+    await tb.addHttpServer("lockedstatic", `${http.url}/locked`);
   });
 
   afterAll(async () => {
@@ -190,5 +192,12 @@ describe("data plane (pi-mcp client ↔ broker ↔ upstream fixture)", { timeout
     expect(res.json()).toMatchObject({ ok: true, tools: [{ name: "whoami" }] });
     const remote = await tb.admin("POST", "/admin/servers/remote/test", {});
     expect(remote.json().tools.map((t: { name: string }) => t.name).sort()).toEqual(["echo_auth", "headers"]);
+  });
+
+  it("관리 test: 요청 헤더로 인증하는 서버의 401은 '닿았음'이고, 헤더 템플릿이 없으면 실패다", async () => {
+    const runToken = (await tb.admin("POST", "/admin/servers/runtoken/test", {})).json();
+    expect(runToken).toMatchObject({ ok: true, note: expect.stringContaining("실제 세션") });
+    expect(runToken.tools).toBeUndefined();
+    expect((await tb.admin("POST", "/admin/servers/lockedstatic/test", {})).json()).toMatchObject({ ok: false });
   });
 });
