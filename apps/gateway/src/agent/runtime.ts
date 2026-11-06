@@ -83,7 +83,7 @@ export const LlmSettings = z
     const ids = s.servers.flatMap((x) => x.models.map((m) => m.id));
     const models = dup(ids);
     if (models.length) ctx.addIssue({ code: "custom", path: ["servers"], message: `model ids must be unique across servers: ${models.join(", ")}` });
-    if (!ids.includes(s.defaultModel) && !(s.defaultModel in s.tiers)) {
+    if (!ids.includes(s.defaultModel) && !Object.hasOwn(s.tiers, s.defaultModel)) {
       ctx.addIssue({ code: "custom", path: ["defaultModel"], message: "defaultModel must be one of models or set tiers" });
     }
     for (const [tier, model] of Object.entries(s.tiers)) {

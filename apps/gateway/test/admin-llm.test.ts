@@ -134,6 +134,7 @@ describe("/admin/api/llm", () => {
     }, "test-model");
     expect((await putLlm({ ...base, tiers: { falcon: "nope" } })).status).toBe(400);
     expect((await putLlm({ ...base, defaultModel: "eagle", tiers: { falcon: "test-model" } })).status).toBe(400);
+    expect((await putLlm({ ...base, defaultModel: "toString" })).status).toBe(400);
     expect((await putLlm({ ...base, defaultModel: "falcon", tiers: { falcon: "test-model" } })).status).toBe(200);
     expect((await getLlm()).settings.tiers).toEqual({ falcon: "test-model" });
     expect((await models()).map((m: { id: string; default: boolean }) => [m.id, m.default])).toEqual([
