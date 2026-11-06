@@ -125,6 +125,50 @@ describe("/admin/api/llm", () => {
     }
   });
 
+  it("serves tiers that follow the model they point to, also in running sessions and as the default", async () => {
+    const base = await withServer({
+      models: [
+        { id: "test-model", contextWindow: 32000, maxTokens: 4096 },
+        { id: "think-model", contextWindow: 32000, maxTokens: 4096, reasoning: true, efforts: ["none", "low", "high"], defaultEffort: "high" },
+      ],
+    }, "test-model");
+    expect((await putLlm({ ...base, tiers: { falcon: "nope" } })).status).toBe(400);
+    expect((await putLlm({ ...base, defaultModel: "eagle", tiers: { falcon: "test-model" } })).status).toBe(400);
+    expect((await putLlm({ ...base, defaultModel: "falcon", tiers: { falcon: "test-model" } })).status).toBe(200);
+    expect((await getLlm()).settings.tiers).toEqual({ falcon: "test-model" });
+    expect((await models()).map((m: { id: string; default: boolean }) => [m.id, m.default])).toEqual([
+      ["falcon", true],
+      ["test-model", false],
+      ["think-model", false],
+    ]);
+
+    // model을 빼면 기본 티어로 연다
+    const res = await h.post({ input: "hi" });
+    expect(res.status).toBe(200);
+    expect(res.json.model).toBe("falcon");
+    expect(h.llm.requests.at(-1)!).toMatchObject({ model: "test-model" });
+    expect(h.llm.requests.at(-1)!).not.toHaveProperty("reasoning_effort");
+
+    // 티어가 가리키는 모델을 바꾸면 이어가는 턴도 새 모델과 그 모델의 기본 effort로 간다
+    expect((await putLlm({ ...base, defaultModel: "falcon", tiers: { falcon: "think-model" } })).status).toBe(200);
+    const cont = await h.post({ input: "again", previous_response_id: res.json.id });
+    expect(cont.status).toBe(200);
+    expect(cont.json.model).toBe("falcon");
+    expect(h.llm.requests.at(-1)!).toMatchObject({ model: "think-model", reasoning_effort: "high" });
+
+    // 고른 effort는 모델이 받는 동안 유지되고, 받지 않는 모델로 바뀌면 그 모델에 맞춘다
+    const low = await h.post({ input: "low", previous_response_id: cont.json.id, reasoning: { effort: "low" } });
+    expect(h.llm.requests.at(-1)!).toMatchObject({ reasoning_effort: "low" });
+    expect((await putLlm({ ...base, defaultModel: "falcon", tiers: { falcon: "test-model" } })).status).toBe(200);
+    const plain = await h.post({ input: "plain", previous_response_id: low.json.id });
+    expect(plain.status).toBe(200);
+    expect(h.llm.requests.at(-1)!).not.toHaveProperty("reasoning_effort");
+
+    // 티어를 빼면 그 티어로는 부를 수 없다
+    expect((await putLlm(base)).status).toBe(200);
+    expect((await h.post({ model: "falcon", input: "hi" })).status).toBe(400);
+  });
+
   it("probes a server for its models, with the stored key when none is given", async () => {
     expect((await putLlm(await withServer({ apiKey: "probe-key" }))).status).toBe(200);
     h.llm.models.splice(0, h.llm.models.length, { id: "test-model", max_model_len: 32768 }, { id: "Qwen/Qwen3-8B" });

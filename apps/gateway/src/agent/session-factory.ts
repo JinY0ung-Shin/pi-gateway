@@ -27,7 +27,7 @@ import { redactSandboxEnv } from "../tools/sandbox-env.js";
 import type { ToolSettings } from "../tools/settings.js";
 import type { ToolStats } from "../tools/stats.js";
 import { createStructuredOutputTool } from "../tools/structured-output.js";
-import type { GatewayModels } from "./runtime.js";
+import { type GatewayModels, thinkingLevelIn } from "./runtime.js";
 import { createSubagentTools } from "./subagents.js";
 
 /**
@@ -99,7 +99,9 @@ export async function buildAgentSession(
   signal: AbortSignal,
 ): Promise<BuiltAgent> {
   const model = deps.models.get(record.model);
-  if (!model) throw new Error(`model ${record.model} is not configured`);
+  const modelConfig = deps.models.config(record.model);
+  if (!model || !modelConfig) throw new Error(`model ${record.model} is not configured`);
+  const thinkingLevel = thinkingLevelIn(modelConfig, record.thinkingLevel);
   if (record.sessionFile && record.turn > 0 && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
   const sandbox = deps.sandboxClient.for(record.principal, record.id);
 
@@ -145,7 +147,7 @@ export async function buildAgentSession(
     open: ({ systemPrompt, tools, sessionManager }) =>
       createPiSession(deps, {
         model,
-        thinkingLevel: record.thinkingLevel,
+        thinkingLevel,
         loader: resourceLoader({ systemPrompt, appendPrompt: "", skills: [], prompts: [] }),
         tools,
         sessionManager,
@@ -157,7 +159,7 @@ export async function buildAgentSession(
 
   const session = await createPiSession(deps, {
     model,
-    thinkingLevel: record.thinkingLevel,
+    thinkingLevel,
     loader,
     // StructuredOutput은 이 세션의 최종 답용이라 하위 agent에는 주지 않는다.
     tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],

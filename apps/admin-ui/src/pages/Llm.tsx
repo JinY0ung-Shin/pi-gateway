@@ -5,9 +5,14 @@ import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction,
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
  * 연결 확인·모델 가져오기·모델 테스트는 화면에 입력한 값으로 하므로 저장하기 전에 해 볼 수 있다.
+ * 티어(eagle·falcon·swift)는 모델 하나를 가리키는 고정 이름이다. 클라이언트는 모델 id 대신 티어로 부를 수 있다.
  */
 
 type ApiKind = "openai-completions" | "anthropic-messages";
+
+/** gateway의 TIERS와 같다 */
+const TIERS = ["eagle", "falcon", "swift"] as const;
+type Tiers = Partial<Record<(typeof TIERS)[number], string>>;
 
 interface ModelRow {
   id: string;
@@ -32,7 +37,7 @@ interface ServerView {
 
 interface LlmView {
   configured: boolean;
-  settings: { servers: ServerView[]; defaultModel: string } | null;
+  settings: { servers: ServerView[]; defaultModel: string; tiers: Tiers } | null;
   updatedAt: string | null;
 }
 
@@ -134,8 +139,8 @@ function toBody(s: ServerForm) {
 }
 
 /** 저장 안 한 변경이 있는지 보는 값 */
-const snapshot = (servers: ServerForm[], defaultModel: string) =>
-  JSON.stringify([servers.map(({ key: _k, saved: _s, apiKeySet: _a, ...rest }) => rest), defaultModel]);
+const snapshot = (servers: ServerForm[], defaultModel: string, tiers: Tiers) =>
+  JSON.stringify([servers.map(({ key: _k, saved: _s, apiKeySet: _a, ...rest }) => rest), defaultModel, tiers]);
 
 /** 오류 메시지의 `servers.0.models.1.` 같은 경로를 서버·모델 id로 바꾼다 */
 function readablePaths(message: string, servers: ServerForm[]): string {
@@ -167,6 +172,7 @@ export function LlmPage() {
   const [view, setView] = useState<LlmView | null>(null);
   const [servers, setServers] = useState<ServerForm[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
+  const [tiers, setTiers] = useState<Tiers>({});
   const [savedSnapshot, setSavedSnapshot] = useState("");
   const [probes, setProbes] = useState<Record<string, ProbeResult | "checking">>({});
   const action = useAction();
@@ -186,10 +192,12 @@ export function LlmPage() {
   const show = (v: LlmView) => {
     const forms = v.settings ? v.settings.servers.map(toForm) : [emptyServer("default")];
     const dm = v.settings?.defaultModel ?? "";
+    const t = v.settings?.tiers ?? {};
     setView(v);
     setServers(forms);
     setDefaultModel(dm);
-    setSavedSnapshot(snapshot(forms, dm));
+    setTiers(t);
+    setSavedSnapshot(snapshot(forms, dm, t));
     setProbes({});
     for (const s of forms) if (s.saved) void probe(s);
   };
@@ -201,7 +209,7 @@ export function LlmPage() {
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
   if (!view) return <p class="muted">불러오는 중…</p>;
 
-  const dirty = snapshot(servers, defaultModel) !== savedSnapshot;
+  const dirty = snapshot(servers, defaultModel, tiers) !== savedSnapshot;
   const modelCount = servers.reduce((n, s) => n + s.models.length, 0);
 
   const change = (key: string, patch: Partial<ServerForm>) => {
@@ -212,10 +220,26 @@ export function LlmPage() {
     }
   };
 
+  /** 티어를 바꾼다. 기본 모델인 티어를 비우면 기본 모델도 비운다. */
+  const changeTiers = (next: Tiers, dm = defaultModel) => {
+    setTiers(next);
+    setDefaultModel((TIERS as readonly string[]).includes(dm) && !(dm in next) ? "" : dm);
+  };
+
+  /** 모델 id가 바뀌면(to = ""이면 빠짐) 기본 모델과 티어가 따라간다 */
+  const renameModels = (renames: [string, string][], fallback = "") => {
+    const map = new Map(renames.filter(([from]) => from !== ""));
+    const follow = (id: string) => (map.has(id) ? map.get(id)! : id);
+    changeTiers(Object.fromEntries(Object.entries(tiers).flatMap(([tier, id]) => (follow(id) ? [[tier, follow(id)]] : []))), follow(defaultModel) || (map.has(defaultModel) ? fallback : ""));
+  };
+
   const remove = (s: ServerForm) => {
     const rest = servers.filter((x) => x.key !== s.key);
     setServers(rest);
-    if (s.models.some((m) => m.id === defaultModel)) setDefaultModel(rest.flatMap((x) => x.models)[0]?.id ?? "");
+    renameModels(
+      s.models.map((m) => [m.id, ""]),
+      rest.flatMap((x) => x.models)[0]?.id ?? "",
+    );
   };
 
   const addServer = () => {
@@ -231,8 +255,8 @@ export function LlmPage() {
       const empty = servers.find((s) => s.models.length === 0);
       if (empty) throw new Error(`서버 ${empty.id || "(id 없음)"}에 모델이 없습니다. 모델을 추가하거나 서버를 빼세요.`);
       const dm = defaultModel.trim();
-      if (!servers.some((s) => s.models.some((m) => m.id.trim() === dm))) throw new Error("기본 모델을 고르세요 (모델 표의 '기본' 칸).");
-      const body = { servers: servers.map(toBody), defaultModel: dm };
+      if (!servers.some((s) => s.models.some((m) => m.id.trim() === dm)) && !(dm in tiers)) throw new Error("기본 모델을 고르세요 (티어나 모델 표의 '기본' 칸).");
+      const body = { servers: servers.map(toBody), defaultModel: dm, tiers };
       try {
         show(await api<LlmView>("PUT", "/llm", body));
       } catch (error) {
@@ -247,6 +271,13 @@ export function LlmPage() {
         서버 {servers.length}대 · 모델 {modelCount}개 · 기본 모델 <span class="mono">{defaultModel || "없음"}</span>
         {view.updatedAt && ` · 마지막 저장 ${formatTime(view.updatedAt)}`}
       </p>
+      <TierCard
+        tiers={tiers}
+        models={servers.flatMap((s) => s.models.map((m) => m.id.trim())).filter(Boolean)}
+        defaultModel={defaultModel}
+        onChange={(next) => changeTiers(next)}
+        onDefault={setDefaultModel}
+      />
       {servers.map((s) => (
         <ServerCard
           key={s.key}
@@ -256,6 +287,7 @@ export function LlmPage() {
           probe={probes[s.key]}
           onChange={(patch) => change(s.key, patch)}
           onDefault={setDefaultModel}
+          onRename={(from, to) => renameModels([[from, to]])}
           onProbe={() => probe(s)}
           onRemove={() => remove(s)}
         />
@@ -277,6 +309,57 @@ export function LlmPage() {
   );
 }
 
+function TierCard(props: { tiers: Tiers; models: string[]; defaultModel: string; onChange: (tiers: Tiers) => void; onDefault: (name: string) => void }) {
+  const set = (tier: (typeof TIERS)[number], id: string) => {
+    const { [tier]: _, ...rest } = props.tiers;
+    props.onChange(id ? { ...rest, [tier]: id } : rest);
+  };
+  return (
+    <Section title="티어">
+      <p class="muted small-text">
+        클라이언트는 모델 id 대신 티어 이름으로 부를 수 있습니다. 가리키는 모델을 바꾸면 그 티어로 진행 중인 대화도 다음 턴부터 새 모델로 갑니다.
+      </p>
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>기본</th>
+            <th>티어</th>
+            <th>모델</th>
+          </tr>
+        </thead>
+        <tbody>
+          {TIERS.map((tier) => (
+            <tr key={tier}>
+              <td>
+                <input
+                  type="radio"
+                  name="default-model"
+                  aria-label={`${tier} 기본 모델`}
+                  title="model을 주지 않은 새 세션이 쓰는 모델"
+                  disabled={!props.tiers[tier]}
+                  checked={tier === props.defaultModel}
+                  onChange={() => props.onDefault(tier)}
+                />
+              </td>
+              <td class="mono">{tier}</td>
+              <td>
+                <select aria-label={`${tier} 모델`} value={props.tiers[tier] ?? ""} onChange={(e) => set(tier, e.currentTarget.value)}>
+                  <option value="">쓰지 않음</option>
+                  {props.models.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Section>
+  );
+}
+
 function ServerCard(props: {
   server: ServerForm;
   others: ServerForm[];
@@ -284,6 +367,8 @@ function ServerCard(props: {
   probe: ProbeResult | "checking" | undefined;
   onChange: (patch: Partial<ServerForm>) => void;
   onDefault: (id: string) => void;
+  /** to가 ""이면 모델이 빠졌다 */
+  onRename: (from: string, to: string) => void;
   onProbe: () => Promise<ProbeResult>;
   onRemove: () => void;
 }) {
@@ -302,14 +387,13 @@ function ServerCard(props: {
   const setModel = (i: number, patch: Partial<ModelRow>) => {
     const before = s.models[i]!;
     props.onChange({ models: s.models.map((m, j) => (j === i ? { ...m, ...patch } : m)) });
-    // 기본 모델의 id를 바꾸면 기본 모델도 따라간다
-    if (patch.id !== undefined && before.id !== "" && before.id === props.defaultModel) props.onDefault(patch.id);
+    if (patch.id !== undefined) props.onRename(before.id, patch.id);
   };
 
   const removeModel = (i: number) => {
     const gone = s.models[i]!;
     props.onChange({ models: s.models.filter((_, j) => j !== i) });
-    if (gone.id === props.defaultModel) props.onDefault("");
+    props.onRename(gone.id, "");
   };
 
   const addModels = (rows: ModelRow[]) => {

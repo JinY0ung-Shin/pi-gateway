@@ -13,8 +13,10 @@ export interface SessionRecord {
   id: string;
   /** 사용자 id */
   principal: string;
+  /** 부른 이름 (티어 또는 모델 id) */
   model: string;
-  thinkingLevel: string;
+  /** 고른 thinking level. null이면 모델의 기본값을 따른다 (모델이 바뀌어도). 쓸 때 thinkingLevelIn으로 모델에 맞춘다. */
+  thinkingLevel: string | null;
   /** commit된 마지막 turn 번호 (0 = 아직 없음) */
   turn: number;
   /** pi JSONL 경로. 첫 메시지가 기록되기 전에는 null */
@@ -124,7 +126,8 @@ function fromRow(row: Row): SessionRecord {
     id: row.id,
     principal: row.principal,
     model: row.model,
-    thinkingLevel: row.thinking_level,
+    // 컬럼이 NOT NULL이라 null은 ""로 둔다
+    thinkingLevel: row.thinking_level || null,
     turn: row.turn,
     sessionFile: row.session_file,
     leafId: row.leaf_id,
@@ -161,7 +164,7 @@ export class SessionStore {
         id: record.id,
         principal: record.principal,
         model: record.model,
-        thinking_level: record.thinkingLevel,
+        thinking_level: record.thinkingLevel ?? "",
         turn: record.turn,
         session_file: record.sessionFile,
         leaf_id: record.leafId,
@@ -208,8 +211,8 @@ export class SessionStore {
   }
 
   /** 이어지는 턴에서 바꾼 model·thinking level. 다음에 세션을 열 때부터 쓴다. */
-  setModel(id: string, model: string, thinkingLevel: string): void {
-    this.db.prepare("UPDATE sessions SET model = ?, thinking_level = ? WHERE id = ?").run(model, thinkingLevel, id);
+  setModel(id: string, model: string, thinkingLevel: string | null): void {
+    this.db.prepare("UPDATE sessions SET model = ?, thinking_level = ? WHERE id = ?").run(model, thinkingLevel ?? "", id);
   }
 
   touch(id: string): void {

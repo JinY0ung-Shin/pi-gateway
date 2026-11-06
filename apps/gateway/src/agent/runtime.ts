@@ -9,6 +9,7 @@ import { type Db, migrate } from "../db.js";
  * - 설정은 관리 화면에서 바꾸고 gateway DB에 저장한다. 바꾸면 바로 provider를 다시 등록한다.
  *   메모리의 세션은 다음 턴에 새 설정으로 다시 연다 (revision이 바뀌었는지 SessionHub가 본다).
  * - LLM 서버마다 pi provider 하나로 등록한다 (provider id = 서버 id). 모델 id는 서버 전체에서 겹치지 않는다.
+ * - 티어(eagle·falcon·swift)는 모델 하나를 가리키는 고정 이름이다. 가리키는 모델을 바꾸면 그 티어의 세션도 다음 턴부터 새 모델로 돈다.
  * - 자격 증명은 메모리에만 둔다 (auth.json을 만들지 않는다).
  * - models.json을 읽지 않고, 네트워크로 모델 카탈로그를 받지 않는다.
  * - API 키는 config 값 확장(`!cmd`, `$VAR`)을 거치지 않도록 runtime key로 넣는다.
@@ -18,6 +19,12 @@ import { type Db, migrate } from "../db.js";
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 export const thinkingLevelOf = (effort: ReasoningEffort): string => (effort === "none" ? "off" : effort);
+
+/** 세션의 thinking level을 지금 모델에 맞춘다. null(effort를 고른 적 없음)이거나 모델이 받지 않는 값이면 모델의 기본값이다. */
+export function thinkingLevelIn(model: LlmModelConfig, level: string | null): string {
+  if (!model.reasoning) return "off";
+  return level !== null && model.efforts.map(thinkingLevelOf).includes(level) ? level : thinkingLevelOf(model.defaultEffort);
+}
 
 export const LlmModelConfig = z
   .object({
@@ -58,10 +65,16 @@ export const LlmServer = z.object({
 });
 export type LlmServer = z.infer<typeof LlmServer>;
 
+/** 클라이언트가 모델 id 대신 부를 수 있는 이름. 큰 모델부터. */
+export const TIERS = ["eagle", "falcon", "swift"] as const;
+export type Tier = (typeof TIERS)[number];
+
 export const LlmSettings = z
   .object({
     servers: z.array(LlmServer).min(1),
     defaultModel: z.string().min(1),
+    /** 티어 → 모델 id. 없는 티어는 쓰지 않는다. */
+    tiers: z.partialRecord(z.enum(TIERS), z.string().min(1)).default({}),
   })
   .superRefine((s, ctx) => {
     const dup = (ids: string[]) => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
@@ -70,7 +83,13 @@ export const LlmSettings = z
     const ids = s.servers.flatMap((x) => x.models.map((m) => m.id));
     const models = dup(ids);
     if (models.length) ctx.addIssue({ code: "custom", path: ["servers"], message: `model ids must be unique across servers: ${models.join(", ")}` });
-    if (!ids.includes(s.defaultModel)) ctx.addIssue({ code: "custom", path: ["defaultModel"], message: "defaultModel must be one of models" });
+    if (!ids.includes(s.defaultModel) && !(s.defaultModel in s.tiers)) {
+      ctx.addIssue({ code: "custom", path: ["defaultModel"], message: "defaultModel must be one of models or set tiers" });
+    }
+    for (const [tier, model] of Object.entries(s.tiers)) {
+      if (!ids.includes(model)) ctx.addIssue({ code: "custom", path: ["tiers", tier], message: `tier ${tier} must point to one of models` });
+      if (ids.includes(tier)) ctx.addIssue({ code: "custom", path: ["tiers", tier], message: `a model is already named ${tier}` });
+    }
   });
 export type LlmSettings = z.infer<typeof LlmSettings>;
 
@@ -92,9 +111,11 @@ export type LlmModelEntry = LlmModelConfig & { server: string };
 
 export interface GatewayModels {
   runtime: ModelRuntime;
-  get(id: string): Model<Api> | undefined;
-  config(id: string): LlmModelConfig | undefined;
-  /** 모든 서버의 모델 (서버 순서대로) */
+  /** 티어면 가리키는 모델 */
+  get(name: string): Model<Api> | undefined;
+  /** 티어면 가리키는 모델의 설정 (id는 실제 모델 id) */
+  config(name: string): LlmModelConfig | undefined;
+  /** 클라이언트가 부를 수 있는 이름: 설정된 티어(가리키는 모델의 설정에 id만 티어 이름), 그다음 모든 서버의 모델 (서버 순서대로) */
   list(): LlmModelEntry[];
   /** 설정되지 않았으면 undefined */
   defaultModel(): string | undefined;
@@ -186,16 +207,31 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     `INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)
      ON CONFLICT (id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`,
   );
+  const modelId = (name: string) => current?.settings.tiers[name as Tier] ?? name;
   const serverOf = (id: string) => current?.settings.servers.find((s) => s.models.some((m) => m.id === id));
+  const entries = (): LlmModelEntry[] => current?.settings.servers.flatMap((s) => s.models.map((m) => ({ ...m, server: s.id }))) ?? [];
 
   return {
     runtime,
-    get: (id) => {
+    get: (name) => {
+      const id = modelId(name);
       const server = serverOf(id);
       return server ? runtime.getModel(server.id, id) : undefined;
     },
-    config: (id) => serverOf(id)?.models.find((m) => m.id === id),
-    list: () => current?.settings.servers.flatMap((s) => s.models.map((m) => ({ ...m, server: s.id }))) ?? [],
+    config: (name) => {
+      const id = modelId(name);
+      return serverOf(id)?.models.find((m) => m.id === id);
+    },
+    list: () => {
+      const models = entries();
+      const tiers = TIERS.flatMap((tier) => {
+        const target = models.find((m) => m.id === current?.settings.tiers[tier]);
+        if (!target) return [];
+        const { name: _, ...rest } = target;
+        return [{ ...rest, id: tier }];
+      });
+      return [...tiers, ...models];
+    },
     defaultModel: () => current?.settings.defaultModel,
     revision: () => revision,
     current: () => current,

@@ -200,11 +200,11 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
   return { kind: "prompt", text, images, systemText, hasSystemItems };
 }
 
-/** reasoning.effort → pi thinking level. reasoning 모델이면 모델의 efforts에 있어야 한다. */
+/** reasoning.effort → pi thinking level. reasoning 모델이면 모델의 efforts에 있어야 하고, 아니면 effort가 뜻이 없어 고르지 않은 것으로 본다. */
 export function thinkingLevelFor(effort: string | null | undefined, model: LlmModelConfig): string | undefined {
   if (!effort) return undefined;
   if (!(REASONING_EFFORTS as readonly string[]).includes(effort)) throw badRequest(`Unsupported reasoning.effort '${effort}'`, "unsupported_reasoning_effort");
-  if (!model.reasoning) return "off";
+  if (!model.reasoning) return undefined;
   if (!(model.efforts as string[]).includes(effort)) {
     throw badRequest(`Model '${model.id}' does not support reasoning.effort '${effort}'. Supported: ${model.efforts.join(", ")}`, "unsupported_reasoning_effort");
   }

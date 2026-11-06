@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
-import { type GatewayModels, type LlmModelConfig, thinkingLevelOf } from "../agent/runtime.js";
+import type { GatewayModels, LlmModelConfig } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
@@ -289,13 +289,12 @@ function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "prin
   if (instructions?.trim()) append.push(instructions.trim());
   if (plan.outputFormat) append.push(STRUCTURED_OUTPUT_PROMPT);
   append.push(`Current user: ${plan.principal}`);
-  const modelConfig = deps.models.config(plan.model);
   const iso = now.toISOString();
   return {
     id: plan.sessionId,
     principal: plan.principal,
     model: plan.model,
-    thinkingLevel: plan.thinkingLevel ?? (modelConfig ? defaultThinkingLevel(modelConfig) : "off"),
+    thinkingLevel: plan.thinkingLevel ?? null,
     turn: 0,
     sessionFile: null,
     leafId: null,
@@ -316,8 +315,6 @@ function requireModel(deps: ResponsesDeps, model: string): LlmModelConfig {
   return config;
 }
 
-/** reasoning.effort를 보내지 않았을 때의 thinking level */
-const defaultThinkingLevel = (model: LlmModelConfig): string => (model.reasoning ? thinkingLevelOf(model.defaultEffort) : "off");
 
 function requireImageInput(deps: ResponsesDeps, model: string, input: ParsedInput): void {
   if (input.kind === "prompt" && input.images.length > 0 && !deps.models.config(model)?.input.includes("image")) {
@@ -348,13 +345,16 @@ async function runLocked(
     if (!found || found.principal !== plan.principal) throw notFoundSession(plan.prev!);
     record = found;
     // model·reasoning.effort는 이어지는 턴에서도 바꿀 수 있다. 대화 기록과 도구는 그대로 두고 다음 턴부터 새 설정으로 돈다.
-    const modelChanged = plan.body.model != null && plan.body.model !== record.model;
-    const sessionModel = modelChanged ? requireModel(deps, plan.body.model!) : deps.models.config(record.model);
+    // 세션에는 부른 이름(티어 또는 모델 id)을 남긴다. 티어면 가리키는 모델이 바뀌어도 그 티어를 따라간다.
+    const model = plan.body.model ?? record.model;
+    const modelChanged = model !== record.model;
+    const sessionModel = modelChanged ? requireModel(deps, model) : deps.models.config(record.model);
     if (!sessionModel) {
       throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
     }
-    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel) ?? (modelChanged ? defaultThinkingLevel(sessionModel) : record.thinkingLevel);
-    requireImageInput(deps, sessionModel.id, plan.input);
+    // effort를 빼면 고른 값을 그대로 둔다. model만 바꾸면 새 모델의 기본값을 따른다 (null).
+    const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel) ?? (modelChanged ? null : record.thinkingLevel);
+    requireImageInput(deps, model, plan.input);
     // 예전 응답이면 그 지점에서 갈라진다 (메시지 수정·재생성). 대화 기록만 갈라지고 workspace 파일은 그대로다.
     const point = deps.store.turnPoint(record.id, plan.prevTurn);
     if (!point) throw conflict(`previous_response_id '${plan.prev}' can no longer be continued`);
@@ -370,9 +370,9 @@ async function runLocked(
     if (plan.body.read_only != null && plan.body.read_only !== record.readOnly) {
       throw badRequest("read_only is fixed when the session is created. Start a new session to change it.");
     }
-    if (sessionModel.id !== record.model || thinkingLevel !== record.thinkingLevel) {
+    if (modelChanged || thinkingLevel !== record.thinkingLevel) {
       // 유휴 뒤 JSONL에서 다시 열 때도 새 설정을 쓰도록 바로 남긴다. 메모리의 세션은 hub.acquire가 새 설정으로 다시 연다.
-      record = { ...record, model: sessionModel.id, thinkingLevel };
+      record = { ...record, model, thinkingLevel };
       deps.store.setModel(record.id, record.model, record.thinkingLevel);
     }
   }
