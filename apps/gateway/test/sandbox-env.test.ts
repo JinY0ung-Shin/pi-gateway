@@ -62,6 +62,21 @@ describe("sandbox_env", () => {
     expect(execsWith("next-turn")[0]!.body.env).toBeUndefined();
   });
 
+  it("refuses tool calls that would write [REDACTED] back, only while sandbox_env is set", async () => {
+    const write = { path: "conf.txt", content: "token=[REDACTED]" };
+    const writes = () => h.sandbox.calls.filter((c) => c.route === SANDBOXD_ROUTES.fsWrite && c.body.content === Buffer.from(write.content).toString("base64"));
+    h.llm.enqueue({ toolCalls: [{ id: "red_1", name: "write", arguments: write }] }, { text: "done" });
+    const res = await h.stream({ input: "rewrite conf", user: "alice", sandbox_env: { MY_TOKEN: SECRET } }, { key: SERVICE_KEY });
+    const result = ofType(res.events, "response.tool_result")[0]!;
+    expect(String(result.data.content)).toContain("placeholder for a hidden secret");
+    expect(writes()).toHaveLength(0);
+
+    h.llm.enqueue({ toolCalls: [{ id: "red_2", name: "write", arguments: write }] }, { text: "done" });
+    const plain = await h.stream({ input: "write conf", user: "bob" }, { key: SERVICE_KEY });
+    expect(String(ofType(plain.events, "response.tool_result")[0]!.data.content)).not.toContain("placeholder");
+    expect(writes()).toHaveLength(1);
+  });
+
   it("is rejected for user-key requests and reserved names", async () => {
     const userKey = await h.post({ input: "x", sandbox_env: { MY_TOKEN: SECRET } });
     expect(userKey.status).toBe(403);
