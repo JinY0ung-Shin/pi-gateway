@@ -10,7 +10,7 @@ import { PlatformError } from "./errors.js";
 
 /**
  * 기본 도구 정의 (모델에게 넘어가는 이름·설명·입력 스키마)와 켜고 끄기. 세션과 같은 provider로 만들지만
- * 실행하지 않으므로 세션 context는 비워 둔다. Agent·SendMessage는 켜진 plugin에 agent가 있을 때만 생긴다.
+ * 실행하지 않으므로 세션 context는 비워 둔다.
  * agents: plugin agent마다 실제로 받는 기본 도구 (꺼진 도구는 빠진다). MCP 도구는 세션마다 달라 이름만 따로 적는다
  * (frontmatter `tools`가 없으면 세션의 MCP 도구 전부).
  */

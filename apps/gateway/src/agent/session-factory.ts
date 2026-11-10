@@ -35,7 +35,7 @@ import { createSubagentTools } from "./subagents.js";
  * pi 기본 동작 중 서버에 맞지 않는 것을 모두 끈다:
  * - 디스크 탐색 없음: 직접 만든 ResourceLoader (~/.pi, 프로젝트 .pi, AGENTS.md/CLAUDE.md를 읽지 않는다)
  * - project trust 끔, cache warming 끔, 설치 텔레메트리 끔
- * - 도구는 ToolRegistry가 만든 것과 Agent·SendMessage(plugin agent가 있을 때), StructuredOutput(text.format json_schema일 때)만 쓴다
+ * - 도구는 ToolRegistry가 만든 것과 Agent·SendMessage, StructuredOutput(text.format json_schema일 때)만 쓴다
  *   (내장 로컬 도구는 같은 이름의 원격 도구로 대체된다). 관리 화면에서 끈 기본 도구는 뺀다.
  */
 

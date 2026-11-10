@@ -13,7 +13,7 @@ import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
 import { limitToolCalls, MAX_TOOL_CALLS_PER_TURN } from "./tool-call-limit.js";
 
 /**
- * Agent·SendMessage — plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
+ * Agent·SendMessage — 내장 general-purpose agent와 plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
  * - 하위 세션은 gateway 프로세스 안에서 만들고 부모 세션의 도구 정의를 그대로 쓴다. 파일·명령은 부모와
  *   같은 sandbox에서, 비밀키가 필요한 호출은 broker에서 실행되므로 격리 규칙이 그대로 지켜진다.
  * - 호출이 끝나면 하위 세션을 바로 정리한다. 기록은 JSONL로 남기고, SendMessage가 그 기록을 다시 열어 이어서 실행한다.
@@ -42,6 +42,20 @@ function forwarded(event: AgentSessionEvent): boolean {
 }
 
 type OnUpdate = (update: { content: []; details: SubagentEventDetails }) => void;
+
+/** plugin 없이도 항상 있는 범용 agent. 부모 세션의 도구를 모두 받는다 (plugin agent 이름은 `<plugin>:<agent>`라 겹치지 않는다). */
+const GENERAL_PURPOSE: SubagentDefinition = {
+  name: "general-purpose",
+  description:
+    "Handles any multi-step task on its own with the same tools you have, such as searching and reading many files or running commands. " +
+    "Use it to keep long intermediate work out of this conversation.",
+  prompt: `You are a subagent working inside a secure Linux sandbox. Another agent has delegated a task to you. Complete it on your own with the tools you have, then report back.
+
+- Your working directory is ${SANDBOX_WORKSPACE}, shared with the agent that called you. Only work with files there and in /tmp.
+- You run as an unprivileged user. System directories are read-only and there is no sudo or apt.
+- You cannot ask the user or the calling agent anything. If something is unclear, make a reasonable choice and say so in your report.
+- Your final message is the only thing the calling agent sees. Make it a complete, concise report: what you found or did, the paths of files you created or changed, and anything left undone.`,
+};
 
 /** Claude Code 도구 이름 → gateway 도구 이름 */
 const CLAUDE_TOOLS: Record<string, string[]> = {
@@ -82,8 +96,8 @@ export function subagentTools(agent: SubagentDefinition, tools: ToolDefinition[]
 }
 
 export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
-  if (ctx.agents.length === 0) return [];
-  const byName = new Map(ctx.agents.map((a) => [a.name, a]));
+  const agents = [GENERAL_PURPOSE, ...ctx.agents];
+  const byName = new Map(agents.map((a) => [a.name, a]));
   /** 실행 중인 agent_id. 같은 JSONL에 두 실행이 동시에 쓰지 않게 한다. */
   const busy = new Set<string>();
 
@@ -105,7 +119,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
   const agentParams = Type.Object({
     description: Type.String({ description: "A short (3-5 word) description of the task" }),
     prompt: Type.String({ description: "The task for the agent to perform" }),
-    subagent_type: StringEnum(ctx.agents.map((a) => a.name), { description: "The type of agent to use" }),
+    subagent_type: StringEnum(agents.map((a) => a.name), { description: "The type of agent to use" }),
   });
   const agentTool: ToolDefinition<typeof agentParams> = {
     name: AGENT_TOOL,
@@ -114,7 +128,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
       "Launch a subagent to handle a task on its own. It does not see this conversation, so put everything it needs in prompt. " +
       "It works in the same workspace and returns only its final answer, with an agent_id you can pass to " +
       `${SEND_MESSAGE_TOOL} to continue the same agent with its context.\n\nAvailable agents:\n` +
-      ctx.agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
+      agents.map((a) => `- ${a.name}: ${a.description}`).join("\n"),
     parameters: agentParams,
     async execute(_toolCallId, params, signal, onUpdate) {
       const agent = byName.get(params.subagent_type);

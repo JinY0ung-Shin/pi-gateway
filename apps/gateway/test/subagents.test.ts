@@ -76,6 +76,23 @@ describe("Agent / SendMessage", () => {
     expect(ofType(res.events, "response.output_text.delta").map((e) => e.data.delta).join("")).toBe("parent done");
   });
 
+  it("runs the built-in general-purpose agent with its own prompt and the parent's tools", async () => {
+    const start = h.llm.requests.length;
+    h.llm.enqueue(
+      { toolCalls: [{ id: "call_g", name: "Agent", arguments: { subagent_type: "general-purpose", description: "find z", prompt: "Find z." } }] },
+      { text: "z is in c.txt" },
+      { text: "Done." },
+    );
+    const res = await h.post({ input: "where is z?" });
+    expect(res.status).toBe(200);
+    const [, child, after] = h.llm.requests.slice(start);
+    expect(system(child!)).toContain("You are a subagent");
+    expect(system(child!)).not.toContain("You are the test agent.");
+    // 사용자와 닿는 도구와 Agent·SendMessage는 받지 않는다
+    expect(toolNames(child!)).toEqual(["bash", "edit", "find", "grep", "ls", "read", "write"]);
+    expect(toolResult(after!)).toContain("z is in c.txt");
+  });
+
   it("returns a tool error for an unknown agent_id", async () => {
     h.llm.enqueue({ toolCalls: [{ id: "call_x", name: "SendMessage", arguments: { to: "0123456789abcdef", message: "hi" } }] }, { text: "ok" });
     const res = await h.post({ input: "ping" });
