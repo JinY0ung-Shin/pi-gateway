@@ -476,8 +476,12 @@ describe("input_file", () => {
     expect(lastMsg).toContain("[Attached file: /workspace/uploads/보고서 1.pdf]");
   });
 
-  it("rejects path-like names, non-data URLs and read_only sessions", async () => {
-    for (const bad of [{ filename: "../x.pdf", file_data }, { filename: "..", file_data }, { file_data }, { filename: "x.pdf", file_url: "https://example.com/x.pdf" }]) {
+  it("accepts an allowed extension in any case", async () => {
+    expect((await h.post(withFile({ filename: "deck.PPTX", file_data }))).status).toBe(200);
+  });
+
+  it("rejects path-like names, other extensions, non-data URLs and read_only sessions", async () => {
+    for (const bad of [{ filename: "../x.pdf", file_data }, { filename: "..", file_data }, { filename: "x.exe", file_data }, { filename: "pdf", file_data }, { filename: ".pdf", file_data }, { file_data }, { filename: "x.pdf", file_url: "https://example.com/x.pdf" }]) {
       const res = await h.post(withFile(bad));
       expect(res.status).toBe(400);
       expect(res.json.error.code).toBe("invalid_file_input");

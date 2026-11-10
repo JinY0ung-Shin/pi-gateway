@@ -155,6 +155,8 @@ function inputImage(part: z.infer<typeof ContentPart>): ImageContent {
 
 const UPLOAD_DIR = `${SANDBOX_WORKSPACE}/uploads`;
 const FILENAME = /^[^/\\\x00-\x1f\x7f]+$/;
+/** sandbox 이미지의 도구로 읽을 수 있는 형식만 받는다. */
+const FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md", "json"];
 
 /**
  * input_file은 `filename`과 base64 data URL인 `file_data`만 받는다 (`file_id`·`file_url`은 받지 않는다).
@@ -164,6 +166,10 @@ function inputFile(part: z.infer<typeof ContentPart>): InputFile {
   const name = part.filename;
   if (typeof name !== "string" || !FILENAME.test(name) || name === "." || name === ".." || Buffer.byteLength(name) > 255) {
     throw badRequest("input_file.filename must be a plain file name", "invalid_file_input");
+  }
+  const dot = name.lastIndexOf(".");
+  if (dot < 1 || !FILE_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase())) {
+    throw badRequest(`input_file.filename must end in one of: ${FILE_EXTENSIONS.map((e) => `.${e}`).join(", ")}`, "invalid_file_input");
   }
   const m = typeof part.file_data === "string" ? DATA_URL.exec(part.file_data) : null;
   if (!m) throw badRequest("input_file.file_data must be a base64 data: URL", "invalid_file_input");
