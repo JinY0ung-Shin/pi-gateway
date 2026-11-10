@@ -22,7 +22,7 @@ export interface TurnOutcome {
 }
 
 /** upstream 오류 메시지 → oh-my-gateway 오류 코드 */
-function classifyError(message: string): string {
+export function classifyError(message: string): string {
   if (/\b429\b|rate.?limit|too many requests/i.test(message)) return "rate_limit";
   return "sdk_error";
 }

@@ -39,6 +39,12 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - pi가 다음 도구 호출 경계(다음 LLM 호출 전)에 모델에 넣고, 그때 스트림에 `response.input_consumed {client_id}`가 나간다. 여러 개면 넣은 순서대로 들어간다. 마지막 답을 쓰는 중에 온 입력도 그 답 뒤에 같은 턴에서 들어간다.
   - 턴이 끝날 때까지 들어가지 못한 입력(AskUserQuestion·StructuredOutput·취소·도구 호출 상한·실패로 끝난 턴, 또는 턴이 끝나는 순간에 온 입력)은 최종 응답의 `undelivered_input: [client_id…]`에 실리고 버려진다. 다음 턴으로 넘어가지 않으므로 클라이언트가 다시 보낸다. 없으면 필드가 없다.
   - 이미 끝났거나 AskUserQuestion·StructuredOutput을 불러 끝나는 중인 응답이면 409 `response_not_running`, 다른 사용자의 응답이거나 없는(아직 시작 전인) 응답이면 404다.
+- **대화 요약:** `POST /v1/responses/{id}/compact`(서비스 키면 `?user=`), body `{instructions?}`는 그 응답까지의 대화 앞부분을 지금 요약한다 (pi의 수동 compaction). `instructions`는 요약에 꼭 남길 내용이다.
+  - 답은 SSE다: `response.compaction`이 `status: "in_progress"`로 시작해 `"completed"`(`id`, `tokens_before`, `tokens_after`, `context_window`) 또는 `"failed"`(`error: {code, message}`)로 끝난다.
+  - 요약이 새 turn으로 남으므로 다음 턴은 돌려받은 `id`로 이어간다. 원래 `{id}`로 이어가면 요약 전 기록에서 갈라진다.
+  - 최근 대화(큰 모델은 20000 token, 작은 모델은 context의 1/4)는 요약하지 않고 그대로 둔다. 대화가 그보다 짧거나 이미 요약한 직후면 `failed`(`nothing_to_compact`)다.
+  - 스트림 전에 거절하는 경우: 세션에 진행 중인 응답이 있으면 409 `response_in_progress`, AskUserQuestion 답을 기다리는 응답이면 409, 다른 사용자의 응답이거나 없는 응답이면 404다.
+  - 요약에 실패하거나 요청 연결이 끊기면 세션은 그대로다.
 - **도구 호출 상한:** 한 턴에서 모델이 도구를 200번 넘게 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다.
 - **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id, `default`는 `model`을 주지 않은 새 세션이 쓰는 모델인지). 관리자가 티어(`eagle`·`falcon`·`swift`)를 설정하면 그 이름이 앞에 붙는다. 기본 모델도 티어일 수 있다. 티어로 연 세션은 티어가 가리키는 모델이 바뀌면 다음 턴부터 새 모델로 돈다. effort를 고른 적 없으면 새 모델의 기본 effort를, 고른 effort를 새 모델이 받지 않으면 그 모델의 기본 effort를 쓴다. LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
   - `input`은 받는 입력(`["text"]` 또는 `["text", "image"]`)이다. `image`가 없는 모델에 `input_image`를 보내면 400 `unsupported_image_input`이다.
@@ -49,7 +55,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`
   - 하위 agent(`Agent`·`SendMessage`)가 부른 도구도 같은 도구 이벤트로 나간다. 각 이벤트에 `parent_tool_use_id`(부른 `Agent`·`SendMessage` 호출의 `tool_use_id`)가 붙는다. 하위 agent의 텍스트는 나가지 않고, 최종 답은 부모 호출의 `tool_result`로 온다.
-  - 대화 요약: context가 차서 pi가 앞 대화를 요약하면 `response.compaction`이 `status: "in_progress"`로 시작해 `"completed"` | `"failed"`로 끝난다.
+  - 자동 대화 요약: context가 차서 pi가 앞 대화를 요약하면 `response.compaction`이 `status: "in_progress"`로 시작해 `"completed"` | `"failed"`로 끝난다.
   - 턴 도중 입력: `response.input_consumed`
 - **usage:** `input_tokens`(캐시 읽기·쓰기 포함), `output_tokens`, `input_tokens_details.context_tokens`(마지막 호출의 context 크기, 요약 뒤에는 그 추정치), `context_window`(세션 모델의 context window).
 - **AskUserQuestion:**

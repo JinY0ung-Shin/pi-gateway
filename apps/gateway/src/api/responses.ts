@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
+import { estimateTokens } from "@earendil-works/pi-coding-agent";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels, LlmModelConfig } from "../agent/runtime.js";
@@ -29,7 +30,7 @@ import {
   thinkingLevelFor,
 } from "./request.js";
 import { SseWriter } from "./sse.js";
-import { executeTurn, moveLeaf, type TurnOutcome } from "./turn.js";
+import { classifyError, executeTurn, moveLeaf, type TurnOutcome } from "./turn.js";
 
 /**
  * POST /v1/responses — OpenAI Responses 호환 (oh-my-gateway 계약).
@@ -121,6 +122,7 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
 
   app.post("/v1/responses/:id/cancel", async (req) => cancelResponse(deps, req, deps.auth.authenticate(req.headers.authorization)));
   app.post("/v1/responses/:id/input", async (req) => queueResponseInput(deps, req, deps.auth.authenticate(req.headers.authorization)));
+  app.post("/v1/responses/:id/compact", async (req, reply) => compactResponse(deps, req, reply, deps.auth.authenticate(req.headers.authorization)));
 }
 
 /**
@@ -236,8 +238,17 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
   }
 
   const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession, sandboxEnv };
+  return withSessionSlot(deps, reply, principal, sessionId, (abort) => runLocked(deps, req, reply, plan, abort));
+}
 
-  // 클라이언트가 연결을 끊으면 실행을 멈춘다.
+/** 사용자의 실행 slot과 세션 lock을 잡고 run을 돌린다. 클라이언트가 연결을 끊으면 abort한다. */
+async function withSessionSlot(
+  deps: ResponsesDeps,
+  reply: FastifyReply,
+  principal: string,
+  sessionId: string,
+  run: (abort: AbortController) => Promise<unknown>,
+): Promise<unknown> {
   const abort = new AbortController();
   let finished = false;
   reply.raw.on("close", () => {
@@ -256,12 +267,144 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     return await deps.hub.locks.run(sessionId, () => {
       // 기다리는 동안 종료가 시작됐을 수 있다.
       if (deps.hub.isShuttingDown) throw shuttingDownError();
-      return runLocked(deps, req, reply, plan, abort);
+      return run(abort);
     });
   } finally {
     finished = true;
     release();
   }
+}
+
+/** 세션을 메모리에 올린다. 기록(JSONL)이 사라진 세션은 지우고 404로 답한다. */
+async function openLive(
+  deps: ResponsesDeps,
+  req: FastifyRequest,
+  record: SessionRecord,
+  abort: AbortController,
+  request: { metadata?: Record<string, string> | null; sandboxEnv?: Record<string, string> },
+  missing: () => ApiError,
+): Promise<LiveSession> {
+  try {
+    return await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, request.metadata, deps), request.sandboxEnv);
+  } catch (err) {
+    if (err instanceof SessionTranscriptMissingError) {
+      await deps.hub.discardLocked(record.id);
+      throw missing();
+    }
+    if (err instanceof ApiError) throw err;
+    deps.log.error({ err, session: record.id }, "failed to open session");
+    throw apiError(503, "Session could not be started; retry shortly");
+  }
+}
+
+/**
+ * 대화의 앞부분을 지금 요약한다 (`POST …/{id}/compact?user=`, body `{instructions?}`). pi의 수동 compaction이다.
+ * `{id}` 응답까지의 기록을 요약해 새 turn으로 commit하고, 그 응답 id를 SSE `response.compaction`(`completed`)으로 알린다.
+ * 다음 턴은 그 id로 이어간다. 원래 `{id}`로 이어가면 요약 전 기록에서 갈라진다.
+ */
+export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, reply: FastifyReply, auth: AuthResult): Promise<unknown> {
+  if (deps.hub.isShuttingDown) throw shuttingDownError();
+  const { id } = req.params as { id: string };
+  const user = userOf(auth, (req.query as { user?: string }).user);
+  const { instructions } = (req.body ?? {}) as { instructions?: unknown };
+  if (instructions != null && typeof instructions !== "string") throw badRequest("instructions must be a string");
+  const parsed = parseResponseId(id);
+  const found = parsed ? deps.store.get(parsed.sessionId) : undefined;
+  if (!parsed || !found || found.principal !== user || parsed.turn > found.turn) throw notFound(`Response '${id}' not found`);
+  // 진행 중인 턴이 끝나기를 기다리지 않는다 (pi의 수동 compaction은 진행 중인 실행을 중단시킨다).
+  if (deps.hub.get(found.id)?.activeTurn) {
+    throw apiError(409, "This session has a response in progress. Compact after it ends.", { type: "invalid_request_error", code: "response_in_progress" });
+  }
+
+  return withSessionSlot(deps, reply, user, found.id, async (abort) => {
+    const record = deps.store.get(found.id);
+    const point = record && deps.store.turnPoint(record.id, parsed.turn);
+    if (!record || !point) throw notFound(`Response '${id}' not found`);
+    if (point.pendingToolCall) {
+      throw conflict(`This session is waiting for the user's decision on ${point.pendingToolCall.name}. Answer it before compacting.`);
+    }
+    if (!deps.models.config(record.model)) {
+      throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
+    }
+    const liveBefore = deps.hub.get(record.id);
+    const live = await openLive(deps, req, record, abort, {}, () => notFound(`Response '${id}' not found`));
+    // 이 요청이 연 세션은 턴 요청의 컨텍스트(전달 헤더·metadata) 없이 도구를 만들었다. 끝나면 내려서 다음 턴이 다시 열게 한다.
+    const opened = live !== liveBefore;
+    moveLeaf(live, point.leafId);
+    live.activeTurn = abort;
+    live.lastActive = Date.now();
+    deps.store.touch(record.id);
+    const session = live.agent.session;
+    const sm = session.sessionManager;
+    const messageTokens = sm.buildSessionProjection().messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+
+    // 요약은 LLM 호출이라 오래 걸릴 수 있다. 턴처럼 SSE로 답해 keepalive가 연결을 붙잡게 한다.
+    reply.hijack();
+    const sse = new SseWriter(reply.raw);
+    sse.start();
+    sse.send("response.compaction", { status: "in_progress" });
+    sse.startKeepalive(deps.config.sse.keepaliveSeconds * 1000);
+    const fail = (code: string, message: string) => sse.send("response.compaction", { status: "failed", error: { code, message } });
+    const onAbort = () => session.abortCompaction();
+    abort.signal.addEventListener("abort", onAbort, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, deps.config.sessions.nonStreamTimeoutSeconds * 1000);
+    try {
+      let result: Awaited<ReturnType<typeof session.compact>> | undefined;
+      let thrown: unknown;
+      try {
+        if (abort.signal.aborted) throw new Error("aborted");
+        result = await session.compact(instructions?.trim() || undefined);
+      } catch (err) {
+        thrown = err;
+      }
+      // 중단되거나 실패한 요약은 commit하지 않는다 (다음 턴이 leaf를 이어갈 지점으로 다시 옮긴다).
+      if (timedOut) {
+        fail("timeout", `Compaction timed out after ${deps.config.sessions.nonStreamTimeoutSeconds}s`);
+      } else if (abort.signal.aborted) {
+        // 보통 클라이언트가 연결을 끊은 경우라 보낼 곳이 없다. gateway 종료로 중단됐으면 알린다.
+        if (deps.hub.isShuttingDown) fail("server_error", "Gateway is shutting down");
+      } else if (!result) {
+        const message = thrown instanceof Error ? thrown.message : String(thrown);
+        // pi: 마지막이 이미 요약이거나, 최근 유지 분량(keepRecentTokens)보다 대화가 짧다.
+        if (/^(Already compacted|Nothing to compact)/.test(message)) {
+          fail("nothing_to_compact", "Nothing to compact: the conversation is already compacted or still too short.");
+        } else {
+          deps.log.warn({ err: thrown, session: record.id }, "compaction failed");
+          fail(classifyError(message), message);
+        }
+      } else {
+        const turn = record.turn + 1;
+        deps.store.commit(record.id, { turn, leafId: sm.getLeafId(), sessionFile: sm.getSessionFile() ?? null, pendingToolCall: null });
+        live.record = deps.store.get(record.id) ?? live.record;
+        // tokens_before는 마지막 응답의 usage 기준(시스템 프롬프트·도구 선언 포함)이고 pi의 요약 뒤 추정치는 메시지만 센다.
+        // 둘이 같은 기준이 되게 메시지 밖의 몫을 요약 뒤 값에 더한다.
+        const outsideMessages = Math.max(0, result.tokensBefore - messageTokens);
+        sse.send("response.compaction", {
+          status: "completed",
+          id: responseId(record.id, turn),
+          tokens_before: result.tokensBefore,
+          tokens_after: result.estimatedTokensAfter == null ? null : result.estimatedTokensAfter + outsideMessages,
+          context_window: session.model?.contextWindow ?? null,
+        });
+      }
+    } catch (err) {
+      // hijack 이후라 Fastify 오류 처리기를 쓸 수 없다. 스트림 안에서 실패로 끝낸다.
+      deps.log.error({ err, session: record.id }, "compaction crashed");
+      fail("server_error", "Internal server error");
+    } finally {
+      clearTimeout(timer);
+      abort.signal.removeEventListener("abort", onAbort);
+      live.activeTurn = null;
+      live.lastActive = Date.now();
+      if (opened) await deps.hub.discardLive(record.id).catch((err) => deps.log.warn({ err, session: record.id }, "session teardown failed"));
+      sse.end();
+    }
+    return reply;
+  });
 }
 
 /** user 키면 키의 사용자, 서비스 키면 클라이언트가 보낸 user */
@@ -394,16 +537,10 @@ async function runLocked(
 
   let live: LiveSession;
   try {
-    live = await deps.hub.acquire(record, abort.signal, await requestContext(req.headers, plan.body.metadata, deps), plan.sandboxEnv);
+    live = await openLive(deps, req, record, abort, { metadata: plan.body.metadata, sandboxEnv: plan.sandboxEnv }, () => notFoundSession(plan.prev!));
   } catch (err) {
     if (plan.newSession) await deps.hub.discardLocked(record.id);
-    if (err instanceof SessionTranscriptMissingError) {
-      await deps.hub.discardLocked(record.id);
-      throw notFoundSession(plan.prev!);
-    }
-    if (err instanceof ApiError) throw err;
-    deps.log.error({ err, session: record.id }, "failed to open session");
-    throw apiError(503, "Session could not be started; retry shortly");
+    throw err;
   }
   moveLeaf(live, from.leafId);
   live.activeTurn = abort;

@@ -4,7 +4,7 @@ import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compactionTokens } from "../src/agent/session-factory.js";
 import type { ResponseUsage } from "../src/api/mapper.js";
-import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
+import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, parseSse, startHarness } from "./helpers.js";
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
@@ -193,5 +193,164 @@ describe("compaction events", () => {
     expect(usage.context_window).toBe(32000);
     // 요약 전 크기(30000)가 아니라 요약 뒤의 추정치
     expect(usage.input_tokens_details.context_tokens).toBeLessThan(30000);
+  });
+});
+
+describe("POST /v1/responses/{id}/compact", () => {
+  let h: Harness;
+  beforeAll(async () => {
+    // 짧은 대화도 요약되도록 최근 유지 분량을 줄인다
+    h = await startHarness({
+      overrides: { piSettings: { retry: { enabled: false }, compaction: { enabled: true, reserveTokens: 8000, keepRecentTokens: 10 } } },
+    });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  /** 요약을 요청하고 SSE를 끝까지 읽는다. `done`은 마지막 `response.compaction` 이벤트다 (스트림 전에 거절되면 없다). */
+  const compact = async (id: string, body: unknown = {}, key = ALICE_KEY) => {
+    const res = await fetch(`${h.url}/v1/responses/${id}/compact`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    const stream = res.headers.get("content-type")?.includes("text/event-stream");
+    const events = stream ? parseSse(raw) : [];
+    return { status: res.status, events, done: events.at(-1)?.data as any, json: stream ? undefined : (JSON.parse(raw) as any) };
+  };
+  /** 두 턴짜리 대화. 첫 턴만 요약되도록 둘째 질문을 최근 유지 분량보다 길게 하고, 첫 답에 요약 전 기록에만 있는 말을 넣는다. */
+  const twoTurns = async () => {
+    h.llm.enqueue({ text: "The secret word is PINEAPPLE." });
+    const first = await h.post({ input: "tell me the secret word" });
+    h.llm.enqueue({ text: "Noted." });
+    const second = await h.post({ input: "thanks, and now let us move on to a different and much longer topic", previous_response_id: first.json.id });
+    return second.json.id as string;
+  };
+
+  it("summarizes the history into a new turn that the next turn continues", async () => {
+    const id = await twoTurns();
+    h.llm.enqueue({ text: "SUMMARY-OF-HISTORY" });
+    const res = await compact(id, { instructions: "keep the decisions" });
+    expect(res.status).toBe(200);
+    expect(res.events.map((e) => [e.type, e.data.status])).toEqual([
+      ["response.compaction", "in_progress"],
+      ["response.compaction", "completed"],
+    ]);
+    expect(res.done).toMatchObject({ id: `resp_${sessionOf(id)}_3`, context_window: 32000 });
+    expect(res.done.tokens_before).toBeGreaterThan(0);
+    expect(res.done.tokens_after).toBeGreaterThan(0);
+    // 요약 요청에 지침이 들어간다
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("keep the decisions");
+
+    h.llm.enqueue({ text: "ok" });
+    const next = await h.post({ input: "continue", previous_response_id: res.done.id });
+    expect(next.json.id).toBe(`resp_${sessionOf(id)}_4`);
+    const sent = JSON.stringify(h.llm.requests.at(-1)!.messages);
+    expect(sent).toContain("SUMMARY-OF-HISTORY");
+    expect(sent).not.toContain("PINEAPPLE");
+
+    // 요약 전 응답으로 이어가면 요약 전 기록에서 갈라진다
+    h.llm.enqueue({ text: "ok" });
+    await h.post({ input: "branch", previous_response_id: id });
+    const branched = JSON.stringify(h.llm.requests.at(-1)!.messages);
+    expect(branched).toContain("PINEAPPLE");
+    expect(branched).not.toContain("SUMMARY-OF-HISTORY");
+  });
+
+  it("counts what lies outside the messages (system prompt, tool declarations) on both sides of the summary", async () => {
+    h.llm.enqueue({ text: "The secret word is PINEAPPLE." });
+    const first = await h.post({ input: "tell me the secret word" });
+    // 마지막 응답의 usage가 요약 전 크기다: 메시지 추정치보다 훨씬 크다 (시스템 프롬프트·도구 선언).
+    h.llm.enqueue({ text: "Noted.", usage: { prompt_tokens: 5000, completion_tokens: 5 } });
+    const second = await h.post({ input: "thanks, and now let us move on to a different and much longer topic", previous_response_id: first.json.id });
+    h.llm.enqueue({ text: "SUMMARY" });
+    const res = await compact(second.json.id);
+    expect(res.done.status).toBe("completed");
+    expect(res.done.tokens_before).toBeGreaterThanOrEqual(5000);
+    // 메시지만 센 추정치(수십 token)가 아니라, 메시지 밖의 몫이 그대로 남은 값
+    expect(res.done.tokens_after).toBeGreaterThan(4500);
+    expect(res.done.tokens_after).toBeLessThan(res.done.tokens_before + 200);
+  });
+
+  it("ends failed (nothing_to_compact) right after a compaction and leaves the session as it was", async () => {
+    const id = await twoTurns();
+    h.llm.enqueue({ text: "SUMMARY" });
+    const done = (await compact(id)).done;
+    const again = await compact(done.id);
+    expect(again.status).toBe(200);
+    expect(again.done).toMatchObject({ status: "failed", error: { code: "nothing_to_compact" } });
+    h.llm.enqueue({ text: "ok" });
+    const next = await h.post({ input: "continue", previous_response_id: done.id });
+    expect(next.json.id).toBe(`resp_${sessionOf(id)}_4`);
+  });
+
+  it("does not commit a failed compaction", async () => {
+    const id = await twoTurns();
+    h.llm.enqueue({ error: { status: 500, body: { error: { message: "boom" } } } });
+    const res = await compact(id);
+    expect(res.done).toMatchObject({ status: "failed", error: { code: "sdk_error" } });
+    h.llm.enqueue({ text: "ok" });
+    const next = await h.post({ input: "continue", previous_response_id: id });
+    expect(next.json.id).toBe(`resp_${sessionOf(id)}_3`);
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("PINEAPPLE");
+  });
+
+  it("does not commit a compaction whose client went away", async () => {
+    const id = await twoTurns();
+    h.llm.enqueue({ text: "SUMMARY", delayMs: 800 });
+    const abort = new AbortController();
+    const pending = fetch(`${h.url}/v1/responses/${id}/compact`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ALICE_KEY}`, "content-type": "application/json" },
+      body: "{}",
+      signal: abort.signal,
+    }).then((res) => res.text());
+    await new Promise((r) => setTimeout(r, 200));
+    abort.abort();
+    await pending.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.gateway.hub.get(sessionOf(id))?.activeTurn ?? null).toBeNull();
+    h.llm.enqueue({ text: "ok" });
+    const next = await h.post({ input: "continue", previous_response_id: id });
+    expect(next.json.id).toBe(`resp_${sessionOf(id)}_3`);
+  });
+
+  it("takes down a session it had to open itself, so the next turn opens it with its own request context", async () => {
+    const id = await twoTurns();
+    const sid = sessionOf(id);
+    await h.gateway.hub.evict(sid);
+    h.llm.enqueue({ text: "SUMMARY" });
+    const res = await compact(id);
+    expect(res.done.status).toBe("completed");
+    expect(h.gateway.hub.get(sid)).toBeUndefined();
+    h.llm.enqueue({ text: "ok" });
+    const next = await h.post({ input: "continue", previous_response_id: res.done.id });
+    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("SUMMARY");
+    expect(next.status).toBe(200);
+
+    // 이미 떠 있던 세션은 그대로 둔다.
+    const live = h.gateway.hub.get(sid);
+    const other = await twoTurns();
+    expect(h.gateway.hub.get(sid)).toBe(live);
+    h.llm.enqueue({ text: "SUMMARY" });
+    await compact(other);
+    expect(h.gateway.hub.get(sessionOf(other))).toBeDefined();
+  });
+
+  it("refuses another user's response, an unknown one, and a session with a response in progress", async () => {
+    const id = await twoTurns();
+    expect((await compact(id, {}, BOB_KEY)).status).toBe(404);
+    expect((await compact(`resp_${sessionOf(id)}_9`)).status).toBe(404);
+    expect((await compact(id, { instructions: 1 })).status).toBe(400);
+
+    h.llm.enqueue({ text: "slow", delayMs: 1500 });
+    const running = h.stream({ input: "long", previous_response_id: id });
+    await new Promise((r) => setTimeout(r, 300));
+    const busy = await compact(id);
+    expect(busy.status).toBe(409);
+    expect(busy.json.error.code).toBe("response_in_progress");
+    await running;
   });
 });
