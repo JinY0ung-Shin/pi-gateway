@@ -477,7 +477,7 @@ describe("input_file", () => {
   });
 
   it("accepts an allowed extension in any case", async () => {
-    expect((await h.post(withFile({ filename: "deck.PPTX", file_data }))).status).toBe(200);
+    for (const filename of ["deck.PPTX", "shot.png"]) expect((await h.post(withFile({ filename, file_data }))).status).toBe(200);
   });
 
   it("rejects path-like names, other extensions, non-data URLs and read_only sessions", async () => {

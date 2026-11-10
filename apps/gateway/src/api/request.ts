@@ -155,8 +155,8 @@ function inputImage(part: z.infer<typeof ContentPart>): ImageContent {
 
 const UPLOAD_DIR = `${SANDBOX_WORKSPACE}/uploads`;
 const FILENAME = /^[^/\\\x00-\x1f\x7f]+$/;
-/** sandbox 이미지의 도구로 읽을 수 있는 형식만 받는다. */
-const FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md", "json"];
+/** 에이전트가 read 도구(이미지)나 sandbox 이미지의 도구(문서)로 읽을 수 있는 형식만 받는다. */
+const FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 /**
  * input_file은 `filename`과 base64 data URL인 `file_data`만 받는다 (`file_id`·`file_url`은 받지 않는다).
