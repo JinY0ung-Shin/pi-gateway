@@ -1,4 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { z } from "zod";
 import { type LlmModelConfig, REASONING_EFFORTS, type ReasoningEffort, thinkingLevelOf } from "../agent/runtime.js";
 import type { AuthResult } from "../auth/auth.js";
@@ -126,8 +127,14 @@ export function sandboxEnvOf(body: ResponseCreateRequest, auth: AuthResult): Rec
   return env;
 }
 
+/** input_file로 받은 문서. 턴을 시작하기 전에 사용자의 workspace에 쓴다. */
+export interface InputFile {
+  path: string;
+  content: Buffer;
+}
+
 export type ParsedInput =
-  | { kind: "prompt"; text: string; images: ImageContent[]; systemText: string | null; hasSystemItems: boolean }
+  | { kind: "prompt"; text: string; images: ImageContent[]; files: InputFile[]; systemText: string | null; hasSystemItems: boolean }
   | { kind: "answer"; callId: string; output: string };
 
 const ROLE_LABELS: Record<string, string> = { user: "User", assistant: "Assistant", system: "System", developer: "Developer" };
@@ -146,13 +153,41 @@ function inputImage(part: z.infer<typeof ContentPart>): ImageContent {
   return { type: "image", data: buf.toString("base64"), mimeType: verdict.info.mimeType };
 }
 
-/** images를 넘기면 input_image를 거기에 모은다. 넘기지 않으면 (system 메시지) input_image는 400이다. */
-function contentText(content: Message["content"], images?: ImageContent[]): string {
+const UPLOAD_DIR = `${SANDBOX_WORKSPACE}/uploads`;
+const FILENAME = /^[^/\\\x00-\x1f\x7f]+$/;
+
+/**
+ * input_file은 `filename`과 base64 data URL인 `file_data`만 받는다 (`file_id`·`file_url`은 받지 않는다).
+ * `/workspace/uploads/<filename>`에 두고 모델에는 경로만 알린다. 같은 이름은 덮어쓴다.
+ */
+function inputFile(part: z.infer<typeof ContentPart>): InputFile {
+  const name = part.filename;
+  if (typeof name !== "string" || !FILENAME.test(name) || name === "." || name === ".." || Buffer.byteLength(name) > 255) {
+    throw badRequest("input_file.filename must be a plain file name", "invalid_file_input");
+  }
+  const m = typeof part.file_data === "string" ? DATA_URL.exec(part.file_data) : null;
+  if (!m) throw badRequest("input_file.file_data must be a base64 data: URL", "invalid_file_input");
+  return { path: `${UPLOAD_DIR}/${name}`, content: Buffer.from(m[1]!, "base64") };
+}
+
+interface Attachments {
+  images: ImageContent[];
+  files: InputFile[];
+}
+
+/** attachments를 넘기면 input_image·input_file을 거기에 모은다. 넘기지 않으면 (system 메시지) 둘 다 400이다. */
+function contentText(content: Message["content"], attachments?: Attachments): string {
   if (typeof content === "string") return content;
   const texts: string[] = [];
   for (const part of content) {
-    if (part.type === "input_image" && images) {
-      images.push(inputImage(part));
+    if (part.type === "input_image" && attachments) {
+      attachments.images.push(inputImage(part));
+      continue;
+    }
+    if (part.type === "input_file" && attachments) {
+      const file = inputFile(part);
+      attachments.files.push(file);
+      texts.push(`[Attached file: ${file.path}]`);
       continue;
     }
     if (part.type === "input_image" || part.type === "image" || part.type === "input_file") {
@@ -164,11 +199,11 @@ function contentText(content: Message["content"], images?: ImageContent[]): stri
 }
 
 /** 메시지 배열을 프롬프트 하나로 합친다. 메시지가 둘 이상이면 `User: ` 같은 라벨을 붙인다. */
-function flatten(messages: Message[], images: ImageContent[]): string {
+function flatten(messages: Message[], attachments: Attachments): string {
   const label = messages.length > 1;
   const parts: string[] = [];
   for (const m of messages) {
-    const text = contentText(m.content, images);
+    const text = contentText(m.content, attachments);
     if (!text) continue;
     parts.push(label ? `${ROLE_LABELS[m.role]}: ${text}` : text);
   }
@@ -179,7 +214,7 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
   const input = body.input;
   if (typeof input === "string") {
     if (!input.trim()) throw badRequest("input must not be empty");
-    return { kind: "prompt", text: input, images: [], systemText: null, hasSystemItems: false };
+    return { kind: "prompt", text: input, images: [], files: [], systemText: null, hasSystemItems: false };
   }
   const fco = input.find((item): item is z.infer<typeof FunctionCallOutputItem> => item.type === "function_call_output");
   if (fco) return { kind: "answer", callId: fco.call_id, output: fco.output };
@@ -194,10 +229,10 @@ export function parseInput(body: ResponseCreateRequest): ParsedInput {
     for (const m of messages) if (m.role === "system" || m.role === "developer") systemText = contentText(m.content);
     if (users.length > 0) promptMessages = users;
   }
-  const images: ImageContent[] = [];
-  const text = flatten(promptMessages, images);
-  if (!text.trim() && images.length === 0) throw badRequest("input must not be empty");
-  return { kind: "prompt", text, images, systemText, hasSystemItems };
+  const attachments: Attachments = { images: [], files: [] };
+  const text = flatten(promptMessages, attachments);
+  if (!text.trim() && attachments.images.length === 0) throw badRequest("input must not be empty");
+  return { kind: "prompt", text, ...attachments, systemText, hasSystemItems };
 }
 
 /** reasoning.effort → pi thinking level. reasoning 모델이면 모델의 efforts에 있어야 하고, 아니면 effort가 뜻이 없어 고르지 않은 것으로 본다. */

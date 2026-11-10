@@ -51,6 +51,9 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - `reasoning`은 reasoning 모델이면 `{efforts, default_effort}`(받는 `reasoning.effort`와 effort를 뺐을 때 쓰는 값), 아니면 `null`(effort는 무시한다)이다. `efforts`에 없는 effort를 보내면 400 `unsupported_reasoning_effort`다.
 - **관리 화면 채팅 테스트:** `/admin`의 "채팅 테스트"는 관리자 로그인으로 `/v1/responses`와 같은 처리를 한다 (`POST /admin/api/chat`, 중지는 `POST /admin/api/chat/{id}/cancel?user=`). 입력한 user의 workspace·MCP·skill로 실행된다.
 - **이미지 입력:** `input_image`는 base64 `data:` URL만 받는다 (25MP·20MB 제한). LLM 설정에서 이미지를 켜지 않은 모델이면 400이다.
+- **문서 입력:** `input_file`은 `filename`과 base64 `data:` URL인 `file_data`만 받는다 (`file_id`·`file_url`은 400 `invalid_file_input`). 요청 본문 전체가 16MiB까지다.
+  - 사용자 workspace의 `/workspace/uploads/<filename>`에 쓰고 모델에는 그 경로를 알린다. 내용은 에이전트가 도구로 읽는다. 같은 이름은 덮어쓴다.
+  - `filename`은 경로가 아닌 파일 이름이어야 한다. `read_only` 세션에서는 400이다 (workspace를 바꾸므로).
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`

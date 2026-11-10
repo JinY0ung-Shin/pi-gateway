@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MAX_TOOL_CALLS_PER_TURN } from "../src/agent/tool-call-limit.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
@@ -455,6 +457,34 @@ describe("input_image", () => {
     const bomb = await h.post(withImage("vision-model", dataUrl(bombPng())));
     expect(bomb.status).toBe(400);
     expect(bomb.json.error.code).toBe("invalid_image");
+  });
+});
+
+describe("input_file", () => {
+  const withFile = (file: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    input: [{ role: "user", content: [{ type: "input_text", text: "summarize" }, { type: "input_file", ...file }] }],
+    ...extra,
+  });
+  const file_data = `data:application/pdf;base64,${Buffer.from("%PDF-fake").toString("base64")}`;
+
+  it("writes the document to the user's workspace and tells the model its path", async () => {
+    const res = await h.post(withFile({ filename: "보고서 1.pdf", file_data }));
+    expect(res.status).toBe(200);
+    expect(readFileSync(join(h.sandbox.workspaceOf("alice"), "uploads", "보고서 1.pdf"), "utf8")).toBe("%PDF-fake");
+    const lastMsg = JSON.stringify(h.llm.requests.at(-1)!.messages.at(-1));
+    expect(lastMsg).toContain("summarize");
+    expect(lastMsg).toContain("[Attached file: /workspace/uploads/보고서 1.pdf]");
+  });
+
+  it("rejects path-like names, non-data URLs and read_only sessions", async () => {
+    for (const bad of [{ filename: "../x.pdf", file_data }, { filename: "..", file_data }, { file_data }, { filename: "x.pdf", file_url: "https://example.com/x.pdf" }]) {
+      const res = await h.post(withFile(bad));
+      expect(res.status).toBe(400);
+      expect(res.json.error.code).toBe("invalid_file_input");
+    }
+    const readOnly = await h.post(withFile({ filename: "ro.pdf", file_data }, { read_only: true }));
+    expect(readOnly.status).toBe(400);
+    expect(existsSync(join(h.sandbox.workspaceOf("alice"), "uploads", "ro.pdf"))).toBe(false);
   });
 });
 

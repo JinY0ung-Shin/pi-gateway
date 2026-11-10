@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels, LlmModelConfig } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
-import type { SandboxClient } from "../sandbox/client.js";
+import { type SandboxClient, SandboxError } from "../sandbox/client.js";
 import type { AuthResult, Authenticator } from "../auth/auth.js";
 import type { GatewayConfig } from "../config.js";
 import type { McpRegistry, PluginResources, PromptService } from "../contracts.js";
@@ -47,7 +47,7 @@ export interface ResponsesDeps {
   prompts: PromptService;
   plugins: PluginResources;
   mcpRegistry: McpRegistry;
-  /** `GET /v1/files/content`가 workspace 파일을 읽는다 */
+  /** `GET /v1/files/content`가 workspace 파일을 읽고, input_file을 workspace에 쓴다 */
   sandbox: SandboxClient;
   toolStats: Pick<ToolStats, "countTurn">;
   log: Logger;
@@ -459,9 +459,14 @@ function requireModel(deps: ResponsesDeps, model: string): LlmModelConfig {
 }
 
 
-function requireImageInput(deps: ResponsesDeps, model: string, input: ParsedInput): void {
-  if (input.kind === "prompt" && input.images.length > 0 && !deps.models.config(model)?.input.includes("image")) {
+/** 이미지는 받는 모델에만, 문서는 sandbox를 바꿔도 되는 세션에만 */
+function requireAttachmentsAllowed(deps: ResponsesDeps, model: string, readOnly: boolean, input: ParsedInput): void {
+  if (input.kind !== "prompt") return;
+  if (input.images.length > 0 && !deps.models.config(model)?.input.includes("image")) {
     throw badRequest(`Model '${model}' does not accept image input`, "unsupported_image_input");
+  }
+  if (input.files.length > 0 && readOnly) {
+    throw badRequest("input_file cannot be used in a read_only session (it writes to the workspace)", "invalid_file_input");
   }
 }
 
@@ -476,7 +481,7 @@ async function runLocked(
   /** 이번 턴이 이어지는 지점 */
   let from: TurnPoint = { leafId: null, pendingToolCall: null };
   if (plan.newSession) {
-    requireImageInput(deps, plan.newSession.model, plan.input);
+    requireAttachmentsAllowed(deps, plan.newSession.model, plan.newSession.readOnly, plan.input);
     record = newRecord(
       deps,
       { sessionId: plan.sessionId, principal: plan.principal, ...plan.newSession },
@@ -497,7 +502,7 @@ async function runLocked(
     }
     // effort를 빼면 고른 값을 그대로 둔다. model만 바꾸면 새 모델의 기본값을 따른다 (null).
     const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel) ?? (modelChanged ? null : record.thinkingLevel);
-    requireImageInput(deps, model, plan.input);
+    requireAttachmentsAllowed(deps, model, record.readOnly, plan.input);
     // 예전 응답이면 그 지점에서 갈라진다 (메시지 수정·재생성). 대화 기록만 갈라지고 workspace 파일은 그대로다.
     const point = deps.store.turnPoint(record.id, plan.prevTurn);
     if (!point) throw conflict(`previous_response_id '${plan.prev}' can no longer be continued`);
@@ -538,9 +543,15 @@ async function runLocked(
   let live: LiveSession;
   try {
     live = await openLive(deps, req, record, abort, { metadata: plan.body.metadata, sandboxEnv: plan.sandboxEnv }, () => notFoundSession(plan.prev!));
+    if (plan.input.kind === "prompt") {
+      const sandbox = deps.sandbox.for(record.principal, record.id);
+      for (const file of plan.input.files) await sandbox.writeFile(file.path, file.content, abort.signal);
+    }
   } catch (err) {
     if (plan.newSession) await deps.hub.discardLocked(record.id);
-    throw err;
+    if (!(err instanceof SandboxError)) throw err;
+    deps.log.warn({ err, session: record.id }, "input_file upload failed");
+    throw apiError(502, `Sandbox error: ${err.message}`);
   }
   moveLeaf(live, from.leafId);
   live.activeTurn = abort;
