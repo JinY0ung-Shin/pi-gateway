@@ -48,7 +48,7 @@ RUN --mount=type=secret,id=extra_ca \
       cat /etc/ssl/certs/ca-certificates.crt /run/secrets/extra_ca > /tmp/ca-bundle.pem && export PIP_CERT=/tmp/ca-bundle.pem; \
     fi \
  && pip install --no-cache-dir --root-user-action=ignore ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"} \
-      numpy pandas openpyxl matplotlib pypdf python-docx \
+      numpy pandas openpyxl matplotlib pypdf python-docx python-pptx \
  && rm -f /tmp/ca-bundle.pem \
  && printf 'font.family: NanumGothic\naxes.unicode_minus: False\n' > /etc/matplotlibrc
 
