@@ -1,15 +1,22 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { ApiKeyField, linesToRecord, Notice, recordToLines, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
 
 /**
  * System One 설정. mcp_search가 도구를 고를 때 묻는 decision model 서버 하나를 둔다. 저장하면 다음 검색부터 적용된다.
- * 테스트는 화면에 입력한 값으로 하므로 저장하기 전에 해 볼 수 있다. base URL과 모델 id를 모두 비우고 저장하면 쓰지 않는다.
+ * 모델 가져오기·테스트는 화면에 입력한 값으로 하므로 저장하기 전에 해 볼 수 있다. base URL과 모델 id를 모두 비우고 저장하면 쓰지 않는다.
  */
 
 interface SystemOneView {
   model: { baseUrl: string; id: string; headers: Record<string, string>; apiKeySet: boolean } | null;
   updatedAt: string | null;
+}
+
+interface ProbeResult {
+  ok: boolean;
+  durationMs: number;
+  error?: string;
+  models?: { id: string; name?: string }[];
 }
 
 interface TestResult {
@@ -38,13 +45,19 @@ const toForm = (v: SystemOneView): Form => ({
   clearKey: false,
 });
 
-/** 요청 본문의 model. base URL과 모델 id가 모두 비면 null (쓰지 않음). apiKey를 빼면 gateway가 저장된 키를 쓴다. */
+/** 연결에 쓰는 값. apiKey를 빼면 gateway가 저장된 키를 쓴다. */
+const connectionOf = (f: Form) => ({
+  baseUrl: f.baseUrl.trim(),
+  headers: linesToRecord(f.headers, ":"),
+  ...(f.clearKey ? { apiKey: "" } : f.apiKey ? { apiKey: f.apiKey } : {}),
+});
+
+/** 요청 본문의 model. base URL과 모델 id가 모두 비면 null (쓰지 않음). */
 function toBody(f: Form) {
-  const baseUrl = f.baseUrl.trim();
   const id = f.id.trim();
-  if (!baseUrl && !id) return null;
-  if (!baseUrl || !id) throw new Error("base URL과 모델 id를 모두 넣으세요. 쓰지 않으려면 둘 다 비웁니다.");
-  return { baseUrl, id, headers: linesToRecord(f.headers, ":"), ...(f.clearKey ? { apiKey: "" } : f.apiKey ? { apiKey: f.apiKey } : {}) };
+  if (!f.baseUrl.trim() && !id) return null;
+  if (!f.baseUrl.trim() || !id) throw new Error("base URL과 모델 id를 모두 넣으세요. 쓰지 않으려면 둘 다 비웁니다.");
+  return { ...connectionOf(f), id };
 }
 
 /** 저장 안 한 변경이 있는지 보는 값 */
@@ -55,12 +68,14 @@ export function SystemOnePage() {
   const [view, setView] = useState<SystemOneView | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [test, setTest] = useState<TestResult | "testing" | null>(null);
+  const [probe, setProbe] = useState<ProbeResult | "checking" | null>(null);
   const action = useAction();
 
   const show = (v: SystemOneView) => {
     setView(v);
     setForm(toForm(v));
     setTest(null);
+    setProbe(null);
   };
 
   useEffect(() => {
@@ -77,6 +92,15 @@ export function SystemOnePage() {
   const change = (patch: Partial<Form>) => {
     setForm({ ...form, ...patch });
     setTest(null);
+  };
+
+  const fetchModels = async () => {
+    setProbe("checking");
+    try {
+      setProbe(await api<ProbeResult>("POST", "/systemone/probe", { model: connectionOf(form) }));
+    } catch (error) {
+      setProbe({ ok: false, durationMs: 0, error: errorText(error) });
+    }
   };
 
   const runTest = async () => {
@@ -101,11 +125,32 @@ export function SystemOnePage() {
       <Section
         title="decision model 서버"
         actions={
-          <button disabled={!filled || test === "testing"} onClick={() => void runTest()}>
-            {test === "testing" ? "테스트 중…" : "테스트"}
-          </button>
+          <>
+            <button disabled={form.baseUrl.trim() === "" || probe === "checking"} onClick={() => void fetchModels()}>
+              {probe === "checking" ? "가져오는 중…" : "모델 가져오기"}
+            </button>
+            <button disabled={!filled || test === "testing"} onClick={() => void runTest()}>
+              {test === "testing" ? "테스트 중…" : "테스트"}
+            </button>
+          </>
         }
       >
+        {probe && probe !== "checking" && !probe.ok && (
+          <Notice tone="error" onClose={() => setProbe(null)}>
+            연결 실패: {probe.error}
+          </Notice>
+        )}
+        {probe && probe !== "checking" && probe.ok && (
+          <ModelPicker
+            models={probe.models ?? []}
+            current={form.id.trim()}
+            onPick={(id) => {
+              change({ id });
+              setProbe(null);
+            }}
+            onClose={() => setProbe(null)}
+          />
+        )}
         {test && test !== "testing" && (
           <Notice tone={test.ok ? "ok" : "error"} onClose={() => setTest(null)}>
             {test.ok ? (
@@ -151,5 +196,33 @@ export function SystemOnePage() {
         </div>
       </div>
     </>
+  );
+}
+
+/** 서버의 `/models` 목록에서 모델 하나를 고른다 */
+function ModelPicker(props: { models: NonNullable<ProbeResult["models"]>; current: string; onPick: (id: string) => void; onClose: () => void }) {
+  return (
+    <Modal title={`서버에 있는 모델 ${props.models.length}개`} onClose={props.onClose}>
+      {props.models.length === 0 ? (
+        <p class="muted small-text">서버가 모델 목록을 주지 않았습니다. 모델 id를 직접 넣으세요.</p>
+      ) : (
+        <table class="table compact">
+          <tbody>
+            {props.models.map((m) => (
+              <tr key={m.id}>
+                <td class="mono">
+                  {m.id} {m.name && <span class="muted">{m.name}</span>}
+                </td>
+                <td class="actions">
+                  <button class="small" disabled={m.id === props.current} onClick={() => props.onPick(m.id)}>
+                    {m.id === props.current ? "선택됨" : "선택"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Modal>
   );
 }

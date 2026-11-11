@@ -271,6 +271,21 @@ describe("/admin/api/systemone", () => {
     expect(await h.gateway.models.choose(question)).toBeUndefined();
   });
 
+  it("lists the server's models, with the stored key when none is given and before a model id is chosen", async () => {
+    h.llm.models.splice(0, h.llm.models.length, { id: "vllm-sr/d3-ultra", max_model_len: 131072 });
+    const typed = await postJson("/systemone/probe", { model: { baseUrl: h.llm.url, apiKey: "typed-key", headers: { "x-team": "ai" } } });
+    expect(typed).toMatchObject({ ok: true, models: [{ id: "vllm-sr/d3-ultra" }] });
+    expect(h.llm.modelRequests.at(-1)!).toMatchObject({ authorization: "Bearer typed-key", "x-team": "ai" });
+
+    expect((await putOne({ baseUrl: h.llm.url, apiKey: "one-key", id: "d3-ultra" })).status).toBe(200);
+    await postJson("/systemone/probe", { model: { baseUrl: h.llm.url } });
+    expect(h.llm.modelRequests.at(-1)!.authorization).toBe("Bearer one-key");
+    expect((await putOne(null)).status).toBe(200);
+
+    expect(await postJson("/systemone/probe", { model: { baseUrl: "http://127.0.0.1:1/v1" } })).toMatchObject({ ok: false });
+    expect((await send("POST", "/systemone/probe", { model: { baseUrl: "not a url" } })).status).toBe(400);
+  });
+
   it("tests a decision model server, also before it is saved and with the stored key", async () => {
     h.llm.setDecision(() => ({ good: 0.97, bad: 0.03 }));
     const ok = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, apiKey: "unsaved-key", headers: { "x-team": "ai" }, id: "d3-ultra" } });
