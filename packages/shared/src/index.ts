@@ -6,3 +6,4 @@ export * from "./redact.js";
 export * from "./sandbox-api.js";
 export * from "./secrets.js";
 export * from "./user-key.js";
+export * from "./tracing.js";

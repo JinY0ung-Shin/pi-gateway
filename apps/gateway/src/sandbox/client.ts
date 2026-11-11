@@ -12,6 +12,7 @@ import {
   SANDBOXD_ROUTES,
   type SandboxInfo,
   signInternalToken,
+  traceHeaders,
 } from "@pi-gateway/shared";
 import WebSocket from "ws";
 
@@ -119,7 +120,7 @@ export class SandboxHandle {
     try {
       res = await fetch(this.client.baseUrl + route, {
         method: "POST",
-        headers: { authorization: await this.authHeader(), "content-type": "application/json" },
+        headers: { authorization: await this.authHeader(), "content-type": "application/json", ...traceHeaders() },
         body: JSON.stringify({ ...body, user: this.principal }),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });

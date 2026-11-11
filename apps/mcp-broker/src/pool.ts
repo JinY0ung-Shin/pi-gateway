@@ -1,4 +1,5 @@
 import type { Client, Tool } from "@modelcontextprotocol/client";
+import { withSpan } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { RenderedTransport } from "./render.js";
 import type { ConnectHooks, UpstreamConnection } from "./upstream/connect.js";
@@ -141,7 +142,7 @@ export class UpstreamPool {
         },
       };
       try {
-        const conn = await this.#connect(rendered, hooks);
+        const conn = await withSpan("mcp-broker connect upstream", {}, () => this.#connect(rendered, hooks));
         entry = {
           id,
           key,

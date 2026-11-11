@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Harness, startHarness } from "./helpers.js";
 
 const ADMIN_KEY = "admin-key-for-tests-0123456789";
@@ -7,7 +7,7 @@ const DAY = 86_400_000;
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY } });
+  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY, JAEGER_HOST: "jaeger.test" } });
 });
 afterAll(async () => {
   await h.close();
@@ -49,6 +49,57 @@ describe("admin history", () => {
     expect(said[0][1]).toContain("first question");
     expect(said[3][1]).toContain("second answer");
     expect((await admin("GET", "/history/nope")).status).toBe(404);
+  });
+
+  it("shows the session's traces read from Jaeger, newest turn first", async () => {
+    h.llm.enqueue({ text: "hi" });
+    const sid = sessionOf((await h.post({ input: "hello" })).json.id);
+    const attr = (key: string, value: object) => ({ key, value });
+    const span = (traceId: string, spanId: string, name: string, startMs: number, endMs: number, extra: object = {}) => ({
+      traceId,
+      spanId,
+      name,
+      startTimeUnixNano: `${1_700_000_000_000 + startMs}000000`,
+      endTimeUnixNano: `${1_700_000_000_000 + endMs}000000`,
+      ...extra,
+    });
+    const chunk = (service: string, spans: object[]) =>
+      JSON.stringify({ result: { resourceSpans: [{ resource: { attributes: [attr("service.name", { stringValue: service })] }, scopeSpans: [{ spans }] }] } });
+    // Jaeger는 결과를 한 줄에 JSON 하나씩 여러 묶음으로 준다
+    const body = [
+      chunk("gateway", [
+        span("t1", "a", "invoke_agent", 0, 500, { attributes: [attr("pi_gateway.turn", { intValue: "1" })] }),
+        span("t1", "b", "execute_tool bash", 100, 400, { parentSpanId: "a", status: { code: 2 } }),
+        span("t2", "d", "invoke_agent", 9000, 9100, { attributes: [attr("pi_gateway.turn", { intValue: "2" })] }),
+      ]),
+      chunk("sandboxd", [span("t1", "c", "sandboxd /v1/exec", 150, 350, { parentSpanId: "b" })]),
+    ].join("\n");
+    const realFetch = globalThis.fetch;
+    let asked: URL | undefined;
+    const stub = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.hostname !== "jaeger.test") return realFetch(input, init);
+      asked = url;
+      return url.searchParams.get("query.attributes")?.includes(sid) ? new Response(body) : new Response("{}", { status: 404 });
+    });
+    try {
+      const res = await admin("GET", `/history/${sid}/traces`);
+      expect(res.status).toBe(200);
+      expect(asked?.port).toBe("16686");
+      expect(asked?.searchParams.get("query.service_name")).toBe("gateway");
+      expect(res.json.traces.map((t: any) => [t.turn, t.durationMs])).toEqual([
+        [2, 100],
+        [1, 500],
+      ]);
+      expect(res.json.traces[1].spans).toEqual([
+        { id: "a", service: "gateway", name: "invoke_agent", startMs: 0, durationMs: 500, error: false, attributes: { "pi_gateway.turn": 1 } },
+        { id: "b", parentId: "a", service: "gateway", name: "execute_tool bash", startMs: 100, durationMs: 300, error: true, attributes: {} },
+        { id: "c", parentId: "b", service: "sandboxd", name: "sandboxd /v1/exec", startMs: 150, durationMs: 200, error: false, attributes: {} },
+      ]);
+      expect((await admin("GET", "/history/nope/traces")).status).toBe(404);
+    } finally {
+      stub.mockRestore();
+    }
   });
 
   it("deletes sessions past the retention period", async () => {

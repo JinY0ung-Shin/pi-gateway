@@ -29,6 +29,7 @@ import type { ToolStats } from "../tools/stats.js";
 import { createStructuredOutputTool } from "../tools/structured-output.js";
 import { type GatewayModels, thinkingLevelIn } from "./runtime.js";
 import { createSubagentTools } from "./subagents.js";
+import { chatSpans, tracedTool } from "./tracing.js";
 
 /**
  * 세션 하나의 pi AgentSession을 만든다 (새로 만들거나 JSONL에서 되살리기).
@@ -118,7 +119,7 @@ export async function buildAgentSession(
     log: deps.log.child({ session: record.id }),
     signal,
   });
-  const customTools = created.filter(enabled).map(redacted);
+  const customTools = created.filter(enabled).map(redacted).map(tracedTool);
 
   const skillNames = new Set(record.skillNames);
   const skills = deps.plugins.skills().filter((s) => skillNames.has(s.name));
@@ -155,14 +156,15 @@ export async function buildAgentSession(
       }),
   })
     .filter(enabled)
-    .map(redacted);
+    .map(redacted)
+    .map(tracedTool);
 
   const session = await createPiSession(deps, {
     model,
     thinkingLevel,
     loader,
     // StructuredOutput은 이 세션의 최종 답용이라 하위 agent에는 주지 않는다.
-    tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [createStructuredOutputTool(record.outputFormat)] : [])],
+    tools: [...customTools, ...subagentTools, ...(record.outputFormat ? [tracedTool(createStructuredOutputTool(record.outputFormat))] : [])],
     sessionManager,
     countStats,
   });
@@ -216,11 +218,13 @@ async function createPiSession(
     ),
   });
   // 리스너가 던지면 실행이 깨질 수 있어 잡는다.
+  const trace = chatSpans(input.model.id);
   session.subscribe((event) => {
     try {
       input.countStats(event);
+      trace(event);
     } catch (err) {
-      deps.log.warn({ err }, "tool stats update failed");
+      deps.log.warn({ err }, "session listener failed");
     }
   });
   return session;

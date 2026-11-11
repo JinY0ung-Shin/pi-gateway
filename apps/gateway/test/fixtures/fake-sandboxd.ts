@@ -28,6 +28,7 @@ export interface FakeCall {
   /** 토큰의 sid (세션 id) */
   sid?: string;
   body: Record<string, unknown>;
+  traceparent?: string;
 }
 
 export interface FakeSandboxd {
@@ -120,7 +121,7 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
       const user = String(body.user ?? "");
       const sid = await authenticate(req, user);
       if (sid === null) return sendJson(res, 401, errorBody("unauthorized", "bad token"));
-      calls.push({ route, user, sid, body });
+      calls.push({ route, user, sid, body, ...(typeof req.headers.traceparent === "string" ? { traceparent: req.headers.traceparent } : {}) });
 
       switch (route) {
         case SANDBOXD_ROUTES.fsRead: {

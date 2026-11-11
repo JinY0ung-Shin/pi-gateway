@@ -67,6 +67,20 @@ services:
     networks:
       - proxy-egress
 
+  # trace 저장소 (Jaeger v2). gateway·sandboxd·mcp-broker가 span을 보내고(4318), gateway가 조회해서(16686) 관리 화면의
+  # 대화 기록에 보여 준다. 포트를 공개하지 않고 control 네트워크에만 있다. 디스크에 7일 보관한다 (images/jaeger/config.yaml).
+  jaeger:
+    <<: *hardening
+    image: jaegertracing/jaeger:2.23.0
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    # 데이터 볼륨이 root 소유라 uid 0으로 돈다. capability는 없다 (cap_drop ALL).
+    user: "0:0"
+    volumes:
+      - jaeger-data:/badger
+      - ./images/jaeger/config.yaml:/etc/jaeger/config.yaml:ro
+    networks:
+      - control
+
   sandboxd:
     <<: *hardening
     image: pi-gateway/sandboxd:${PI_GATEWAY_VERSION:-latest}
@@ -96,6 +110,7 @@ services:
       SANDBOX_CPUS: ${SANDBOX_CPUS:-1}
       SANDBOX_PIDS_LIMIT: ${SANDBOX_PIDS_LIMIT:-256}
       SANDBOX_IDLE_SECONDS: ${SANDBOX_IDLE_SECONDS:-900}
+      JAEGER_HOST: jaeger
     secrets:
       - source: sbx_sandboxd_jwt_secret
         target: sandboxd_jwt_secret
@@ -127,6 +142,7 @@ services:
       DATA_DIR: /data
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
       BROKER_KEK_FILE: /run/secrets/broker_kek
+      JAEGER_HOST: jaeger
       # 사내 CA: gateway와 같은 파일을 쓴다 (gateway의 NODE_EXTRA_CA_CERTS 설명)
       NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:+/etc/pi-gateway/extra-ca.pem}
     secrets:
@@ -180,6 +196,7 @@ services:
       SANDBOXD_URL: http://sandboxd:7070
       SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
+      JAEGER_HOST: jaeger
       # 세션
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-300}
       NON_STREAM_TIMEOUT_SECONDS: ${NON_STREAM_TIMEOUT_SECONDS:-600}
@@ -230,7 +247,7 @@ services:
 networks:
   # gateway의 공개 포트와 LLM 엔드포인트 접근
   edge: {}
-  # gateway ↔ sandboxd ↔ mcp-broker. 외부로 나가는 경로가 없다.
+  # gateway ↔ sandboxd ↔ mcp-broker, 그리고 이들 → jaeger. 외부로 나가는 경로가 없다.
   control:
     internal: true
   # mcp-broker → 원격 MCP 서버
@@ -241,6 +258,7 @@ networks:
 volumes:
   gateway-data: {}
   broker-data: {}
+  jaeger-data: {}
   # egress-proxy의 unix socket. sandboxd가 만드는 sandbox 컨테이너가 이 이름으로 mount하므로 이름을 고정한다
   # (apps/sandboxd/src/config.ts의 proxyVolume).
   proxy-sock:

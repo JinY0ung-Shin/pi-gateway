@@ -10,6 +10,7 @@ import {
   renderTemplate,
   SANDBOX_WORKSPACE,
   signInternalToken,
+  traceHeaders,
 } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
@@ -332,6 +333,8 @@ export class McpConnectionSet {
       const transport = new StreamableHttpTransport({
         url: `${broker.url}/mcp/${encodeURIComponent(server.id)}`,
         openGetStream: false,
+        // 도구 호출의 trace를 broker로 잇는다
+        fetch: (input, init) => fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), ...traceHeaders() } }),
         authProvider: {
           token: () =>
             signInternalToken(broker.jwtSecret, AUD_BROKER, {

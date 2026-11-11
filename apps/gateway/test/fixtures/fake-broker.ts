@@ -24,6 +24,7 @@ export interface FakeBrokerRecord {
   serverId: string;
   method: string;
   claims: VerifiedInternalClaims;
+  traceparent?: string;
 }
 
 export interface FakeBroker {
@@ -76,7 +77,7 @@ export async function startFakeBroker(secret: Uint8Array, servers: Record<string
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     const msg = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id?: number | string; method: string; params?: Record<string, unknown> };
-    records.push({ serverId, method: msg.method, claims });
+    records.push({ serverId, method: msg.method, claims, ...(typeof req.headers.traceparent === "string" ? { traceparent: req.headers.traceparent } : {}) });
     if (msg.id === undefined) {
       res.writeHead(202).end();
       return;

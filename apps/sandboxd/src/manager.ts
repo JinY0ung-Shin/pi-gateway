@@ -1,5 +1,5 @@
 import type Docker from "dockerode";
-import { type SandboxInfo, userKey } from "@pi-gateway/shared";
+import { type SandboxInfo, userKey, withSpan } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { SandboxdConfig } from "./config.js";
 import { dockerStatus, errorMessage, SandboxError } from "./errors.js";
@@ -127,20 +127,24 @@ export class SandboxManager {
         if (dockerStatus(err) !== 404) throw unavailable("remove", err);
       });
     }
-    await this.workspaces.ensure(e.key);
-    const spec = buildContainerSpec(this.config, e.key);
-    let container: Docker.Container;
-    try {
-      container = await this.docker.createContainer(spec);
-    } catch (err) {
-      if (dockerStatus(err) !== 409) throw unavailable("create", err);
-      container = this.docker.getContainer(name);
-    }
-    try {
-      await container.start();
-    } catch (err) {
-      if (dockerStatus(err) !== 304) throw unavailable("start", err);
-    }
+    // 컨테이너를 새로 띄우는 시간은 요청 span 안에 따로 보이게 한다 (첫 도구 호출이 느린 주된 이유)
+    const container = await withSpan("sandbox create", {}, async () => {
+      await this.workspaces.ensure(e.key);
+      const spec = buildContainerSpec(this.config, e.key);
+      let created: Docker.Container;
+      try {
+        created = await this.docker.createContainer(spec);
+      } catch (err) {
+        if (dockerStatus(err) !== 409) throw unavailable("create", err);
+        created = this.docker.getContainer(name);
+      }
+      try {
+        await created.start();
+      } catch (err) {
+        if (dockerStatus(err) !== 304) throw unavailable("start", err);
+      }
+      return created;
+    });
     e.container = container;
     e.verifiedAt = this.now();
     this.log.info({ key: e.key }, "sandbox created");

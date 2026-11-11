@@ -4,8 +4,10 @@ import {
   bearerToken,
   isValidUserId,
   MCP_SERVER_ID_PATTERN,
+  remoteParent,
   verifyInternalToken,
   type VisibleServersResponse,
+  withSpan,
 } from "@pi-gateway/shared";
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
@@ -19,19 +21,22 @@ import { BROKER_CLIENT_INFO } from "./upstream/connect.js";
 interface McpAuthExtra {
   identity: Identity;
   serverId: string;
+  /** gateway의 도구 span (traceparent 헤더). 이 요청의 span이 그 자식이 된다. */
+  parent: ReturnType<typeof remoteParent>;
 }
 
 /** 요청 하나를 위한 프록시 서버. 도구만 노출한다. */
 function buildProxyServer(service: BrokerService, extra: McpAuthExtra): Server {
-  const { identity, serverId } = extra;
+  const { identity, serverId, parent } = extra;
+  const span = <T>(method: string, fn: () => Promise<T>) => withSpan(`mcp-broker ${method}`, { "pi_gateway.mcp_server": serverId }, fn, parent);
   const server = new Server(
     { name: `${BROKER_CLIENT_INFO.name}/${serverId}`, version: BROKER_CLIENT_INFO.version },
     { capabilities: { tools: { listChanged: false } } },
   );
-  server.setRequestHandler("tools/list", async (_request, ctx) => ({
-    tools: await service.listTools(serverId, identity, ctx.mcpReq.signal),
-  }));
-  server.setRequestHandler("tools/call", async (request, ctx) => {
+  server.setRequestHandler("tools/list", (_request, ctx) =>
+    span("tools/list", async () => ({ tools: await service.listTools(serverId, identity, ctx.mcpReq.signal) })),
+  );
+  server.setRequestHandler("tools/call", (request, ctx) => span("tools/call", async () => {
     const progressToken = ctx.mcpReq._meta?.progressToken;
     // 결과보다 늦게 나가는 진행 알림이 없도록, 결과를 돌려주기 전에 보낸 알림을 기다린다.
     // 결과를 돌려준 뒤에 오는 알림은 버린다 (닫힌 응답 스트림에 쓰면 응답이 끝나지 않을 수 있다).
@@ -63,7 +68,7 @@ function buildProxyServer(service: BrokerService, extra: McpAuthExtra): Server {
     // 알림 전송이 막혀도 결과를 붙잡지 않는다.
     await Promise.race([Promise.all(sent), new Promise<void>((resolve) => setTimeout(resolve, 2000).unref())]);
     return result;
-  });
+  }));
   return server;
 }
 
@@ -150,7 +155,7 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
           token: "",
           clientId: identity.sub,
           scopes: [],
-          extra: { identity, serverId } satisfies McpAuthExtra,
+          extra: { identity, serverId, parent: remoteParent(req.headers) } satisfies McpAuthExtra,
         },
       });
       return sendWebResponse(reply, response);

@@ -14,11 +14,13 @@ import {
   FsStatRequest,
   FsWriteRequest,
   isValidUserId,
+  remoteParent,
   SANDBOXD_ROUTES,
   type VerifiedInternalClaims,
   verifyInternalToken,
+  withSpan,
 } from "@pi-gateway/shared";
-import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { RawData, WebSocket } from "ws";
 import type { z } from "zod";
@@ -61,6 +63,12 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
 function assertPrincipal(req: FastifyRequest, user: string): void {
   if (!isValidUserId(user)) throw new SandboxError("invalid_request", "invalid user");
   if (req.claims?.sub !== user) throw new SandboxError("forbidden", "token subject does not match user");
+}
+
+/** 요청 처리를 span으로 감싼다. gateway의 도구 span(traceparent 헤더)의 자식이 된다. exec는 명령이 끝날 때까지다. */
+function traced<T>(handler: (req: FastifyRequest, reply: FastifyReply) => Promise<T>) {
+  return (req: FastifyRequest, reply: FastifyReply) =>
+    withSpan(`sandboxd ${req.routeOptions.url}`, {}, () => handler(req, reply), remoteParent(req.headers));
 }
 
 export async function buildServer(opts: ServerOptions): Promise<FastifyInstance> {
@@ -124,7 +132,7 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
 
   // ── 명령 실행 (NDJSON) ─────────────────────────────────────────
 
-  app.post(SANDBOXD_ROUTES.exec, async (req, reply) => {
+  app.post(SANDBOXD_ROUTES.exec, traced(async (req, reply) => {
     const params = parse(ExecRequest, req.body);
     assertPrincipal(req, params.user);
     const running = await runtime.prepareExec(params.user, params);
@@ -150,17 +158,17 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     } finally {
       if (!res.writableEnded) res.end();
     }
-  });
+  }));
 
   // ── 파일 ──────────────────────────────────────────────────────
 
-  app.post(SANDBOXD_ROUTES.fsRead, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsRead, traced(async (req) => {
     const body = parse(FsReadRequest, req.body);
     assertPrincipal(req, body.user);
     return runtime.fsRead(body.user, body.path, body.maxBytes);
-  });
+  }));
 
-  app.post(SANDBOXD_ROUTES.fsWrite, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsWrite, traced(async (req) => {
     const body = parse(FsWriteRequest, req.body);
     assertPrincipal(req, body.user);
     const content = Buffer.from(body.content, "base64");
@@ -168,32 +176,32 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
       throw new SandboxError("invalid_request", "content must be base64");
     }
     return runtime.fsWrite(body.user, body.path, content, body.mkdirs);
-  });
+  }));
 
-  app.post(SANDBOXD_ROUTES.fsStat, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsStat, traced(async (req) => {
     const body = parse(FsStatRequest, req.body);
     assertPrincipal(req, body.user);
     return runtime.fsStat(body.user, body.path);
-  });
+  }));
 
-  app.post(SANDBOXD_ROUTES.fsList, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsList, traced(async (req) => {
     const body = parse(FsListRequest, req.body);
     assertPrincipal(req, body.user);
     return runtime.fsList(body.user, body.path);
-  });
+  }));
 
-  app.post(SANDBOXD_ROUTES.fsMkdir, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsMkdir, traced(async (req) => {
     const body = parse(FsMkdirRequest, req.body);
     assertPrincipal(req, body.user);
     await runtime.fsMkdir(body.user, body.path, body.recursive);
     return {};
-  });
+  }));
 
-  app.post(SANDBOXD_ROUTES.fsGlob, async (req) => {
+  app.post(SANDBOXD_ROUTES.fsGlob, traced(async (req) => {
     const body = parse(FsGlobRequest, req.body);
     assertPrincipal(req, body.user);
     return runtime.fsGlob(body.user, body);
-  });
+  }));
 
   // ── 장기 실행 프로세스 (WebSocket) ─────────────────────────────
 

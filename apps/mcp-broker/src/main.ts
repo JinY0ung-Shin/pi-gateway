@@ -1,4 +1,4 @@
-import { createCachedLookup } from "@pi-gateway/shared";
+import { createCachedLookup, startTracing } from "@pi-gateway/shared";
 import { Agent, setGlobalDispatcher } from "undici";
 import { createBroker, createLogger } from "./app.js";
 import { loadBrokerConfig } from "./config.js";
@@ -8,6 +8,7 @@ process.umask(0o077);
 // upstream MCP 서버로 가는 연결이 이름을 매번 새로 찾지 않게 한다 (createCachedLookup).
 setGlobalDispatcher(new Agent({ connect: { lookup: createCachedLookup() } }));
 
+const stopTracing = process.env.JAEGER_HOST ? startTracing("mcp-broker", process.env.JAEGER_HOST) : undefined;
 const log = createLogger(process.env.LOG_LEVEL ?? "info");
 const config = loadBrokerConfig();
 const broker = createBroker(config, { log });
@@ -24,6 +25,7 @@ const shutdown = async (signal: string) => {
   const force = setTimeout(() => process.exit(1), 15_000);
   force.unref();
   await broker.close();
+  await stopTracing?.();
   process.exit(0);
 };
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

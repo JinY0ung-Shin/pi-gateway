@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import Docker from "dockerode";
+import { startTracing } from "@pi-gateway/shared";
 import pino from "pino";
 import { loadConfig } from "./config.js";
 import { SandboxManager } from "./manager.js";
@@ -19,6 +20,7 @@ if (!root?.isDirectory()) {
   process.exit(1);
 }
 
+const stopTracing = process.env.JAEGER_HOST ? startTracing("sandboxd", process.env.JAEGER_HOST) : undefined;
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 await docker.ping();
 
@@ -45,6 +47,7 @@ const shutdown = async (signal: string) => {
   const force = setTimeout(() => process.exit(1), 10_000);
   force.unref();
   await app.close();
+  await stopTracing?.();
   process.exit(0);
 };
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

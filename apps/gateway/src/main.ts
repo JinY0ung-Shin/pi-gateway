@@ -1,4 +1,4 @@
-import { createCachedLookup } from "@pi-gateway/shared";
+import { createCachedLookup, startTracing } from "@pi-gateway/shared";
 import pino from "pino";
 import { Agent, setGlobalDispatcher } from "undici";
 import { createGateway } from "./app.js";
@@ -16,6 +16,7 @@ const log = pino({
   redact: { paths: ["req.headers.authorization", "req.headers.cookie", "*.apiKey", "*.token"], censor: "[REDACTED]" },
 });
 
+const stopTracing = config.jaegerHost ? startTracing("gateway", config.jaegerHost) : undefined;
 const gateway = await createGateway(config, log);
 await gateway.app.listen({ host: config.host, port: config.port });
 log.info({ port: config.port, models: gateway.models.list().map((m) => m.id) }, "gateway listening");
@@ -29,6 +30,7 @@ const shutdown = async (signal: string) => {
   force.unref();
   try {
     await gateway.close();
+    await stopTracing?.();
   } catch (err) {
     log.error({ err }, "shutdown failed");
   }

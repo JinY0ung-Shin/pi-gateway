@@ -1173,3 +1173,51 @@ details summary {
     transition: none !important;
   }
 }
+
+/* 대화 기록의 실행 시간 (trace) */
+.trace {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.trace-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) 3fr 64px;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+.trace-name {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-error {
+  color: var(--danger);
+}
+.trace-track {
+  position: relative;
+  height: 10px;
+}
+.trace-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.trace-bar.sandboxd {
+  background: var(--info-text);
+}
+.trace-bar.mcp-broker {
+  background: var(--violet-text);
+}
+.trace-bar.error {
+  background: var(--danger);
+}
+.trace-time {
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

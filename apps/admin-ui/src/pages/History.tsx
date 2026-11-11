@@ -205,9 +205,17 @@ function SessionList() {
 function Transcript(props: { id: string }) {
   const { data, error } = useLoad<SessionSummary & { messages: PiMessage[] }>(`/history/${enc(props.id)}`);
   const turns = data ? toTurns(data.messages) : [];
+  const [showTraces, setShowTraces] = useState(false);
 
+  if (showTraces) {
+    return (
+      <Modal title="실행 시간" actions={<button onClick={() => setShowTraces(false)}>대화 보기</button>} onClose={() => (location.hash = "#/history")}>
+        <Traces id={props.id} />
+      </Modal>
+    );
+  }
   return (
-    <Modal title="대화" onClose={() => (location.hash = "#/history")}>
+    <Modal title="대화" actions={<button onClick={() => setShowTraces(true)}>실행 시간 보기</button>} onClose={() => (location.hash = "#/history")}>
       {error && <Notice tone="error">{error}</Notice>}
       {!data && !error && <p class="muted">불러오는 중…</p>}
       {data && (
@@ -253,5 +261,91 @@ function SystemView(props: SystemItem) {
       )}
       {removed.length > 0 && <p class="muted small-text">제거된 도구: {removed.map((t) => t.name).join(", ")}</p>}
     </details>
+  );
+}
+
+// ── 실행 시간 (trace) ─────────────────────────────────────────────
+
+interface TraceSpan {
+  id: string;
+  parentId?: string;
+  service: string;
+  name: string;
+  startMs: number;
+  durationMs: number;
+  error: boolean;
+  attributes: Record<string, string | number | boolean>;
+}
+
+interface TurnTrace {
+  traceId: string;
+  turn?: number;
+  startedAt: string;
+  durationMs: number;
+  spans: TraceSpan[];
+}
+
+const duration = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`);
+
+/** span 이름 옆에 붙이는 설명: LLM 호출은 토큰과 첫 토큰까지 시간, mcp_call은 실제로 부른 도구 */
+function spanNote(span: TraceSpan): string {
+  const a = span.attributes;
+  const parts: string[] = [];
+  if (a["pi_gateway.mcp_tool"]) parts.push(String(a["pi_gateway.mcp_tool"]));
+  if (a["pi_gateway.mcp_server"]) parts.push(String(a["pi_gateway.mcp_server"]));
+  if (typeof a["gen_ai.usage.input_tokens"] === "number") {
+    parts.push(`입력 ${a["gen_ai.usage.input_tokens"].toLocaleString()} · 출력 ${Number(a["gen_ai.usage.output_tokens"] ?? 0).toLocaleString()}`);
+  }
+  if (typeof a["pi_gateway.first_token_ms"] === "number") parts.push(`첫 토큰 ${duration(a["pi_gateway.first_token_ms"])}`);
+  if (a["error.type"]) parts.push(String(a["error.type"]));
+  return parts.join(" · ");
+}
+
+/** 세션의 턴별 실행 시간: 턴 → LLM 호출·도구 실행 → sandboxd·mcp-broker에서 걸린 시간 */
+function Traces(props: { id: string }) {
+  const { data, error } = useLoad<{ traces: TurnTrace[] }>(`/history/${enc(props.id)}/traces`);
+  return (
+    <>
+      {error && <Notice tone="error">{error}</Notice>}
+      {!data && !error && <p class="muted">불러오는 중…</p>}
+      {data?.traces.length === 0 && <p class="muted">남아 있는 기록이 없습니다. 실행 시간 기록은 7일 동안 보관합니다.</p>}
+      {data?.traces.map((t, i) => (
+        <details key={t.traceId} class="tool" open={i === 0}>
+          <summary>
+            {t.turn === undefined ? "턴" : `턴 ${t.turn}`} · {duration(t.durationMs)} · {formatTime(t.startedAt)}
+          </summary>
+          <TraceRows trace={t} />
+        </details>
+      ))}
+    </>
+  );
+}
+
+function TraceRows(props: { trace: TurnTrace }) {
+  const { spans, durationMs } = props.trace;
+  const byId = new Map(spans.map((s) => [s.id, s]));
+  const depth = (s: TraceSpan): number => {
+    const parent = s.parentId ? byId.get(s.parentId) : undefined;
+    return parent ? depth(parent) + 1 : 0;
+  };
+  const total = Math.max(durationMs, 1);
+  return (
+    <div class="trace">
+      {spans.map((s) => (
+        <div key={s.id} class="trace-row">
+          <div class="trace-name" style={{ paddingLeft: `${depth(s) * 14}px` }} title={`${s.service} · ${s.name}`}>
+            <span class={s.error ? "trace-error" : ""}>{s.name}</span>
+            <span class="muted small-text"> {spanNote(s)}</span>
+          </div>
+          <div class="trace-track">
+            <div
+              class={`trace-bar ${s.error ? "error" : s.service}`}
+              style={{ left: `${(s.startMs / total) * 100}%`, width: `${Math.max((s.durationMs / total) * 100, 0.4)}%` }}
+            />
+          </div>
+          <div class="trace-time">{duration(s.durationMs)}</div>
+        </div>
+      ))}
+    </div>
   );
 }

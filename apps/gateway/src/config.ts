@@ -56,6 +56,8 @@ export interface GatewayConfig {
    * false(기본) 또는 신뢰할 프록시 주소/CIDR 목록.
    */
   trustProxy: false | string[];
+  /** trace를 보내고 조회할 Jaeger의 호스트 이름 (JAEGER_HOST). 없으면 trace를 남기지 않는다. */
+  jaegerHost: string | undefined;
 }
 
 function parseTrustProxy(raw: string | undefined): false | string[] {
@@ -149,5 +151,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     prompts: { language: env.PROMPT_LANGUAGE || "Korean" },
     sse: { keepaliveSeconds: int("SSE_KEEPALIVE_SECONDS", 15, env) },
     trustProxy,
+    jaegerHost: env.JAEGER_HOST || undefined,
   };
 }

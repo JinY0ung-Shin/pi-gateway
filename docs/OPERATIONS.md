@@ -13,6 +13,7 @@
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
 | `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시. 비밀키가 필요한 원격 HTTP 서버만 맡고 프로세스(stdio 서버)는 실행하지 않는다 | MCP 비밀키, KEK |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
+| `jaeger` | `jaegertracing/jaeger` (root, capability 없음) | control | trace 저장소. 포트를 공개하지 않는다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
 | `pi-sbx-<key>` | `pi-gateway/sandbox` (uid 1000) | 없음 (`network_mode: none`) | 사용자별 sandbox. sandboxd가 필요할 때 만들고 유휴 시 지운다 | 없음 |
 
@@ -354,6 +355,13 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 **로그**
 - `docker compose logs -f sandboxd gateway mcp-broker egress-proxy`
 - sandbox 컨테이너는 로그를 남기지 않는다 (`LogConfig: none`). 명령 출력은 gateway 세션 기록에 있다.
+
+**실행 시간 (trace)**
+- 턴마다 trace 하나가 남는다: 턴 → LLM 호출·도구 실행 → sandboxd·mcp-broker에서 걸린 시간 (OpenTelemetry, `jaeger` 서비스에 저장).
+- 관리 화면 "대화 기록"에서 세션을 열고 **실행 시간 보기**를 누르면 턴별로 본다. Jaeger 화면은 따로 공개하지 않는다.
+- span에는 이름·시간·token 수·오류 종류만 있다. 프롬프트, 도구 인자·결과, 오류 메시지는 들어가지 않는다.
+- 7일 동안 `jaeger-data` 볼륨에 보관한다 (`images/jaeger/config.yaml`의 `ttl.spans`). Jaeger가 내려가 있어도 요청 처리에는 영향이 없고 그동안의 trace만 빠진다.
+- egress-proxy는 trace에 들어가지 않는다 (sandbox의 요청이 어느 턴의 것인지 프록시가 알 수 없다). 프록시 기록은 위의 로그로 본다.
 
 **workspace**
 - 위치: `$PI_GATEWAY_HOME/workspaces/u-<sha256(user)[:24]>`

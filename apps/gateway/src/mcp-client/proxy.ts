@@ -1,5 +1,6 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { annotateSpan } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import type { Choose } from "../contracts.js";
 
@@ -220,6 +221,7 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
       } catch (err) {
         throw new Error(`${err instanceof Error ? err.message : String(err)}\nParameters of ${tool.name}: ${JSON.stringify(tool.parameters)}`);
       }
+      annotateSpan({ "pi_gateway.mcp_tool": tool.label });
       return tool.execute(toolCallId, validated as never, signal, onUpdate, ctx);
     },
   };

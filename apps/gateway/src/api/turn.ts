@@ -1,4 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { failSpan, withSpan } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import { limitToolCalls } from "../agent/tool-call-limit.js";
 import type { LiveSession } from "../sessions/hub.js";
@@ -27,7 +28,7 @@ export function classifyError(message: string): string {
   return "sdk_error";
 }
 
-export async function executeTurn(input: {
+interface TurnInput {
   live: LiveSession;
   text: string;
   images: ImageContent[];
@@ -35,7 +36,24 @@ export async function executeTurn(input: {
   mapper: ResponseEventMapper;
   signal: AbortSignal;
   log: Logger;
-}): Promise<TurnOutcome> {
+}
+
+/** 턴 전체가 trace 하나다. 관리 화면의 대화 기록이 세션 id로 찾는다 (admin/routes-history.ts). */
+export function executeTurn(input: TurnInput): Promise<TurnOutcome> {
+  const { record } = input.live;
+  return withSpan(
+    "invoke_agent",
+    { "gen_ai.operation.name": "invoke_agent", "gen_ai.conversation.id": record.id, "gen_ai.request.model": record.model, "pi_gateway.turn": record.turn + 1 },
+    async (span) => {
+      const outcome = await runTurn(input);
+      span.setAttribute("pi_gateway.status", outcome.status);
+      if (outcome.status === "failed") failSpan(span, outcome.error?.code ?? "failed");
+      return outcome;
+    },
+  );
+}
+
+async function runTurn(input: TurnInput): Promise<TurnOutcome> {
   const { live, mapper, signal, log } = input;
   const session = live.agent.session;
   const leafBefore = session.sessionManager.getLeafId();
