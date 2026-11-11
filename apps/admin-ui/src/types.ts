@@ -179,7 +179,7 @@ export interface StatusView {
 
 /** 검색 뒤 같은 실행에서 처음 부른 MCP 도구가 검색 결과의 몇 번째였는지 */
 export interface SearchStat {
-  /** model: 검색 모델이 골랐다. bm25: 검색 모델이 없거나 실패했다. */
+  /** model: System One이 골랐다. bm25: System One이 없거나 실패했다. */
   method: "model" | "bm25";
   searches: number;
   /** MCP 도구 호출로 이어진 검색 */

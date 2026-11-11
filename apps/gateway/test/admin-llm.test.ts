@@ -236,30 +236,58 @@ describe("/admin/api/llm", () => {
 
     expect((await send("POST", "/llm/test", { server: servers[0], model: "nope" })).status).toBe(400);
   });
+});
 
-  it("stores the search model without returning its key, keeps the key when omitted, and drops the model when left out", async () => {
-    const base = await withServer({});
-    const question = { state: { query: "q" }, instructions: "pick", criteria: { a: "A", b: "B" } };
+describe("/admin/api/systemone", () => {
+  const getOne = async () => (await (await fetch(`${h.url}/admin/api/systemone`, { headers: admin })).json()) as any;
+  const putOne = (model: unknown) => send("PUT", "/systemone", { model });
+  const question = { state: { query: "q" }, instructions: "pick", criteria: { a: "A", b: "B" } };
+
+  it("stores the decision model apart from the LLM settings, never returns its key, and keeps the key when omitted", async () => {
+    expect(await getOne()).toEqual({ model: null, updatedAt: null });
     expect(await h.gateway.models.choose(question)).toBeUndefined();
 
-    expect((await putLlm({ ...base, searchModel: { baseUrl: `${h.llm.url}/`, apiKey: "search-key", id: "d3-ultra" } })).status).toBe(200);
-    const view = await getLlm();
-    expect(view.settings.searchModel).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", apiKeySet: true });
-    expect(JSON.stringify(view)).not.toContain("search-key");
+    expect((await putOne({ baseUrl: `${h.llm.url}/`, apiKey: "one-key", headers: { "x-team": "ai" }, id: "d3-ultra" })).status).toBe(200);
+    const view = await getOne();
+    expect(view.model).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", headers: { "x-team": "ai" }, apiKeySet: true });
+    expect(JSON.stringify(view)).not.toContain("one-key");
     // 대화 모델이 아니라서 모델 목록에 나오지 않는다
     expect((await models()).map((m: any) => m.id)).not.toContain("d3-ultra");
 
-    expect((await putLlm({ ...base, searchModel: { baseUrl: h.llm.url, id: "d3-ultra" } })).status).toBe(200);
+    // apiKey를 빼면 지금 키를 유지하고, LLM 설정을 저장해도 그대로다
+    expect((await putOne({ baseUrl: h.llm.url, headers: { "x-team": "ai" }, id: "d3-ultra" })).status).toBe(200);
+    expect((await putLlm(await withServer({}))).status).toBe(200);
     h.llm.setDecision(() => ({ a: 0.9, b: 0.1 }));
     expect(await h.gateway.models.choose(question)).toEqual({ a: 0.9, b: 0.1 });
-    expect(h.llm.decisions.at(-1)!.authorization).toBe("Bearer search-key");
+    expect(h.llm.decisions.at(-1)!.headers).toMatchObject({ authorization: "Bearer one-key", "x-team": "ai" });
     h.llm.setDecision(null);
     await expect(h.gateway.models.choose(question)).rejects.toThrow();
 
-    expect((await putLlm({ ...base, searchModel: { baseUrl: "not a url", id: "d3-ultra" } })).status).toBe(400);
-    expect((await putLlm(base)).status).toBe(200);
-    expect((await getLlm()).settings.searchModel).toBeNull();
+    const bad = await putOne({ baseUrl: "not a url", id: "d3-ultra" });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as any).error.code).toBe("invalid_systemone_model");
+    expect((await putOne(null)).status).toBe(200);
+    expect((await getOne()).model).toBeNull();
     expect(await h.gateway.models.choose(question)).toBeUndefined();
+  });
+
+  it("tests a decision model server, also before it is saved and with the stored key", async () => {
+    h.llm.setDecision(() => ({ good: 0.97, bad: 0.03 }));
+    const ok = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, apiKey: "unsaved-key", headers: { "x-team": "ai" }, id: "d3-ultra" } });
+    expect(ok).toMatchObject({ ok: true, probabilities: { good: 0.97, bad: 0.03 } });
+    expect(h.llm.decisions.at(-1)!.headers).toMatchObject({ authorization: "Bearer unsaved-key", "x-team": "ai" });
+    expect(h.llm.decisions.at(-1)!.body).toMatchObject({ model: "d3-ultra" });
+    expect((await getOne()).model).toBeNull();
+
+    expect((await putOne({ baseUrl: h.llm.url, apiKey: "one-key", id: "d3-ultra" })).status).toBe(200);
+    await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra" } });
+    expect(h.llm.decisions.at(-1)!.headers.authorization).toBe("Bearer one-key");
+
+    h.llm.setDecision(null);
+    const failed = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra" } });
+    expect(failed.ok).toBe(false);
+    expect(failed.error).toContain("500");
+    expect((await putOne(null)).status).toBe(200);
   });
 });
 
@@ -295,6 +323,26 @@ describe("stored settings from before several servers", () => {
     const models = await createModelRuntime(db);
     expect(models.current()!.settings).toMatchObject({ servers: [{ id: "upstream", baseUrl: old.baseUrl, apiKey: "k", models: [{ id: "m" }] }], defaultModel: "m" });
     expect(models.get("m")?.provider).toBe("upstream");
+    db.close();
+  });
+});
+
+describe("a search model stored inside the LLM settings", () => {
+  it("moves to the System One settings", async () => {
+    const db = openDatabase(":memory:");
+    await createModelRuntime(db);
+    const settings = {
+      servers: [{ id: "a", api: "openai-completions", baseUrl: "http://vllm.internal:8000/v1", apiKey: "", models: [{ id: "m", contextWindow: 32768, maxTokens: 8192 }] }],
+      defaultModel: "m",
+      searchModel: { baseUrl: "http://decision.internal:8000/v1", apiKey: "k", id: "d3-ultra" },
+    };
+    db.prepare("INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)").run(JSON.stringify(settings), "2026-11-11T00:00:00.000Z");
+    db.prepare("DELETE FROM schema_migrations WHERE module = 'llm' AND step IN (4, 5)").run();
+
+    const models = await createModelRuntime(db);
+    expect(models.systemOne()).toEqual({ model: { ...settings.searchModel, headers: {} }, updatedAt: "2026-11-11T00:00:00.000Z" });
+    expect(db.prepare("SELECT json_extract(settings_json, '$.searchModel') AS v FROM llm_settings").get()).toEqual({ v: null });
+    expect(models.current()!.settings.defaultModel).toBe("m");
     db.close();
   });
 });

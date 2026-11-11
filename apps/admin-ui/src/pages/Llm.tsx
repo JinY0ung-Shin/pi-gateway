@@ -1,12 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
 
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
  * 연결 확인·모델 가져오기·모델 테스트는 화면에 입력한 값으로 하므로 저장하기 전에 해 볼 수 있다.
  * 티어(eagle·falcon·swift)는 모델 하나를 가리키는 고정 이름이다. 클라이언트는 모델 id 대신 티어로 부를 수 있다.
- * 검색 모델은 mcp_search가 도구를 고를 때 묻는 decision model이다. 비워 두면 쓰지 않는다.
  */
 
 type ApiKind = "openai-completions" | "anthropic-messages";
@@ -38,7 +37,7 @@ interface ServerView {
 
 interface LlmView {
   configured: boolean;
-  settings: { servers: ServerView[]; defaultModel: string; tiers: Tiers; searchModel: { baseUrl: string; id: string; apiKeySet: boolean } | null } | null;
+  settings: { servers: ServerView[]; defaultModel: string; tiers: Tiers } | null;
   updatedAt: string | null;
 }
 
@@ -72,15 +71,6 @@ interface ServerForm {
   apiKey: string;
   clearKey: boolean;
   models: ModelRow[];
-}
-
-/** 화면에서 고치는 검색 모델. base URL과 모델 id가 모두 비면 쓰지 않는다. 키 칸은 서버와 같다. */
-interface SearchForm {
-  apiKeySet: boolean;
-  baseUrl: string;
-  id: string;
-  apiKey: string;
-  clearKey: boolean;
 }
 
 const BASE_URL: Record<ApiKind, { placeholder: string; hint: string }> = {
@@ -148,17 +138,9 @@ function toBody(s: ServerForm) {
   };
 }
 
-function searchBody(s: SearchForm) {
-  const baseUrl = s.baseUrl.trim();
-  const id = s.id.trim();
-  if (!baseUrl && !id) return undefined;
-  if (!baseUrl || !id) throw new Error("검색 모델은 base URL과 모델 id를 모두 넣거나 모두 비우세요.");
-  return { baseUrl, id, ...(s.clearKey ? { apiKey: "" } : s.apiKey ? { apiKey: s.apiKey } : {}) };
-}
-
 /** 저장 안 한 변경이 있는지 보는 값 */
-const snapshot = (servers: ServerForm[], defaultModel: string, tiers: Tiers, { apiKeySet: _, ...search }: SearchForm) =>
-  JSON.stringify([servers.map(({ key: _k, saved: _s, apiKeySet: _a, ...rest }) => rest), defaultModel, tiers, search]);
+const snapshot = (servers: ServerForm[], defaultModel: string, tiers: Tiers) =>
+  JSON.stringify([servers.map(({ key: _k, saved: _s, apiKeySet: _a, ...rest }) => rest), defaultModel, tiers]);
 
 /** 오류 메시지의 `servers.0.models.1.` 같은 경로를 서버·모델 id로 바꾼다 */
 function readablePaths(message: string, servers: ServerForm[]): string {
@@ -191,7 +173,6 @@ export function LlmPage() {
   const [servers, setServers] = useState<ServerForm[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
   const [tiers, setTiers] = useState<Tiers>({});
-  const [search, setSearch] = useState<SearchForm>({ apiKeySet: false, baseUrl: "", id: "", apiKey: "", clearKey: false });
   const [savedSnapshot, setSavedSnapshot] = useState("");
   const [probes, setProbes] = useState<Record<string, ProbeResult | "checking">>({});
   const action = useAction();
@@ -212,14 +193,11 @@ export function LlmPage() {
     const forms = v.settings ? v.settings.servers.map(toForm) : [emptyServer("default")];
     const dm = v.settings?.defaultModel ?? "";
     const t = v.settings?.tiers ?? {};
-    const sm = v.settings?.searchModel;
-    const sf: SearchForm = { apiKeySet: sm?.apiKeySet ?? false, baseUrl: sm?.baseUrl ?? "", id: sm?.id ?? "", apiKey: "", clearKey: false };
     setView(v);
     setServers(forms);
     setDefaultModel(dm);
     setTiers(t);
-    setSearch(sf);
-    setSavedSnapshot(snapshot(forms, dm, t, sf));
+    setSavedSnapshot(snapshot(forms, dm, t));
     setProbes({});
     for (const s of forms) if (s.saved) void probe(s);
   };
@@ -231,7 +209,7 @@ export function LlmPage() {
   if (loadError) return <Notice tone="error">{loadError}</Notice>;
   if (!view) return <p class="muted">불러오는 중…</p>;
 
-  const dirty = snapshot(servers, defaultModel, tiers, search) !== savedSnapshot;
+  const dirty = snapshot(servers, defaultModel, tiers) !== savedSnapshot;
   const modelCount = servers.reduce((n, s) => n + s.models.length, 0);
 
   const change = (key: string, patch: Partial<ServerForm>) => {
@@ -278,7 +256,7 @@ export function LlmPage() {
       if (empty) throw new Error(`서버 ${empty.id || "(id 없음)"}에 모델이 없습니다. 모델을 추가하거나 서버를 빼세요.`);
       const dm = defaultModel.trim();
       if (!servers.some((s) => s.models.some((m) => m.id.trim() === dm)) && !(dm in tiers)) throw new Error("기본 모델을 고르세요 (티어나 모델 표의 '기본' 칸).");
-      const body = { servers: servers.map(toBody), defaultModel: dm, tiers, searchModel: searchBody(search) };
+      const body = { servers: servers.map(toBody), defaultModel: dm, tiers };
       try {
         show(await api<LlmView>("PUT", "/llm", body));
       } catch (error) {
@@ -315,7 +293,6 @@ export function LlmPage() {
         />
       ))}
       <button onClick={addServer}>+ 서버 추가</button>
-      <SearchCard search={search} onChange={(patch) => setSearch({ ...search, ...patch })} />
       <div class={dirty ? "save-bar dirty" : "save-bar"}>
         {action.view}
         <div class="row wrap">
@@ -597,62 +574,6 @@ function ServerCard(props: {
       {effortsOf !== null && s.models[effortsOf] && (
         <EffortEditor model={s.models[effortsOf]} onChange={(patch) => setModel(effortsOf, patch)} onClose={() => setEffortsOf(null)} />
       )}
-    </Section>
-  );
-}
-
-/** API 키 칸. 저장된 키는 보여 주지 않고, 비워 두면 그대로 쓴다. */
-function ApiKeyField(props: {
-  id: string;
-  value: { apiKey: string; apiKeySet: boolean; clearKey: boolean };
-  onChange: (patch: { apiKey?: string; clearKey?: boolean }) => void;
-}) {
-  const v = props.value;
-  return (
-    <div class="field">
-      <label class="field-label" for={props.id}>
-        API 키 {v.apiKeySet ? <Badge tone="green">저장됨</Badge> : <Badge>없음</Badge>}
-      </label>
-      <input
-        id={props.id}
-        type="password"
-        class="mono"
-        autocomplete="off"
-        value={v.apiKey}
-        disabled={v.clearKey}
-        placeholder={v.apiKeySet ? "바꿀 때만 입력 (비우면 저장된 키를 씁니다)" : "키가 없는 엔드포인트면 비워 둡니다"}
-        onInput={(e) => props.onChange({ apiKey: e.currentTarget.value })}
-      />
-      {v.apiKeySet && (
-        <label class="checkbox">
-          <input type="checkbox" checked={v.clearKey} onChange={(e) => props.onChange({ clearKey: e.currentTarget.checked })} />
-          <span>저장된 키 지우기</span>
-        </label>
-      )}
-    </div>
-  );
-}
-
-function SearchCard(props: { search: SearchForm; onChange: (patch: Partial<SearchForm>) => void }) {
-  const s = props.search;
-  return (
-    <Section title="MCP 검색 모델">
-      <p class="muted small-text">
-        mcp_search가 도구를 고를 때 묻는 decision model입니다. 모든 MCP 도구를 선택지로 주고 질의에 맞는 것을 고르게 합니다. 비워 두면 BM25(단어 일치)로
-        찾고, 호출이 실패한 검색도 BM25로 찾습니다.
-      </p>
-      <div class="grid-2">
-        <label class="field">
-          <span>base URL</span>
-          <input class="mono" value={s.baseUrl} placeholder="http://vllm-decision.internal:8000/v1" onInput={(e) => props.onChange({ baseUrl: e.currentTarget.value })} />
-          <small class="muted">/v1까지 넣습니다. 뒤에 /systemone을 붙여 부릅니다 (vLLM 0.32.0 이상).</small>
-        </label>
-        <label class="field">
-          <span>모델 id</span>
-          <input class="mono" value={s.id} placeholder="vllm-sr/d3-ultra" onInput={(e) => props.onChange({ id: e.currentTarget.value })} />
-        </label>
-        <ApiKeyField id="search-model-key" value={s} onChange={props.onChange} />
-      </div>
     </Section>
   );
 }

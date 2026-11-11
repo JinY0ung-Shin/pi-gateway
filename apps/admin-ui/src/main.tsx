@@ -12,6 +12,7 @@ import { PluginsPage } from "./pages/Plugins";
 import { PromptsPage } from "./pages/Prompts";
 import { RequestsPage } from "./pages/Requests";
 import { StatusPage } from "./pages/Status";
+import { SystemOnePage } from "./pages/SystemOne";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import "@fontsource/ibm-plex-mono/latin-600.css";
@@ -19,6 +20,7 @@ import "./styles.css";
 
 const PAGES = [
   { id: "llm", group: "모델", label: "LLM", desc: "모델 서버 연결과 세션에서 고를 수 있는 모델" },
+  { id: "systemone", group: "모델", label: "System One", desc: "mcp_search가 도구를 고를 때 묻는 decision model 서버" },
   { id: "prompts", group: "모델", label: "프롬프트", desc: "모든 세션에 들어가는 시스템 프롬프트와 배포 이력" },
   { id: "tools", group: "도구", label: "기본 도구", desc: "모든 세션이 받는 내장 도구의 정의" },
   { id: "mcp", group: "도구", label: "MCP", desc: "세션에 붙는 MCP 서버와 실행 위치" },
@@ -101,6 +103,7 @@ function App() {
           <p class="muted">{current.desc}</p>
         </header>
         {route.page === "llm" && <LlmPage />}
+        {route.page === "systemone" && <SystemOnePage />}
         {route.page === "prompts" && <PromptsPage />}
         {route.page === "mcp" && <McpPage focus={route.arg} />}
         {route.page === "tools" && <ToolsPage focus={route.arg} />}

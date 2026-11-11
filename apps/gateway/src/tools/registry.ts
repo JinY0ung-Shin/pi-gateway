@@ -20,7 +20,7 @@ export interface DefaultProviderDeps {
   mcpRegistry: McpRegistry;
   broker: GatewayConfig["broker"];
   mcpCache: McpToolCache;
-  /** mcp_search가 쓰는 검색 모델 */
+  /** mcp_search가 System One에 묻는 함수 */
   choose: Choose;
   adminRequests: AdminRequests;
 }

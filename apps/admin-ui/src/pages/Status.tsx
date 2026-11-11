@@ -254,7 +254,7 @@ function SearchTable(props: { searches: SearchStat[] }) {
         )}
         {props.searches.map((s) => (
           <tr key={s.method}>
-            <td>{s.method === "model" ? "검색 모델" : "BM25"}</td>
+            <td>{s.method === "model" ? "System One" : "BM25"}</td>
             <td class="num">{s.searches.toLocaleString()}</td>
             <td class="num">{s.called.toLocaleString()}</td>
             <td class="num">{rate(s.top1, s)}</td>

@@ -149,21 +149,20 @@ describe("mcp_search and mcp_call", () => {
   });
 });
 
-describe("mcp_search with a search model", () => {
+describe("mcp_search with System One", () => {
   it("lets the decision model pick among all tools, and searches with BM25 when that call fails", async () => {
-    const settings = h.gateway.models.current()!.settings;
-    await h.gateway.models.update({ ...settings, searchModel: { baseUrl: h.llm.url, apiKey: "search-key", id: "d3-ultra" } });
+    await h.gateway.models.setSystemOne({ baseUrl: h.llm.url, apiKey: "search-key", headers: {}, id: "d3-ultra" });
     const searched = async (query: string) => {
       h.llm.enqueue({ toolCalls: [{ id: "d1", name: "mcp_search", arguments: { query, limit: 2 } }] }, { text: "ok" });
       const res = await h.stream({ input: "find" });
       return String(ofType(res.events, "response.tool_result")[0]!.data.content).match(/^## .+$/gm);
     };
     try {
-      // BM25로는 echo가 맞는 질의지만 검색 모델이 고른 순서를 따른다
+      // BM25로는 echo가 맞는 질의지만 System One이 고른 순서를 따른다
       h.llm.setDecision(() => ({ mcp__demo__rows: 0.7, mcp__demo__echo: 0.2, mcp__demo__fail: 0.1 }));
       expect(await searched("echo back")).toEqual(["## mcp__demo__rows", "## mcp__demo__echo"]);
       const asked = h.llm.decisions.at(-1)!;
-      expect(asked.authorization).toBe("Bearer search-key");
+      expect(asked.headers.authorization).toBe("Bearer search-key");
       expect(asked.body).toMatchObject({ model: "d3-ultra", state: { query: "echo back" } });
       const { choice } = asked.body.questions;
       expect(choice!.type).toBe("choice");
@@ -175,7 +174,7 @@ describe("mcp_search with a search model", () => {
       expect((await searched("echo back"))![0]).toBe("## mcp__demo__echo");
       expect(h.llm.decisions.length).toBe(before + 1);
     } finally {
-      await h.gateway.models.update(settings);
+      await h.gateway.models.setSystemOne(null);
     }
   });
 });

@@ -12,7 +12,8 @@ import { type Db, migrate } from "../db.js";
  *   메모리의 세션은 다음 턴에 새 설정으로 다시 연다 (revision이 바뀌었는지 SessionHub가 본다).
  * - LLM 서버마다 pi provider 하나로 등록한다 (provider id = 서버 id). 모델 id는 서버 전체에서 겹치지 않는다.
  * - 티어(eagle·falcon·swift)는 모델 하나를 가리키는 고정 이름이다. 가리키는 모델을 바꾸면 그 티어의 세션도 다음 턴부터 새 모델로 돈다.
- * - 검색 모델은 mcp_search가 도구를 고를 때 묻는 decision model이다. 대화 모델이 아니라서 모델 목록에 나오지 않는다.
+ * - System One은 mcp_search가 도구를 고를 때 묻는 decision model 서버다. LLM 설정과 따로 저장하고,
+ *   대화 모델이 아니라서 모델 목록에 나오지 않는다.
  * - 자격 증명은 메모리에만 둔다 (auth.json을 만들지 않는다).
  * - models.json을 읽지 않고, 네트워크로 모델 카탈로그를 받지 않는다.
  * - API 키는 config 값 확장(`!cmd`, `$VAR`)을 거치지 않도록 runtime key로 넣는다.
@@ -68,17 +69,24 @@ export const LlmServer = z.object({
 });
 export type LlmServer = z.infer<typeof LlmServer>;
 
-/** mcp_search가 쓰는 decision model. `{baseUrl}/systemone`으로 묻는다 (vLLM이면 base URL은 `/v1`까지). */
-export const SearchModel = z.object({
+/** System One: mcp_search가 쓰는 decision model. `{baseUrl}/systemone`으로 묻는다 (vLLM이면 base URL은 `/v1`까지). */
+export const SystemOneModel = z.object({
   baseUrl: z
     .string()
     .url()
     .transform((u) => u.replace(/\/+$/, "")),
   /** 빈 값 = 키가 없는 엔드포인트 */
   apiKey: z.string(),
+  /** 요청마다 붙일 헤더 */
+  headers: z.record(z.string(), z.string()).default({}),
   id: z.string().min(1),
 });
-export type SearchModel = z.infer<typeof SearchModel>;
+export type SystemOneModel = z.infer<typeof SystemOneModel>;
+
+export interface SystemOneRecord {
+  model: SystemOneModel;
+  updatedAt: string;
+}
 
 /** 클라이언트가 모델 id 대신 부를 수 있는 이름. 큰 모델부터. */
 export const TIERS = ["eagle", "falcon", "swift"] as const;
@@ -90,8 +98,6 @@ export const LlmSettings = z
     defaultModel: z.string().min(1),
     /** 티어 → 모델 id. 없는 티어는 쓰지 않는다. */
     tiers: z.partialRecord(z.enum(TIERS), z.string().min(1)).default({}),
-    /** 없으면 mcp_search는 BM25로 찾는다. */
-    searchModel: SearchModel.optional(),
   })
   .superRefine((s, ctx) => {
     const dup = (ids: string[]) => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
@@ -139,9 +145,13 @@ export interface GatewayModels {
   /** 설정이 바뀔 때마다 1씩 오른다 */
   revision(): number;
   current(): LlmSettingsRecord | null;
+  /** System One 설정. 없으면 null이고 mcp_search는 BM25로 찾는다. */
+  systemOne(): SystemOneRecord | null;
+  /** 등록한 뒤 저장한다 (null이면 지운다). 바로 적용된다. */
+  setSystemOne(model: SystemOneModel | null): Promise<SystemOneRecord | null>;
   /**
-   * 검색 모델에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
-   * 검색 모델이 설정되지 않았으면 undefined, 호출이 실패하면 던진다.
+   * System One에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
+   * 설정되지 않았으면 undefined, 호출이 실패하면 던진다.
    */
   choose(question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number> | undefined>;
   /** 검증하고 provider를 다시 등록한 뒤 저장한다. 등록에 실패하면 이전 설정으로 되돌리고 던진다. */
@@ -161,6 +171,16 @@ const MIGRATIONS = [
      'defaultModel', json_extract(settings_json, '$.defaultModel'))`,
   // 관리 화면은 행위자를 보내지 않아 늘 "admin"이었다.
   `ALTER TABLE llm_settings DROP COLUMN updated_by`,
+  `CREATE TABLE systemone_settings (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     settings_json TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  // LLM 설정 안에 있던 검색 모델을 옮긴다.
+  `INSERT INTO systemone_settings (id, settings_json, updated_at)
+     SELECT 1, json_extract(settings_json, '$.searchModel'), updated_at FROM llm_settings
+     WHERE json_extract(settings_json, '$.searchModel') IS NOT NULL`,
+  `UPDATE llm_settings SET settings_json = json_remove(settings_json, '$.searchModel')`,
 ];
 
 const createRuntime = () =>
@@ -200,32 +220,52 @@ async function register(runtime: ModelRuntime, s: LlmServer): Promise<void> {
   }
 }
 
-/** 검색 모델의 pi provider id. 서버 id에는 `.`을 쓸 수 없어 겹치지 않는다. */
-const SEARCH_PROVIDER = "mcp.search";
+/** System One의 pi provider id. 서버 id에는 `.`을 쓸 수 없어 겹치지 않는다. */
+const SYSTEMONE_PROVIDER = "system.one";
 /** pi가 classifier 모델에 요구하는 값. 요청을 막는 데 쓰이지 않고, 넘치면 서버가 오류를 돌려준다. */
-const SEARCH_CONTEXT_WINDOW = 131_072;
+const SYSTEMONE_CONTEXT_WINDOW = 131_072;
 /** 넘으면 그 검색은 BM25로 찾는다. */
-const SEARCH_TIMEOUT_MS = 10_000;
+const SYSTEMONE_TIMEOUT_MS = 10_000;
 
-async function registerSearchModel(runtime: ModelRuntime, s: SearchModel): Promise<void> {
-  runtime.registerProvider(SEARCH_PROVIDER, {
-    name: SEARCH_PROVIDER,
-    baseUrl: s.baseUrl,
+/** next를 등록한다 (null이면 내리기만 한다) */
+async function applySystemOne(runtime: ModelRuntime, next: SystemOneModel | null): Promise<void> {
+  runtime.unregisterProvider(SYSTEMONE_PROVIDER);
+  await runtime.removeRuntimeApiKey(SYSTEMONE_PROVIDER);
+  if (!next) return;
+  runtime.registerProvider(SYSTEMONE_PROVIDER, {
+    name: SYSTEMONE_PROVIDER,
+    baseUrl: next.baseUrl,
+    ...(Object.keys(next.headers).length > 0 ? { headers: next.headers } : {}),
     classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
     models: [
       {
         type: "classifier",
-        id: s.id,
-        name: s.id,
+        id: next.id,
+        name: next.id,
         api: "typesafe-system-one",
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: SEARCH_CONTEXT_WINDOW,
+        contextWindow: SYSTEMONE_CONTEXT_WINDOW,
       },
     ],
   });
-  await runtime.setRuntimeApiKey(SEARCH_PROVIDER, s.apiKey || "not-needed");
-  if (!runtime.getModelOfType("classifier", SEARCH_PROVIDER, s.id)) throw new Error(`search model ${s.id} could not be registered with pi`);
+  await runtime.setRuntimeApiKey(SYSTEMONE_PROVIDER, next.apiKey || "not-needed");
+  if (!runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, next.id)) throw new Error(`model ${next.id} could not be registered with pi`);
+}
+
+/** 등록된 System One 모델에 choice 질문 하나를 묻는다. 실패하면 던진다. */
+async function ask(runtime: ModelRuntime, id: string, question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number>> {
+  const model = runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, id);
+  if (!model) throw new Error(`model ${id} is not registered`);
+  const result = await runtime.classify(
+    model,
+    { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
+    // 실패하면 mcp_search가 BM25로 찾으므로 다시 시도하지 않는다
+    { signal, timeoutMs: SYSTEMONE_TIMEOUT_MS, maxRetries: 0 },
+  );
+  const answer = result.answers.choice;
+  if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "System One returned no answer");
+  return answer.probabilities;
 }
 
 /** previous에서 next로 provider를 바꾼다 (없어진 서버는 내린다) */
@@ -236,11 +276,6 @@ async function apply(runtime: ModelRuntime, next: LlmSettings | null, previous: 
     await runtime.removeRuntimeApiKey(s.id);
   }
   for (const s of next?.servers ?? []) await register(runtime, s);
-  if (previous?.searchModel) {
-    runtime.unregisterProvider(SEARCH_PROVIDER);
-    await runtime.removeRuntimeApiKey(SEARCH_PROVIDER);
-  }
-  if (next?.searchModel) await registerSearchModel(runtime, next.searchModel);
 }
 
 export async function createModelRuntime(db: Db): Promise<GatewayModels> {
@@ -257,6 +292,14 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     : null;
   if (current) await apply(runtime, current.settings, null);
   let revision = 0;
+
+  const systemOneRow = db.prepare("SELECT settings_json, updated_at FROM systemone_settings WHERE id = 1").get() as
+    | { settings_json: string; updated_at: string }
+    | undefined;
+  let systemOne: SystemOneRecord | null = systemOneRow
+    ? { model: SystemOneModel.parse(JSON.parse(systemOneRow.settings_json)), updatedAt: systemOneRow.updated_at }
+    : null;
+  if (systemOne) await applySystemOne(runtime, systemOne.model);
 
   const save = db.prepare(
     `INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)
@@ -290,20 +333,28 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     defaultModel: () => current?.settings.defaultModel,
     revision: () => revision,
     current: () => current,
-    async choose(question, signal) {
-      const id = current?.settings.searchModel?.id;
-      const model = id ? runtime.getModelOfType("classifier", SEARCH_PROVIDER, id) : undefined;
-      if (!model) return undefined;
-      const result = await runtime.classify(
-        model,
-        { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
-        // 실패하면 BM25로 찾으므로 다시 시도하지 않는다
-        { signal, timeoutMs: SEARCH_TIMEOUT_MS, maxRetries: 0 },
-      );
-      const answer = result.answers.choice;
-      if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "the search model returned no answer");
-      return answer.probabilities;
+    systemOne: () => systemOne,
+    async setSystemOne(input) {
+      const model = input && SystemOneModel.parse(input);
+      try {
+        await applySystemOne(runtime, model);
+      } catch (err) {
+        await applySystemOne(runtime, systemOne?.model ?? null);
+        throw err;
+      }
+      const updatedAt = new Date().toISOString();
+      if (model) {
+        db.prepare(
+          `INSERT INTO systemone_settings (id, settings_json, updated_at) VALUES (1, ?, ?)
+           ON CONFLICT (id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at`,
+        ).run(JSON.stringify(model), updatedAt);
+      } else {
+        db.prepare("DELETE FROM systemone_settings WHERE id = 1").run();
+      }
+      systemOne = model && { model, updatedAt };
+      return systemOne;
     },
+    choose: async (question, signal) => (systemOne ? ask(runtime, systemOne.model.id, question, signal) : undefined),
     async update(input) {
       const settings = LlmSettings.parse(input);
       const previous = current?.settings ?? null;
@@ -424,6 +475,31 @@ export async function testLlmModel(server: LlmServer, modelId: string, timeoutMs
       stopReason: reply.stopReason,
       usage: { input: reply.usage.input, output: reply.usage.output },
     };
+  } catch (err) {
+    return { ok: false, durationMs: Date.now() - started, error: describe(err) };
+  }
+}
+
+export interface SystemOneTestResult {
+  ok: boolean;
+  durationMs: number;
+  error?: string;
+  /** 고른 선택지별 확률 */
+  probabilities?: Record<string, number>;
+}
+
+/** System One 서버에 짧은 choice 질문을 보낸다. 세션과 같은 pi 경로를 쓰되, 저장하기 전 설정도 시험할 수 있도록 따로 만든 runtime에 등록한다. */
+export async function testSystemOne(model: SystemOneModel): Promise<SystemOneTestResult> {
+  const started = Date.now();
+  try {
+    const runtime = await createRuntime();
+    await applySystemOne(runtime, model);
+    const probabilities = await ask(runtime, model.id, {
+      state: { message: "The deploy finished without errors." },
+      instructions: "Is `message` good news or bad news?",
+      criteria: { good: "Good news", bad: "Bad news" },
+    });
+    return { ok: true, durationMs: Date.now() - started, probabilities };
   } catch (err) {
     return { ok: false, durationMs: Date.now() - started, error: describe(err) };
   }

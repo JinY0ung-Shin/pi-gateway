@@ -55,7 +55,7 @@ export interface FakeLlm {
   /** `GET /v1/models` 요청의 헤더 */
   modelRequests: IncomingMessage["headers"][];
   /** `POST /v1/systemone` 요청 */
-  decisions: Array<{ body: DecisionRequest; authorization: string | undefined }>;
+  decisions: Array<{ body: DecisionRequest; headers: IncomingMessage["headers"] }>;
   /** `POST /v1/systemone`의 choice 질문에 돌려줄 선택지별 확률. null이면 500으로 응답한다 (기본). */
   setDecision(decide: ((request: DecisionRequest) => Record<string, number>) | null): void;
   /** 다음 요청들에 쓸 시나리오를 추가한다 */
@@ -92,7 +92,7 @@ export async function startFakeLlm(): Promise<FakeLlm> {
     }
     if (req.method === "POST" && req.url === "/v1/systemone") {
       const request = (await readJson(req)) as DecisionRequest;
-      decisions.push({ body: request, authorization: req.headers.authorization });
+      decisions.push({ body: request, headers: req.headers });
       if (!decide) {
         res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: "decision model down" }));
         return;

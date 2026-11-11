@@ -6,7 +6,7 @@ import type { Choose } from "../contracts.js";
 /**
  * MCP 서버의 도구는 모델에게 하나씩 선언하지 않고 고정된 두 도구로 쓴다.
  * plugin MCP도 같다: skill에 적힌 이름은 검색 없이 mcp_call로 바로 부르면 된다.
- * - mcp_search: 도구를 찾아 schema를 결과로 돌려준다. 검색 모델(decision model)이 설정돼 있으면 모든 도구를
+ * - mcp_search: 도구를 찾아 schema를 결과로 돌려준다. System One(decision model)이 설정돼 있으면 모든 도구를
  *   선택지로 주고 고르게 하고, 없거나 그 호출이 실패하면 BM25로 찾는다.
  * - mcp_call: 이름과 인자로 도구를 실행한다.
  * 선언 목록이 세션 내내 바뀌지 않아 prefix cache가 깨지지 않고, 모델이 부르는 이름은 늘 선언된 것이라
@@ -19,13 +19,13 @@ export const MCP_CALL_TOOL = "mcp_call";
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 20;
-/** 검색 모델에 주는 도구 설명의 길이. 도구가 많아도 질문이 모델의 context에 들어가게 한다. */
+/** System One에 주는 도구 설명의 길이. 도구가 많아도 질문이 모델의 context에 들어가게 한다. */
 const CHOICE_DESCRIPTION_CHARS = 500;
 
 /** mcp_search 결과의 details. 통계가 검색 뒤에 부른 도구가 몇 번째였는지 센다 (tools/stats.ts). */
 export interface McpSearchDetails {
   search: {
-    /** model: 검색 모델이 골랐다. bm25: 검색 모델이 없거나 실패했다. */
+    /** model: System One이 골랐다. bm25: System One이 없거나 실패했다. */
     method: "model" | "bm25";
     /** 돌려준 도구의 `<server id>/<MCP 도구 이름>`, 순위대로 */
     tools: string[];
@@ -126,7 +126,7 @@ export interface McpRecovery {
  * tools: MCP 서버들의 도구 정의. 돌려준 목록에 원래 도구도 들어 있다.
  * recovery가 있으면 목록을 못 받은 서버도 서비스 목록에 넣어 두고, mcp_search와 (모르는 이름의) mcp_call이
  * 그 서버를 다시 물어본다. 선언은 세션 내내 그대로다 (prefix cache).
- * choose는 검색 모델에 묻는 함수다. 검색 모델을 쓰지 않거나 호출이 실패했으면 undefined를 돌려준다.
+ * choose는 System One에 묻는 함수다. System One을 쓰지 않거나 호출이 실패했으면 undefined를 돌려준다.
  */
 export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedServer[], recovery?: McpRecovery, choose?: Choose): ToolDefinition[] {
   const failed = recovery?.failed ?? new Set<string>();
@@ -148,7 +148,7 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
     }
   };
 
-  /** 검색 모델이 고른 순서 (확률이 높은 것부터). 선택지는 둘 이상이어야 한다. */
+  /** System One이 고른 순서 (확률이 높은 것부터). 선택지는 둘 이상이어야 한다. */
   const chosen = async (query: string, limit: number, signal: AbortSignal | undefined): Promise<ToolDefinition[] | undefined> => {
     if (known.length < 2) return undefined;
     const probabilities = await choose?.(

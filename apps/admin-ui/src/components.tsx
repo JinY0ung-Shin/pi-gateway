@@ -161,6 +161,38 @@ export function useAction() {
   return { busy, run, view, setMessage };
 }
 
+/** API 키 칸. 저장된 키는 보여 주지 않고, 비워 두면 그대로 쓴다. */
+export function ApiKeyField(props: {
+  id: string;
+  value: { apiKey: string; apiKeySet: boolean; clearKey: boolean };
+  onChange: (patch: { apiKey?: string; clearKey?: boolean }) => void;
+}) {
+  const v = props.value;
+  return (
+    <div class="field">
+      <label class="field-label" for={props.id}>
+        API 키 {v.apiKeySet ? <Badge tone="green">저장됨</Badge> : <Badge>없음</Badge>}
+      </label>
+      <input
+        id={props.id}
+        type="password"
+        class="mono"
+        autocomplete="off"
+        value={v.apiKey}
+        disabled={v.clearKey}
+        placeholder={v.apiKeySet ? "바꿀 때만 입력 (비우면 저장된 키를 씁니다)" : "키가 없는 엔드포인트면 비워 둡니다"}
+        onInput={(e) => props.onChange({ apiKey: e.currentTarget.value })}
+      />
+      {v.apiKeySet && (
+        <label class="checkbox">
+          <input type="checkbox" checked={v.clearKey} onChange={(e) => props.onChange({ clearKey: e.currentTarget.checked })} />
+          <span>저장된 키 지우기</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 /** `KEY=VALUE` 줄 ↔ 객체 */
 export function recordToLines(record: Record<string, string> | undefined, sep = "="): string {
   return Object.entries(record ?? {})
