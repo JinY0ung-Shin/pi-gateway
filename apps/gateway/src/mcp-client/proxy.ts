@@ -22,6 +22,16 @@ const MAX_LIMIT = 20;
 /** 검색 모델에 주는 도구 설명의 길이. 도구가 많아도 질문이 모델의 context에 들어가게 한다. */
 const CHOICE_DESCRIPTION_CHARS = 500;
 
+/** mcp_search 결과의 details. 통계가 검색 뒤에 부른 도구가 몇 번째였는지 센다 (tools/stats.ts). */
+export interface McpSearchDetails {
+  search: {
+    /** model: 검색 모델이 골랐다. bm25: 검색 모델이 없거나 실패했다. */
+    method: "model" | "bm25";
+    /** 돌려준 도구의 `<server id>/<MCP 도구 이름>`, 순위대로 */
+    tools: string[];
+  };
+}
+
 export interface ProxiedServer {
   id: string;
   displayName?: string;
@@ -171,10 +181,12 @@ export function createMcpProxyTools(tools: ToolDefinition[], servers: ProxiedSer
       const { query, limit } = params as { query: string; limit?: number };
       const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT)));
       await recover(signal);
-      const found = (await chosen(query, n, signal)) ?? rank(query, documents, n).map((i) => known[i]!);
-      if (found.length === 0) return text(`No tools matched "${query}". Try other words or a service name from the list.`);
+      const picked = await chosen(query, n, signal);
+      const found = picked ?? rank(query, documents, n).map((i) => known[i]!);
+      const details: McpSearchDetails = { search: { method: picked ? "model" : "bm25", tools: found.map((t) => t.label) } };
+      if (found.length === 0) return { ...text(`No tools matched "${query}". Try other words or a service name from the list.`), details };
       const blocks = found.map((t) => `## ${t.name}\n${t.description}\nParameters: ${JSON.stringify(t.parameters)}`);
-      return text(`${blocks.join("\n\n")}\n\nRun one with ${MCP_CALL_TOOL} {"name": "<tool name>", "arguments": {...}}.`);
+      return { ...text(`${blocks.join("\n\n")}\n\nRun one with ${MCP_CALL_TOOL} {"name": "<tool name>", "arguments": {...}}.`), details };
     },
   };
 

@@ -102,6 +102,34 @@ describe("tool stats", () => {
   });
 });
 
+describe("search stats", () => {
+  it("counts how often the tool called after mcp_search was among its top results", async () => {
+    const search = (id: string, query: string) => ({ id, name: "mcp_search", arguments: { query } });
+    const call = (id: string, name: string) => ({ id, name: "mcp_call", arguments: { name } });
+    h.llm.enqueue(
+      // 1순위를 부른다
+      { toolCalls: [search("q1", "echo")] },
+      { toolCalls: [call("q2", "mcp__demo__echo")] },
+      // 2순위를 부른다 (이름이 같은 단어라 echo 다음이 fail)
+      { toolCalls: [search("q3", "echo fail demo")] },
+      { toolCalls: [call("q4", "mcp__demo__fail")] },
+      // 결과에 없는 도구를 부른다
+      { toolCalls: [search("q5", "fail")] },
+      { toolCalls: [call("q6", "mcp__demo__echo")] },
+      // 호출로 이어지지 않는다
+      { toolCalls: [search("q7", "echo")] },
+      { text: "done" },
+    );
+    await h.post({ input: "search and call" });
+    // 새 실행은 이전 검색을 잇지 않는다
+    h.llm.enqueue({ toolCalls: [call("q8", "mcp__demo__echo")] }, { text: "done" });
+    await h.post({ input: "call only" });
+
+    const status = (await (await admin("GET", "/status")).json()) as { searches: unknown[] };
+    expect(status.searches).toEqual([{ method: "bm25", searches: 4, called: 3, top1: 1, top2: 2, top3: 2 }]);
+  });
+});
+
 describe("turn stats", () => {
   it("counts committed turns and those continued from an earlier response (edit or regenerate)", async () => {
     const turns = async () => ((await (await admin("GET", "/status")).json()) as { turns: { turns: number; branched: number } }).turns;

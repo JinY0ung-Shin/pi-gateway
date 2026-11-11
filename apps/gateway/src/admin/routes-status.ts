@@ -61,6 +61,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
       tools: ctx.toolStats.summary(),
       turns: ctx.toolStats.turns(),
       users: ctx.toolStats.users(),
+      searches: ctx.toolStats.searches(),
     };
   });
 }

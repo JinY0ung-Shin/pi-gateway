@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
 import { api, enc, formatBytes, formatTime } from "../api";
 import { Badge, Modal, Notice, Section, useAction, useLoad } from "../components";
-import type { ServiceCheck, StatusView, ToolStat, UserUsage } from "../types";
+import type { SearchStat, ServiceCheck, StatusView, ToolStat, UserUsage } from "../types";
 
 /** 통계 표에 바로 보이는 줄 수. 나머지는 전체 보기에서 */
 const TOP_ROWS = 10;
@@ -96,6 +96,12 @@ export function StatusPage() {
           {status.turns.turns > 0 && ` (${((status.turns.branched / status.turns.turns) * 100).toFixed(1)}%)`}
         </p>
       </Ranked>
+      <Section title="MCP 검색 정확도 (최근 30일)">
+        <p class="muted small-text">
+          mcp_search 뒤에 모델이 처음 부른 MCP 도구가 검색 결과의 몇 번째 안에 있었는지입니다 (호출로 이어진 검색 기준). 정답이 아니라 모델이 고른 도구로 봅니다.
+        </p>
+        <SearchTable searches={status.searches} />
+      </Section>
       <Ranked title="사용자별 토큰 (최근 30일)" rows={status.users} table={(rows) => <UserTable users={rows} />} />
       <Section title="sandbox">
         {status.sandboxes.error && <Notice tone="error">sandboxd 조회 실패: {status.sandboxes.error}</Notice>}
@@ -217,6 +223,43 @@ function ToolTable(props: { tools: ToolStat[] }) {
             <td class="num">{t.calls.toLocaleString()}</td>
             <td class="num">{t.errors > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "0%"}</td>
             <td class="num">{t.avgMs < 1000 ? `${t.avgMs}ms` : `${(t.avgMs / 1000).toFixed(1)}s`}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SearchTable(props: { searches: SearchStat[] }) {
+  const rate = (hits: number, s: SearchStat) => (s.called > 0 ? `${((hits / s.called) * 100).toFixed(1)}%` : "-");
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          <th>방식</th>
+          <th class="num">검색</th>
+          <th class="num">호출로 이어짐</th>
+          <th class="num">top-1</th>
+          <th class="num">top-2</th>
+          <th class="num">top-3</th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.searches.length === 0 && (
+          <tr>
+            <td colSpan={6} class="muted">
+              아직 검색이 없습니다.
+            </td>
+          </tr>
+        )}
+        {props.searches.map((s) => (
+          <tr key={s.method}>
+            <td>{s.method === "model" ? "검색 모델" : "BM25"}</td>
+            <td class="num">{s.searches.toLocaleString()}</td>
+            <td class="num">{s.called.toLocaleString()}</td>
+            <td class="num">{rate(s.top1, s)}</td>
+            <td class="num">{rate(s.top2, s)}</td>
+            <td class="num">{rate(s.top3, s)}</td>
           </tr>
         ))}
       </tbody>

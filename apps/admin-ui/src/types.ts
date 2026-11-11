@@ -173,6 +173,20 @@ export interface StatusView {
   turns: { turns: number; branched: number };
   /** 최근 30일 사용자별 LLM 토큰 (많이 쓴 순). 실패·중단된 턴과 하위 agent도 포함 */
   users: UserUsage[];
+  /** 최근 30일 mcp_search 정확도 (검색 방식별) */
+  searches: SearchStat[];
+}
+
+/** 검색 뒤 같은 실행에서 처음 부른 MCP 도구가 검색 결과의 몇 번째였는지 */
+export interface SearchStat {
+  /** model: 검색 모델이 골랐다. bm25: 검색 모델이 없거나 실패했다. */
+  method: "model" | "bm25";
+  searches: number;
+  /** MCP 도구 호출로 이어진 검색 */
+  called: number;
+  top1: number;
+  top2: number;
+  top3: number;
 }
 
 export interface UserUsage {
