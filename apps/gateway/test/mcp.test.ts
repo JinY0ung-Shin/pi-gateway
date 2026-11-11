@@ -151,7 +151,7 @@ describe("mcp_search and mcp_call", () => {
 
 describe("mcp_search with System One", () => {
   it("lets the decision model pick among all tools, and searches with BM25 when that call fails", async () => {
-    await h.gateway.models.setSystemOne({ baseUrl: h.llm.url, apiKey: "search-key", headers: {}, id: "d3-ultra" });
+    await h.gateway.models.setSystemOne({ baseUrl: h.llm.url, apiKey: "search-key", headers: {}, id: "d3-ultra", compare: false });
     const searched = async (query: string) => {
       h.llm.enqueue({ toolCalls: [{ id: "d1", name: "mcp_search", arguments: { query, limit: 2 } }] }, { text: "ok" });
       const res = await h.stream({ input: "find" });

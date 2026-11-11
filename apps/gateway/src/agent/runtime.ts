@@ -80,6 +80,8 @@ export const SystemOneModel = z.object({
   /** 요청마다 붙일 헤더 */
   headers: z.record(z.string(), z.string()).default({}),
   id: z.string().min(1),
+  /** 정확도 비교용: 검색의 절반은 무작위로 System One에 묻지 않고 BM25로 찾는다 (상태 페이지의 MCP 검색 정확도). */
+  compare: z.boolean().default(false),
 });
 export type SystemOneModel = z.infer<typeof SystemOneModel>;
 
@@ -153,7 +155,7 @@ export interface GatewayModels {
   systemOneCalls(): readonly SystemOneCall[];
   /**
    * System One에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
-   * 설정되지 않았으면 undefined, 호출이 실패하면 던진다.
+   * 설정되지 않았거나 비교용으로 이번에는 묻지 않기로 했으면 undefined, 호출이 실패하면 던진다.
    */
   choose(question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number> | undefined>;
   /** 검증하고 provider를 다시 등록한 뒤 저장한다. 등록에 실패하면 이전 설정으로 되돌리고 던진다. */
@@ -390,6 +392,7 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     systemOneCalls: () => systemOneCalls,
     async choose(question, signal) {
       if (!systemOne) return undefined;
+      if (systemOne.model.compare && Math.random() < 0.5) return undefined;
       const record = await call(runtime, systemOne.model.id, question, signal);
       systemOneCalls.unshift(record);
       systemOneCalls.length = Math.min(systemOneCalls.length, SYSTEMONE_RECENT_CALLS);

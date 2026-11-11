@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createModelRuntime } from "../src/agent/runtime.js";
 import { openDatabase } from "../src/db.js";
 import { startFakeLlm } from "./fixtures/fake-llm.js";
@@ -249,7 +249,7 @@ describe("/admin/api/systemone", () => {
 
     expect((await putOne({ baseUrl: `${h.llm.url}/`, apiKey: "one-key", headers: { "x-team": "ai" }, id: "d3-ultra" })).status).toBe(200);
     const view = await getOne();
-    expect(view.model).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", headers: { "x-team": "ai" }, apiKeySet: true });
+    expect(view.model).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", headers: { "x-team": "ai" }, compare: false, apiKeySet: true });
     expect(JSON.stringify(view)).not.toContain("one-key");
     // 대화 모델이 아니라서 모델 목록에 나오지 않는다
     expect((await models()).map((m: any) => m.id)).not.toContain("d3-ultra");
@@ -307,6 +307,25 @@ describe("/admin/api/systemone", () => {
     expect(failed.error).toContain("500");
     expect(failed.request).toMatchObject({ model: "d3-ultra" });
     expect(failed.answer).toBeUndefined();
+    expect((await putOne(null)).status).toBe(200);
+  });
+
+  it("with compare on, skips System One for a random half of the searches so both methods collect stats", async () => {
+    expect((await putOne({ baseUrl: h.llm.url, id: "d3-ultra", compare: true })).status).toBe(200);
+    expect((await getOne()).model.compare).toBe(true);
+    h.llm.setDecision(() => ({ a: 0.6, b: 0.4 }));
+    const random = vi.spyOn(Math, "random");
+    try {
+      const before = h.llm.decisions.length;
+      random.mockReturnValue(0.2);
+      expect(await h.gateway.models.choose(question)).toBeUndefined();
+      expect(h.llm.decisions.length).toBe(before);
+      random.mockReturnValue(0.7);
+      expect(await h.gateway.models.choose(question)).toEqual({ a: 0.6, b: 0.4 });
+      expect(h.llm.decisions.length).toBe(before + 1);
+    } finally {
+      random.mockRestore();
+    }
     expect((await putOne(null)).status).toBe(200);
   });
 
@@ -381,7 +400,7 @@ describe("a search model stored inside the LLM settings", () => {
     db.prepare("DELETE FROM schema_migrations WHERE module = 'llm' AND step IN (4, 5)").run();
 
     const models = await createModelRuntime(db);
-    expect(models.systemOne()).toEqual({ model: { ...settings.searchModel, headers: {} }, updatedAt: "2026-11-11T00:00:00.000Z" });
+    expect(models.systemOne()).toEqual({ model: { ...settings.searchModel, headers: {}, compare: false }, updatedAt: "2026-11-11T00:00:00.000Z" });
     expect(db.prepare("SELECT json_extract(settings_json, '$.searchModel') AS v FROM llm_settings").get()).toEqual({ v: null });
     expect(models.current()!.settings.defaultModel).toBe("m");
     db.close();

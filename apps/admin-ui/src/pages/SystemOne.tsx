@@ -9,7 +9,7 @@ import { ApiKeyField, Badge, linesToRecord, Modal, Notice, recordToLines, Sectio
  */
 
 interface SystemOneView {
-  model: { baseUrl: string; id: string; headers: Record<string, string>; apiKeySet: boolean } | null;
+  model: { baseUrl: string; id: string; headers: Record<string, string>; compare: boolean; apiKeySet: boolean } | null;
   updatedAt: string | null;
 }
 
@@ -39,6 +39,8 @@ interface Form {
   headers: string;
   apiKey: string;
   clearKey: boolean;
+  /** 검색의 절반은 BM25로 찾는다 (정확도 비교용) */
+  compare: boolean;
 }
 
 const toForm = (v: SystemOneView): Form => ({
@@ -48,6 +50,7 @@ const toForm = (v: SystemOneView): Form => ({
   headers: recordToLines(v.model?.headers, ": "),
   apiKey: "",
   clearKey: false,
+  compare: v.model?.compare ?? false,
 });
 
 /** 연결에 쓰는 값. apiKey를 빼면 gateway가 저장된 키를 쓴다. */
@@ -62,7 +65,7 @@ function toBody(f: Form) {
   const id = f.id.trim();
   if (!f.baseUrl.trim() && !id) return null;
   if (!f.baseUrl.trim() || !id) throw new Error("base URL과 모델 id를 모두 넣으세요. 쓰지 않으려면 둘 다 비웁니다.");
-  return { ...connectionOf(f), id };
+  return { ...connectionOf(f), id, compare: f.compare };
 }
 
 /** 저장 안 한 변경이 있는지 보는 값 */
@@ -175,6 +178,13 @@ export function SystemOnePage() {
             <textarea class="mono" rows={3} value={form.headers} placeholder="X-Team: ai" onInput={(e) => change({ headers: e.currentTarget.value })} />
           </label>
         </div>
+        <label class="checkbox">
+          <input type="checkbox" checked={form.compare} onChange={(e) => change({ compare: e.currentTarget.checked })} />
+          <span>BM25와 비교: 검색의 절반은 무작위로 BM25로 찾습니다</span>
+        </label>
+        <p class="muted small-text">
+          켜 두면 상태 페이지의 MCP 검색 정확도에 System One과 BM25의 top-1~3 비율이 같은 기간·같은 사용자 기준으로 쌓입니다. 비교가 끝나면 끕니다.
+        </p>
       </Section>
       <RecentCalls />
       <div class={dirty ? "save-bar dirty" : "save-bar"}>
