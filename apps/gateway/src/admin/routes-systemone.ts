@@ -51,6 +51,9 @@ export function registerSystemOneRoutes(app: FastifyInstance, ctx: AdminContext)
     return probeLlmServer({ api: "openai-completions", ...server });
   });
 
+  /** mcp_search가 실제로 보낸 최근 요청 (최신부터): 보낸 본문, 받은 답 또는 실패 이유, 걸린 시간 */
+  app.get("/systemone/calls", async () => ({ items: llm.systemOneCalls() }));
+
   /** 짧은 choice 질문 하나를 보낸다 */
   app.post<{ Body: { model?: unknown } | null }>("/systemone/test", async (req) => testSystemOne(parse(SystemOneModel, req.body?.model)));
 }

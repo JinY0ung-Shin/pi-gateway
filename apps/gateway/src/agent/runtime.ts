@@ -149,6 +149,8 @@ export interface GatewayModels {
   systemOne(): SystemOneRecord | null;
   /** 등록한 뒤 저장한다 (null이면 지운다). 바로 적용된다. */
   setSystemOne(model: SystemOneModel | null): Promise<SystemOneRecord | null>;
+  /** choose가 보낸 최근 요청 (최신부터). 메모리에만 있어 다시 시작하면 비워진다. */
+  systemOneCalls(): readonly SystemOneCall[];
   /**
    * System One에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
    * 설정되지 않았으면 undefined, 호출이 실패하면 던진다.
@@ -226,6 +228,8 @@ const SYSTEMONE_PROVIDER = "system.one";
 const SYSTEMONE_CONTEXT_WINDOW = 131_072;
 /** 넘으면 그 검색은 BM25로 찾는다. */
 const SYSTEMONE_TIMEOUT_MS = 10_000;
+/** 관리 화면에 보여 주려고 메모리에 두는 최근 요청 수. 요청 하나에 모든 도구 설명이 들어가 DB에는 남기지 않는다. */
+const SYSTEMONE_RECENT_CALLS = 20;
 
 /** next를 등록한다 (null이면 내리기만 한다) */
 async function applySystemOne(runtime: ModelRuntime, next: SystemOneModel | null): Promise<void> {
@@ -253,32 +257,47 @@ async function applySystemOne(runtime: ModelRuntime, next: SystemOneModel | null
   if (!runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, next.id)) throw new Error(`model ${next.id} could not be registered with pi`);
 }
 
-/** 등록된 System One 모델에 choice 질문 하나를 묻는다. 실패하면 던진다. onPayload는 보내기 직전의 요청 본문을 받는다. */
-async function ask(
-  runtime: ModelRuntime,
-  id: string,
-  question: ChoiceQuestion,
-  options: { signal?: AbortSignal; onPayload?: (payload: unknown) => void } = {},
-): Promise<ClassifierChoiceAnswer> {
-  const model = runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, id);
-  if (!model) throw new Error(`model ${id} is not registered`);
-  const result = await runtime.classify(
-    model,
-    { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
-    // 실패하면 mcp_search가 BM25로 찾으므로 다시 시도하지 않는다
-    {
-      signal: options.signal,
-      timeoutMs: SYSTEMONE_TIMEOUT_MS,
-      maxRetries: 0,
-      onPayload: (payload) => {
-        options.onPayload?.(payload);
-        return undefined;
+/** System One 요청 하나의 기록 (관리 화면의 테스트 결과와 최근 요청) */
+export interface SystemOneCall {
+  at: string;
+  durationMs: number;
+  /** `/systemone`으로 보낸 요청 본문 (보내기 전에 실패했으면 없다) */
+  request?: unknown;
+  /** 받은 답: 고른 선택지, 선택지별 확률, confidence. 실패했으면 없다. */
+  answer?: ClassifierChoiceAnswer;
+  /** 실패한 이유 */
+  error?: string;
+}
+
+/** 등록된 System One 모델에 choice 질문 하나를 묻는다. 던지지 않고 실패도 기록으로 돌려준다. */
+async function call(runtime: ModelRuntime, id: string, question: ChoiceQuestion, signal?: AbortSignal): Promise<SystemOneCall> {
+  const started = Date.now();
+  const record: SystemOneCall = { at: new Date(started).toISOString(), durationMs: 0 };
+  try {
+    const model = runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, id);
+    if (!model) throw new Error(`model ${id} is not registered`);
+    const result = await runtime.classify(
+      model,
+      { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
+      {
+        signal,
+        timeoutMs: SYSTEMONE_TIMEOUT_MS,
+        // 실패하면 mcp_search가 BM25로 찾으므로 다시 시도하지 않는다
+        maxRetries: 0,
+        onPayload: (payload) => {
+          record.request = payload;
+          return undefined;
+        },
       },
-    },
-  );
-  const answer = result.answers.choice;
-  if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "System One returned no answer");
-  return answer;
+    );
+    const answer = result.answers.choice;
+    if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "System One returned no answer");
+    record.answer = answer;
+  } catch (err) {
+    record.error = describe(err);
+  }
+  record.durationMs = Date.now() - started;
+  return record;
 }
 
 /** previous에서 next로 provider를 바꾼다 (없어진 서버는 내린다) */
@@ -313,6 +332,7 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     ? { model: SystemOneModel.parse(JSON.parse(systemOneRow.settings_json)), updatedAt: systemOneRow.updated_at }
     : null;
   if (systemOne) await applySystemOne(runtime, systemOne.model);
+  const systemOneCalls: SystemOneCall[] = [];
 
   const save = db.prepare(
     `INSERT INTO llm_settings (id, settings_json, updated_at) VALUES (1, ?, ?)
@@ -367,7 +387,15 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
       systemOne = model && { model, updatedAt };
       return systemOne;
     },
-    choose: async (question, signal) => (systemOne ? (await ask(runtime, systemOne.model.id, question, { signal })).probabilities : undefined),
+    systemOneCalls: () => systemOneCalls,
+    async choose(question, signal) {
+      if (!systemOne) return undefined;
+      const record = await call(runtime, systemOne.model.id, question, signal);
+      systemOneCalls.unshift(record);
+      systemOneCalls.length = Math.min(systemOneCalls.length, SYSTEMONE_RECENT_CALLS);
+      if (!record.answer) throw new Error(record.error);
+      return record.answer.probabilities;
+    },
     async update(input) {
       const settings = LlmSettings.parse(input);
       const previous = current?.settings ?? null;
@@ -493,39 +521,19 @@ export async function testLlmModel(server: LlmServer, modelId: string, timeoutMs
   }
 }
 
-export interface SystemOneTestResult {
-  ok: boolean;
-  durationMs: number;
-  error?: string;
-  /** `/systemone`으로 보낸 요청 본문 (보내기 전에 실패했으면 없다) */
-  request?: unknown;
-  /** 받은 답: 고른 선택지, 선택지별 확률, confidence */
-  answer?: ClassifierChoiceAnswer;
-}
-
 /** System One 서버에 짧은 choice 질문을 보낸다. 세션과 같은 pi 경로를 쓰되, 저장하기 전 설정도 시험할 수 있도록 따로 만든 runtime에 등록한다. */
-export async function testSystemOne(model: SystemOneModel): Promise<SystemOneTestResult> {
+export async function testSystemOne(model: SystemOneModel): Promise<SystemOneCall> {
   const started = Date.now();
-  let request: unknown;
+  let runtime: ModelRuntime;
   try {
-    const runtime = await createRuntime();
+    runtime = await createRuntime();
     await applySystemOne(runtime, model);
-    const answer = await ask(
-      runtime,
-      model.id,
-      {
-        state: { message: "The deploy finished without errors." },
-        instructions: "Is `message` good news or bad news?",
-        criteria: { good: "Good news", bad: "Bad news" },
-      },
-      {
-        onPayload: (payload) => {
-          request = payload;
-        },
-      },
-    );
-    return { ok: true, durationMs: Date.now() - started, request, answer };
   } catch (err) {
-    return { ok: false, durationMs: Date.now() - started, error: describe(err), ...(request === undefined ? {} : { request }) };
+    return { at: new Date(started).toISOString(), durationMs: Date.now() - started, error: describe(err) };
   }
+  return call(runtime, model.id, {
+    state: { message: "The deploy finished without errors." },
+    instructions: "Is `message` good news or bad news?",
+    criteria: { good: "Good news", bad: "Bad news" },
+  });
 }

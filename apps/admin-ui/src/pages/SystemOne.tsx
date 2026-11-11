@@ -1,10 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { ApiKeyField, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
 
 /**
  * System One 설정. mcp_search가 도구를 고를 때 묻는 decision model 서버 하나를 둔다. 저장하면 다음 검색부터 적용된다.
  * 모델 가져오기·테스트는 화면에 입력한 값으로 하므로 저장하기 전에 해 볼 수 있다. base URL과 모델 id를 모두 비우고 저장하면 쓰지 않는다.
+ * 최근 요청은 mcp_search가 실제로 보낸 요청이다 (gateway 메모리에만 있다).
  */
 
 interface SystemOneView {
@@ -19,14 +20,15 @@ interface ProbeResult {
   models?: { id: string; name?: string }[];
 }
 
-interface TestResult {
-  ok: boolean;
+/** System One 요청 하나: 테스트 결과와 최근 요청이 같은 모양이다 */
+interface Call {
+  at: string;
   durationMs: number;
-  error?: string;
   /** `/systemone`으로 보낸 요청 본문 */
   request?: unknown;
-  /** 받은 답 */
+  /** 받은 답. 실패했으면 없다. */
   answer?: { choice: string; probabilities: Record<string, number>; confidence: number };
+  error?: string;
 }
 
 /** 화면에서 고치는 값. 키 칸을 비워 두면 저장된 키를 쓴다. */
@@ -70,7 +72,7 @@ export function SystemOnePage() {
   const { data: loaded, error: loadError } = useLoad<SystemOneView>("/systemone");
   const [view, setView] = useState<SystemOneView | null>(null);
   const [form, setForm] = useState<Form | null>(null);
-  const [test, setTest] = useState<TestResult | "testing" | null>(null);
+  const [test, setTest] = useState<Call | "testing" | null>(null);
   const [probe, setProbe] = useState<ProbeResult | "checking" | null>(null);
   const action = useAction();
 
@@ -109,9 +111,9 @@ export function SystemOnePage() {
   const runTest = async () => {
     setTest("testing");
     try {
-      setTest(await api<TestResult>("POST", "/systemone/test", { model: toBody(form) }));
+      setTest(await api<Call>("POST", "/systemone/test", { model: toBody(form) }));
     } catch (error) {
-      setTest({ ok: false, durationMs: 0, error: errorText(error) });
+      setTest({ at: new Date().toISOString(), durationMs: 0, error: errorText(error) });
     }
   };
 
@@ -155,25 +157,7 @@ export function SystemOnePage() {
           />
         )}
         {test && test !== "testing" && (
-          <>
-            <Notice tone={test.ok ? "ok" : "error"} onClose={() => setTest(null)}>
-              {test.ok ? `${test.durationMs}ms 만에 응답했습니다${test.answer ? `: ${test.answer.choice}` : ""}` : `응답 실패: ${test.error}`}
-            </Notice>
-            <div class="grid-2">
-              {test.request !== undefined && (
-                <div class="field">
-                  <span>보낸 요청 (POST {form.baseUrl.trim()}/systemone)</span>
-                  <pre class="code-block mono">{JSON.stringify(test.request, null, 2)}</pre>
-                </div>
-              )}
-              {test.answer && (
-                <div class="field">
-                  <span>받은 답</span>
-                  <pre class="code-block mono">{JSON.stringify(test.answer, null, 2)}</pre>
-                </div>
-              )}
-            </div>
-          </>
+          <CallDetail call={test} onClose={() => setTest(null)} />
         )}
         <div class="grid-2">
           <label class="field">
@@ -192,6 +176,7 @@ export function SystemOnePage() {
           </label>
         </div>
       </Section>
+      <RecentCalls />
       <div class={dirty ? "save-bar dirty" : "save-bar"}>
         {action.view}
         <div class="row wrap">
@@ -233,5 +218,90 @@ function ModelPicker(props: { models: NonNullable<ProbeResult["models"]>; curren
         </table>
       )}
     </Modal>
+  );
+}
+
+/** 요청 하나의 결과와, `/systemone`으로 보낸 본문·받은 답 */
+function CallDetail(props: { call: Call; onClose?: () => void }) {
+  const { call } = props;
+  return (
+    <>
+      <Notice tone={call.answer ? "ok" : "error"} onClose={props.onClose}>
+        {call.answer ? `${call.durationMs}ms 만에 응답했습니다: ${call.answer.choice}` : `응답 실패: ${call.error}`}
+      </Notice>
+      <div class="grid-2">
+        {call.request !== undefined && (
+          <div class="field">
+            <span>보낸 요청 본문</span>
+            <pre class="code-block mono">{JSON.stringify(call.request, null, 2)}</pre>
+          </div>
+        )}
+        {call.answer && (
+          <div class="field">
+            <span>받은 답</span>
+            <pre class="code-block mono">{JSON.stringify(call.answer, null, 2)}</pre>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** 요청의 state를 한 줄로. mcp_search는 `{ query }`를 보낸다. */
+function stateText(request: unknown): string {
+  const state = (request as { state?: Record<string, unknown> } | undefined)?.state;
+  if (!state) return "";
+  return typeof state.query === "string" ? state.query : JSON.stringify(state);
+}
+
+function RecentCalls() {
+  const { data, error, reload } = useLoad<{ items: Call[] }>("/systemone/calls");
+  const [open, setOpen] = useState<Call | null>(null);
+  const items = data?.items ?? [];
+  return (
+    <Section title="최근 요청" actions={<button onClick={() => void reload()}>새로고침</button>}>
+      <p class="muted small-text">
+        mcp_search가 System One에 실제로 보낸 요청 최근 20건입니다. gateway 메모리에만 있어서 다시 시작하면 비워집니다. 테스트 버튼으로 보낸 요청은 들어가지 않습니다.
+      </p>
+      {error && <Notice tone="error">{error}</Notice>}
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>시각</th>
+            <th>검색어</th>
+            <th>고른 도구</th>
+            <th class="num">걸린 시간</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {items.length === 0 && (
+            <tr>
+              <td colSpan={5} class="muted">
+                아직 보낸 요청이 없습니다.
+              </td>
+            </tr>
+          )}
+          {items.map((c) => (
+            <tr key={c.at}>
+              <td>{formatTime(c.at)}</td>
+              <td>{stateText(c.request)}</td>
+              <td class="mono">{c.answer ? c.answer.choice : <Badge tone="red">실패</Badge>}</td>
+              <td class="num">{c.durationMs}ms</td>
+              <td class="actions">
+                <button class="small" onClick={() => setOpen(c)}>
+                  보기
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {open && (
+        <Modal title={`${formatTime(open.at)} 요청`} onClose={() => setOpen(null)}>
+          <CallDetail call={open} />
+        </Modal>
+      )}
+    </Section>
   );
 }

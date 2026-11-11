@@ -129,6 +129,7 @@ export async function buildHarness(options: {
       update: async () => Promise.reject(new Error("not used")),
       systemOne: () => null,
       setSystemOne: async () => Promise.reject(new Error("not used")),
+      systemOneCalls: () => [],
     },
     sessions: new SessionStore(db),
     toolSettings: new ToolSettings(db),

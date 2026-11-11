@@ -113,7 +113,7 @@ export interface AdminDeps {
   /** sandboxd `GET /v1/sandboxes` */
   sandboxes: () => Promise<SandboxInfo[]>;
   /** LLM·System One 연결 설정 (관리 화면에서 바꾸면 바로 적용된다) */
-  llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update" | "systemOne" | "setSystemOne">;
+  llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update" | "systemOne" | "setSystemOne" | "systemOneCalls">;
   /** 기본 도구 켜고 끄기 (메모리의 세션도 다음 턴부터 적용된다) */
   toolSettings: Pick<ToolSettings, "disabled" | "setEnabled">;
   /** 도구별 호출·턴·사용자별 토큰·mcp_search 정확도 통계 (최근 30일) */

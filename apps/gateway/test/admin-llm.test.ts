@@ -289,7 +289,8 @@ describe("/admin/api/systemone", () => {
   it("tests a decision model server, also before it is saved and with the stored key", async () => {
     h.llm.setDecision(() => ({ good: 0.97, bad: 0.03 }));
     const ok = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, apiKey: "unsaved-key", headers: { "x-team": "ai" }, id: "d3-ultra" } });
-    expect(ok).toMatchObject({ ok: true, answer: { choice: "good", probabilities: { good: 0.97, bad: 0.03 } } });
+    expect(ok).toMatchObject({ answer: { choice: "good", probabilities: { good: 0.97, bad: 0.03 } } });
+    expect(ok.error).toBeUndefined();
     // 보낸 요청 본문도 돌려준다
     expect(ok.request).toEqual(h.llm.decisions.at(-1)!.body);
     expect(ok.request).toMatchObject({ model: "d3-ultra", state: { message: expect.any(String) }, questions: { choice: { type: "choice" } } });
@@ -303,10 +304,30 @@ describe("/admin/api/systemone", () => {
 
     h.llm.setDecision(null);
     const failed = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra" } });
-    expect(failed.ok).toBe(false);
     expect(failed.error).toContain("500");
     expect(failed.request).toMatchObject({ model: "d3-ultra" });
     expect(failed.answer).toBeUndefined();
+    expect((await putOne(null)).status).toBe(200);
+  });
+
+  it("keeps the latest real requests with what was sent and what came back, but not test requests", async () => {
+    const calls = async () => ((await (await fetch(`${h.url}/admin/api/systemone/calls`, { headers: admin })).json()) as any).items;
+    const before = (await calls()).length;
+    expect((await putOne({ baseUrl: h.llm.url, id: "d3-ultra" })).status).toBe(200);
+    h.llm.setDecision(() => ({ a: 0.8, b: 0.2 }));
+    await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra" } });
+    await h.gateway.models.choose({ ...question, state: { query: "first" } });
+    h.llm.setDecision(null);
+    await expect(h.gateway.models.choose({ ...question, state: { query: "second" } })).rejects.toThrow();
+
+    const items = await calls();
+    expect(items.length).toBe(before + 2);
+    // 최신부터
+    expect(items[0]).toMatchObject({ request: { model: "d3-ultra", state: { query: "second" } }, error: expect.stringContaining("500") });
+    expect(items[0].answer).toBeUndefined();
+    expect(items[1]).toMatchObject({ request: { state: { query: "first" }, questions: { choice: { criteria: { a: "A", b: "B" } } } }, answer: { choice: "a", probabilities: { a: 0.8, b: 0.2 } } });
+    expect(items[1].error).toBeUndefined();
+    expect(typeof items[1].durationMs).toBe("number");
     expect((await putOne(null)).status).toBe(200);
   });
 });
