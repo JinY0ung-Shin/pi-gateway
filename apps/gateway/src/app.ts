@@ -68,6 +68,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     mcpRegistry,
     broker: config.broker,
     mcpCache: new McpToolCache(),
+    choose: models.choose,
     adminRequests,
   });
   const tools = new ToolRegistry(providers, logger.child({ component: "tools" }));

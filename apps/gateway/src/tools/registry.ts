@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
-import type { McpRegistry } from "../contracts.js";
+import type { Choose, McpRegistry } from "../contracts.js";
 import type { McpToolCache } from "../mcp-client/connections.js";
 import type { ToolProvider, ToolSessionContext } from "./provider.js";
 import { createAskUserToolProvider } from "./providers/ask-user.js";
@@ -20,6 +20,8 @@ export interface DefaultProviderDeps {
   mcpRegistry: McpRegistry;
   broker: GatewayConfig["broker"];
   mcpCache: McpToolCache;
+  /** mcp_search가 쓰는 검색 모델 */
+  choose: Choose;
   adminRequests: AdminRequests;
 }
 
@@ -29,7 +31,7 @@ export function createDefaultToolProviders(deps: DefaultProviderDeps): ToolProvi
     createSandboxToolProvider(),
     createAskUserToolProvider(),
     createRequestAdminToolProvider(deps.adminRequests),
-    createMcpToolProvider({ registry: deps.mcpRegistry, broker: deps.broker, cache: deps.mcpCache }),
+    createMcpToolProvider({ registry: deps.mcpRegistry, broker: deps.broker, cache: deps.mcpCache, choose: deps.choose }),
   ];
 }
 

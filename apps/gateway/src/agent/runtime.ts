@@ -1,7 +1,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { typesafeSystemOneApi } from "@earendil-works/pi-ai/api/typesafe-system-one.lazy";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
+import type { ChoiceQuestion } from "../contracts.js";
 import { type Db, migrate } from "../db.js";
 
 /**
@@ -10,6 +12,7 @@ import { type Db, migrate } from "../db.js";
  *   메모리의 세션은 다음 턴에 새 설정으로 다시 연다 (revision이 바뀌었는지 SessionHub가 본다).
  * - LLM 서버마다 pi provider 하나로 등록한다 (provider id = 서버 id). 모델 id는 서버 전체에서 겹치지 않는다.
  * - 티어(eagle·falcon·swift)는 모델 하나를 가리키는 고정 이름이다. 가리키는 모델을 바꾸면 그 티어의 세션도 다음 턴부터 새 모델로 돈다.
+ * - 검색 모델은 mcp_search가 도구를 고를 때 묻는 decision model이다. 대화 모델이 아니라서 모델 목록에 나오지 않는다.
  * - 자격 증명은 메모리에만 둔다 (auth.json을 만들지 않는다).
  * - models.json을 읽지 않고, 네트워크로 모델 카탈로그를 받지 않는다.
  * - API 키는 config 값 확장(`!cmd`, `$VAR`)을 거치지 않도록 runtime key로 넣는다.
@@ -65,6 +68,18 @@ export const LlmServer = z.object({
 });
 export type LlmServer = z.infer<typeof LlmServer>;
 
+/** mcp_search가 쓰는 decision model. `{baseUrl}/systemone`으로 묻는다 (vLLM이면 base URL은 `/v1`까지). */
+export const SearchModel = z.object({
+  baseUrl: z
+    .string()
+    .url()
+    .transform((u) => u.replace(/\/+$/, "")),
+  /** 빈 값 = 키가 없는 엔드포인트 */
+  apiKey: z.string(),
+  id: z.string().min(1),
+});
+export type SearchModel = z.infer<typeof SearchModel>;
+
 /** 클라이언트가 모델 id 대신 부를 수 있는 이름. 큰 모델부터. */
 export const TIERS = ["eagle", "falcon", "swift"] as const;
 export type Tier = (typeof TIERS)[number];
@@ -75,6 +90,8 @@ export const LlmSettings = z
     defaultModel: z.string().min(1),
     /** 티어 → 모델 id. 없는 티어는 쓰지 않는다. */
     tiers: z.partialRecord(z.enum(TIERS), z.string().min(1)).default({}),
+    /** 없으면 mcp_search는 BM25로 찾는다. */
+    searchModel: SearchModel.optional(),
   })
   .superRefine((s, ctx) => {
     const dup = (ids: string[]) => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
@@ -122,6 +139,11 @@ export interface GatewayModels {
   /** 설정이 바뀔 때마다 1씩 오른다 */
   revision(): number;
   current(): LlmSettingsRecord | null;
+  /**
+   * 검색 모델에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
+   * 검색 모델이 설정되지 않았으면 undefined, 호출이 실패하면 던진다.
+   */
+  choose(question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number> | undefined>;
   /** 검증하고 provider를 다시 등록한 뒤 저장한다. 등록에 실패하면 이전 설정으로 되돌리고 던진다. */
   update(settings: LlmSettings): Promise<LlmSettingsRecord>;
 }
@@ -178,6 +200,34 @@ async function register(runtime: ModelRuntime, s: LlmServer): Promise<void> {
   }
 }
 
+/** 검색 모델의 pi provider id. 서버 id에는 `.`을 쓸 수 없어 겹치지 않는다. */
+const SEARCH_PROVIDER = "mcp.search";
+/** pi가 classifier 모델에 요구하는 값. 요청을 막는 데 쓰이지 않고, 넘치면 서버가 오류를 돌려준다. */
+const SEARCH_CONTEXT_WINDOW = 131_072;
+/** 넘으면 그 검색은 BM25로 찾는다. */
+const SEARCH_TIMEOUT_MS = 10_000;
+
+async function registerSearchModel(runtime: ModelRuntime, s: SearchModel): Promise<void> {
+  runtime.registerProvider(SEARCH_PROVIDER, {
+    name: SEARCH_PROVIDER,
+    baseUrl: s.baseUrl,
+    classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
+    models: [
+      {
+        type: "classifier",
+        id: s.id,
+        name: s.id,
+        api: "typesafe-system-one",
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: SEARCH_CONTEXT_WINDOW,
+      },
+    ],
+  });
+  await runtime.setRuntimeApiKey(SEARCH_PROVIDER, s.apiKey || "not-needed");
+  if (!runtime.getModelOfType("classifier", SEARCH_PROVIDER, s.id)) throw new Error(`search model ${s.id} could not be registered with pi`);
+}
+
 /** previous에서 next로 provider를 바꾼다 (없어진 서버는 내린다) */
 async function apply(runtime: ModelRuntime, next: LlmSettings | null, previous: LlmSettings | null): Promise<void> {
   for (const s of previous?.servers ?? []) {
@@ -186,6 +236,11 @@ async function apply(runtime: ModelRuntime, next: LlmSettings | null, previous: 
     await runtime.removeRuntimeApiKey(s.id);
   }
   for (const s of next?.servers ?? []) await register(runtime, s);
+  if (previous?.searchModel) {
+    runtime.unregisterProvider(SEARCH_PROVIDER);
+    await runtime.removeRuntimeApiKey(SEARCH_PROVIDER);
+  }
+  if (next?.searchModel) await registerSearchModel(runtime, next.searchModel);
 }
 
 export async function createModelRuntime(db: Db): Promise<GatewayModels> {
@@ -235,6 +290,20 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     defaultModel: () => current?.settings.defaultModel,
     revision: () => revision,
     current: () => current,
+    async choose(question, signal) {
+      const id = current?.settings.searchModel?.id;
+      const model = id ? runtime.getModelOfType("classifier", SEARCH_PROVIDER, id) : undefined;
+      if (!model) return undefined;
+      const result = await runtime.classify(
+        model,
+        { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
+        // 실패하면 BM25로 찾으므로 다시 시도하지 않는다
+        { signal, timeoutMs: SEARCH_TIMEOUT_MS, maxRetries: 0 },
+      );
+      const answer = result.answers.choice;
+      if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "the search model returned no answer");
+      return answer.probabilities;
+    },
     async update(input) {
       const settings = LlmSettings.parse(input);
       const previous = current?.settings ?? null;

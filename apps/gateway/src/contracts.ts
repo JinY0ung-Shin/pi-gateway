@@ -56,6 +56,18 @@ export interface PluginResources {
   agents(): SubagentDefinition[];
 }
 
+// ── decision model (구현: src/agent/runtime) ────────────────────────
+
+/** decision model에 묻는 choice 질문 하나. criteria는 선택지 이름 → 설명이다. */
+export interface ChoiceQuestion {
+  state: Record<string, string>;
+  instructions: string;
+  criteria: Record<string, string>;
+}
+
+/** 선택지별 확률을 돌려준다. decision model을 쓰지 않으면 undefined */
+export type Choose = (question: ChoiceQuestion, signal?: AbortSignal) => Promise<Record<string, number> | undefined>;
+
 // ── MCP 서버 목록 (구현: src/mcp-registry) ──────────────────────────
 
 export interface McpRegistry {

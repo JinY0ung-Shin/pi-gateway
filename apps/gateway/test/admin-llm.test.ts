@@ -236,6 +236,31 @@ describe("/admin/api/llm", () => {
 
     expect((await send("POST", "/llm/test", { server: servers[0], model: "nope" })).status).toBe(400);
   });
+
+  it("stores the search model without returning its key, keeps the key when omitted, and drops the model when left out", async () => {
+    const base = await withServer({});
+    const question = { state: { query: "q" }, instructions: "pick", criteria: { a: "A", b: "B" } };
+    expect(await h.gateway.models.choose(question)).toBeUndefined();
+
+    expect((await putLlm({ ...base, searchModel: { baseUrl: `${h.llm.url}/`, apiKey: "search-key", id: "d3-ultra" } })).status).toBe(200);
+    const view = await getLlm();
+    expect(view.settings.searchModel).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", apiKeySet: true });
+    expect(JSON.stringify(view)).not.toContain("search-key");
+    // 대화 모델이 아니라서 모델 목록에 나오지 않는다
+    expect((await models()).map((m: any) => m.id)).not.toContain("d3-ultra");
+
+    expect((await putLlm({ ...base, searchModel: { baseUrl: h.llm.url, id: "d3-ultra" } })).status).toBe(200);
+    h.llm.setDecision(() => ({ a: 0.9, b: 0.1 }));
+    expect(await h.gateway.models.choose(question)).toEqual({ a: 0.9, b: 0.1 });
+    expect(h.llm.decisions.at(-1)!.authorization).toBe("Bearer search-key");
+    h.llm.setDecision(null);
+    await expect(h.gateway.models.choose(question)).rejects.toThrow();
+
+    expect((await putLlm({ ...base, searchModel: { baseUrl: "not a url", id: "d3-ultra" } })).status).toBe(400);
+    expect((await putLlm(base)).status).toBe(200);
+    expect((await getLlm()).settings.searchModel).toBeNull();
+    expect(await h.gateway.models.choose(question)).toBeUndefined();
+  });
 });
 
 describe("without LLM settings", () => {

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 /**
  * 테스트용 OpenAI 호환 LLM 서버 (`POST /v1/chat/completions`, stream=true, `GET /v1/models`).
  * 요청마다 큐에서 시나리오 하나를 꺼내 SSE chunk로 응답한다.
+ * decision model의 `POST /v1/systemone`도 받는다 (vLLM 모양).
  */
 
 export interface FakeToolCall {
@@ -39,6 +40,12 @@ export interface ChatRequest {
   [key: string]: unknown;
 }
 
+export interface DecisionRequest {
+  model: string;
+  state: Record<string, unknown>;
+  questions: Record<string, { type: string; instructions: string; criteria: Record<string, string> }>;
+}
+
 export interface FakeLlm {
   url: string;
   requests: ChatRequest[];
@@ -47,6 +54,10 @@ export interface FakeLlm {
   models: Array<{ id: string; max_model_len?: number }>;
   /** `GET /v1/models` 요청의 헤더 */
   modelRequests: IncomingMessage["headers"][];
+  /** `POST /v1/systemone` 요청 */
+  decisions: Array<{ body: DecisionRequest; authorization: string | undefined }>;
+  /** `POST /v1/systemone`의 choice 질문에 돌려줄 선택지별 확률. null이면 500으로 응답한다 (기본). */
+  setDecision(decide: ((request: DecisionRequest) => Record<string, number>) | null): void;
   /** 다음 요청들에 쓸 시나리오를 추가한다 */
   enqueue(...turns: FakeScript[]): void;
   /** 큐가 비었을 때 쓰는 기본 응답 */
@@ -63,7 +74,14 @@ export async function startFakeLlm(): Promise<FakeLlm> {
   const headers: IncomingMessage["headers"][] = [];
   const models: FakeLlm["models"] = [];
   const modelRequests: IncomingMessage["headers"][] = [];
+  const decisions: FakeLlm["decisions"] = [];
+  let decide: ((request: DecisionRequest) => Record<string, number>) | null = null;
   let callIndex = 0;
+  const readJson = async (req: IncomingMessage) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  };
 
   const server: Server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method === "GET" && (req.url === "/v1/models" || req.url?.startsWith("/v1/models?"))) {
@@ -72,13 +90,25 @@ export async function startFakeLlm(): Promise<FakeLlm> {
       res.end(JSON.stringify({ object: "list", data: models.map((m) => ({ object: "model", owned_by: "vllm", ...m })) }));
       return;
     }
+    if (req.method === "POST" && req.url === "/v1/systemone") {
+      const request = (await readJson(req)) as DecisionRequest;
+      decisions.push({ body: request, authorization: req.headers.authorization });
+      if (!decide) {
+        res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: "decision model down" }));
+        return;
+      }
+      const probabilities = decide(request);
+      const choice = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+      const answers = Object.fromEntries(Object.keys(request.questions).map((id) => [id, { type: "choice", choice, probabilities, confidence: 1 }]));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ answers, usage: { input_tokens: 10, output_tokens: 0 } }));
+      return;
+    }
     if (req.method !== "POST" || !req.url?.endsWith("/chat/completions")) {
       res.writeHead(404).end();
       return;
     }
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatRequest;
+    const body = (await readJson(req)) as ChatRequest;
     requests.push(body);
     headers.push(req.headers);
     const index = callIndex++;
@@ -153,6 +183,10 @@ export async function startFakeLlm(): Promise<FakeLlm> {
     headers,
     models,
     modelRequests,
+    decisions,
+    setDecision: (next) => {
+      decide = next;
+    },
     enqueue: (...turns) => {
       queue.push(...turns);
     },

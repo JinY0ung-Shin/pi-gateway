@@ -1,5 +1,5 @@
 import type { GatewayConfig } from "../../config.js";
-import type { McpRegistry } from "../../contracts.js";
+import type { Choose, McpRegistry } from "../../contracts.js";
 import { McpConnectionSet, type McpServerHandle, type McpToolCache } from "../../mcp-client/connections.js";
 import { createMcpProxyTools, type ProxiedServer } from "../../mcp-client/proxy.js";
 import type { ToolProvider } from "../provider.js";
@@ -11,12 +11,14 @@ import type { ToolProvider } from "../provider.js";
  * 도구는 하나씩 선언하지 않고 mcp_search·mcp_call로 쓴다 (mcp-client/proxy.ts).
  * broker가 안 되거나 서버 하나가 실패해도 나머지 도구로 세션을 연다 (brokerServersFor, McpConnectionSet.tools).
  * 목록을 못 받은 서버는 mcp_search·mcp_call이 나중에 다시 물어본다 (McpConnectionSet.retryFailed).
+ * 검색 모델 호출이 실패하면 경고만 남기고, 그 검색은 mcp_search가 BM25로 찾는다.
  */
 
 export interface McpProviderDeps {
   registry: McpRegistry;
   broker: GatewayConfig["broker"];
   cache: McpToolCache;
+  choose: Choose;
 }
 
 export function createMcpToolProvider(deps: McpProviderDeps): ToolProvider {
@@ -58,7 +60,15 @@ export function createMcpToolProvider(deps: McpProviderDeps): ToolProvider {
       });
       sets.set(ctx.sessionId, set);
       const tools = await set.tools(servers.map((s) => s.handle), ctx.signal);
-      return createMcpProxyTools(tools, servers.map((s) => s.info), set);
+      const choose: Choose = async (question, signal) => {
+        try {
+          return await deps.choose(question, signal);
+        } catch (err) {
+          ctx.log.warn({ err }, "mcp_search: the search model failed, searching with BM25");
+          return undefined;
+        }
+      };
+      return createMcpProxyTools(tools, servers.map((s) => s.info), set, choose);
     },
     disposeSession: dispose,
   };
