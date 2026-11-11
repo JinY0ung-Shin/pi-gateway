@@ -23,7 +23,10 @@ interface TestResult {
   ok: boolean;
   durationMs: number;
   error?: string;
-  probabilities?: Record<string, number>;
+  /** `/systemone`으로 보낸 요청 본문 */
+  request?: unknown;
+  /** 받은 답 */
+  answer?: { choice: string; probabilities: Record<string, number>; confidence: number };
 }
 
 /** 화면에서 고치는 값. 키 칸을 비워 두면 저장된 키를 쓴다. */
@@ -152,19 +155,25 @@ export function SystemOnePage() {
           />
         )}
         {test && test !== "testing" && (
-          <Notice tone={test.ok ? "ok" : "error"} onClose={() => setTest(null)}>
-            {test.ok ? (
-              <>
-                {test.durationMs}ms 만에 응답했습니다
-                {test.probabilities &&
-                  ` (${Object.entries(test.probabilities)
-                    .map(([option, p]) => `${option} ${(p * 100).toFixed(1)}%`)
-                    .join(" · ")})`}
-              </>
-            ) : (
-              <>응답 실패: {test.error}</>
-            )}
-          </Notice>
+          <>
+            <Notice tone={test.ok ? "ok" : "error"} onClose={() => setTest(null)}>
+              {test.ok ? `${test.durationMs}ms 만에 응답했습니다${test.answer ? `: ${test.answer.choice}` : ""}` : `응답 실패: ${test.error}`}
+            </Notice>
+            <div class="grid-2">
+              {test.request !== undefined && (
+                <div class="field">
+                  <span>보낸 요청 (POST {form.baseUrl.trim()}/systemone)</span>
+                  <pre class="code-block mono">{JSON.stringify(test.request, null, 2)}</pre>
+                </div>
+              )}
+              {test.answer && (
+                <div class="field">
+                  <span>받은 답</span>
+                  <pre class="code-block mono">{JSON.stringify(test.answer, null, 2)}</pre>
+                </div>
+              )}
+            </div>
+          </>
         )}
         <div class="grid-2">
           <label class="field">

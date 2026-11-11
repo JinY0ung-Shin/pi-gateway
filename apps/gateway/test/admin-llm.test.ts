@@ -289,7 +289,10 @@ describe("/admin/api/systemone", () => {
   it("tests a decision model server, also before it is saved and with the stored key", async () => {
     h.llm.setDecision(() => ({ good: 0.97, bad: 0.03 }));
     const ok = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, apiKey: "unsaved-key", headers: { "x-team": "ai" }, id: "d3-ultra" } });
-    expect(ok).toMatchObject({ ok: true, probabilities: { good: 0.97, bad: 0.03 } });
+    expect(ok).toMatchObject({ ok: true, answer: { choice: "good", probabilities: { good: 0.97, bad: 0.03 } } });
+    // 보낸 요청 본문도 돌려준다
+    expect(ok.request).toEqual(h.llm.decisions.at(-1)!.body);
+    expect(ok.request).toMatchObject({ model: "d3-ultra", state: { message: expect.any(String) }, questions: { choice: { type: "choice" } } });
     expect(h.llm.decisions.at(-1)!.headers).toMatchObject({ authorization: "Bearer unsaved-key", "x-team": "ai" });
     expect(h.llm.decisions.at(-1)!.body).toMatchObject({ model: "d3-ultra" });
     expect((await getOne()).model).toBeNull();
@@ -302,6 +305,8 @@ describe("/admin/api/systemone", () => {
     const failed = await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra" } });
     expect(failed.ok).toBe(false);
     expect(failed.error).toContain("500");
+    expect(failed.request).toMatchObject({ model: "d3-ultra" });
+    expect(failed.answer).toBeUndefined();
     expect((await putOne(null)).status).toBe(200);
   });
 });

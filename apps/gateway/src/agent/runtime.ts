@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, ClassifierChoiceAnswer, Model } from "@earendil-works/pi-ai";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { typesafeSystemOneApi } from "@earendil-works/pi-ai/api/typesafe-system-one.lazy";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -253,19 +253,32 @@ async function applySystemOne(runtime: ModelRuntime, next: SystemOneModel | null
   if (!runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, next.id)) throw new Error(`model ${next.id} could not be registered with pi`);
 }
 
-/** 등록된 System One 모델에 choice 질문 하나를 묻는다. 실패하면 던진다. */
-async function ask(runtime: ModelRuntime, id: string, question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number>> {
+/** 등록된 System One 모델에 choice 질문 하나를 묻는다. 실패하면 던진다. onPayload는 보내기 직전의 요청 본문을 받는다. */
+async function ask(
+  runtime: ModelRuntime,
+  id: string,
+  question: ChoiceQuestion,
+  options: { signal?: AbortSignal; onPayload?: (payload: unknown) => void } = {},
+): Promise<ClassifierChoiceAnswer> {
   const model = runtime.getModelOfType("classifier", SYSTEMONE_PROVIDER, id);
   if (!model) throw new Error(`model ${id} is not registered`);
   const result = await runtime.classify(
     model,
     { state: question.state, questions: { choice: { type: "choice", instructions: question.instructions, criteria: question.criteria } } },
     // 실패하면 mcp_search가 BM25로 찾으므로 다시 시도하지 않는다
-    { signal, timeoutMs: SYSTEMONE_TIMEOUT_MS, maxRetries: 0 },
+    {
+      signal: options.signal,
+      timeoutMs: SYSTEMONE_TIMEOUT_MS,
+      maxRetries: 0,
+      onPayload: (payload) => {
+        options.onPayload?.(payload);
+        return undefined;
+      },
+    },
   );
   const answer = result.answers.choice;
   if (result.stopReason !== "stop" || answer?.type !== "choice") throw new Error(result.errorMessage ?? "System One returned no answer");
-  return answer.probabilities;
+  return answer;
 }
 
 /** previous에서 next로 provider를 바꾼다 (없어진 서버는 내린다) */
@@ -354,7 +367,7 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
       systemOne = model && { model, updatedAt };
       return systemOne;
     },
-    choose: async (question, signal) => (systemOne ? ask(runtime, systemOne.model.id, question, signal) : undefined),
+    choose: async (question, signal) => (systemOne ? (await ask(runtime, systemOne.model.id, question, { signal })).probabilities : undefined),
     async update(input) {
       const settings = LlmSettings.parse(input);
       const previous = current?.settings ?? null;
@@ -484,23 +497,35 @@ export interface SystemOneTestResult {
   ok: boolean;
   durationMs: number;
   error?: string;
-  /** 고른 선택지별 확률 */
-  probabilities?: Record<string, number>;
+  /** `/systemone`으로 보낸 요청 본문 (보내기 전에 실패했으면 없다) */
+  request?: unknown;
+  /** 받은 답: 고른 선택지, 선택지별 확률, confidence */
+  answer?: ClassifierChoiceAnswer;
 }
 
 /** System One 서버에 짧은 choice 질문을 보낸다. 세션과 같은 pi 경로를 쓰되, 저장하기 전 설정도 시험할 수 있도록 따로 만든 runtime에 등록한다. */
 export async function testSystemOne(model: SystemOneModel): Promise<SystemOneTestResult> {
   const started = Date.now();
+  let request: unknown;
   try {
     const runtime = await createRuntime();
     await applySystemOne(runtime, model);
-    const probabilities = await ask(runtime, model.id, {
-      state: { message: "The deploy finished without errors." },
-      instructions: "Is `message` good news or bad news?",
-      criteria: { good: "Good news", bad: "Bad news" },
-    });
-    return { ok: true, durationMs: Date.now() - started, probabilities };
+    const answer = await ask(
+      runtime,
+      model.id,
+      {
+        state: { message: "The deploy finished without errors." },
+        instructions: "Is `message` good news or bad news?",
+        criteria: { good: "Good news", bad: "Bad news" },
+      },
+      {
+        onPayload: (payload) => {
+          request = payload;
+        },
+      },
+    );
+    return { ok: true, durationMs: Date.now() - started, request, answer };
   } catch (err) {
-    return { ok: false, durationMs: Date.now() - started, error: describe(err) };
+    return { ok: false, durationMs: Date.now() - started, error: describe(err), ...(request === undefined ? {} : { request }) };
   }
 }
