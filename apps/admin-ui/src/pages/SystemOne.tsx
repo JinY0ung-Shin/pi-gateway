@@ -210,11 +210,11 @@ function ModelPicker(props: { models: NonNullable<ProbeResult["models"]>; curren
       {props.models.length === 0 ? (
         <p class="muted small-text">서버가 모델 목록을 주지 않았습니다. 모델 id를 직접 넣으세요.</p>
       ) : (
-        <table class="table compact">
+        <table class="table">
           <tbody>
             {props.models.map((m) => (
               <tr key={m.id}>
-                <td class="mono">
+                <td class="clip mono">
                   {m.id} {m.name && <span class="muted">{m.name}</span>}
                 </td>
                 <td class="actions">
@@ -274,7 +274,7 @@ function RecentCalls() {
         mcp_search가 System One에 실제로 보낸 요청 최근 20건입니다. gateway 메모리에만 있어서 다시 시작하면 비워집니다. 테스트 버튼으로 보낸 요청은 들어가지 않습니다.
       </p>
       {error && <Notice tone="error">{error}</Notice>}
-      <table class="table compact">
+      <table class="table">
         <thead>
           <tr>
             <th>시각</th>
@@ -295,7 +295,9 @@ function RecentCalls() {
           {items.map((c) => (
             <tr key={c.at}>
               <td>{formatTime(c.at)}</td>
-              <td>{stateText(c.request)}</td>
+              <td class="clip" title={stateText(c.request)}>
+                {stateText(c.request)}
+              </td>
               <td class="mono">{c.answer ? c.answer.choice : <Badge tone="red">실패</Badge>}</td>
               <td class="num">{c.durationMs}ms</td>
               <td class="actions">

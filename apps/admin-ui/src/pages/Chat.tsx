@@ -444,7 +444,7 @@ export function ChatPage() {
               ))}
             </div>
           )}
-          <div class="row">
+          <div class="composer">
             <textarea
               class="grow"
               rows={3}
@@ -573,7 +573,7 @@ function FileView(props: { file: ChatFile }) {
   }, [file.url]);
   return (
     <div class="file-card">
-      <div class="row">
+      <div class="row wrap">
         <span class="mono grow">{file.path}</span>
         <span class="muted small-text">
           {file.mime_type} · {formatBytes(file.size)}
@@ -600,7 +600,7 @@ function QuestionForm(props: { pending: Pending; onAnswer: (output: string) => v
   };
   const answers = props.pending.questions.map((_, qi) => [...(picked[qi] ?? []), other[qi]?.trim() ?? ""].filter(Boolean));
   return (
-    <div class="card question">
+    <div class="question">
       {props.pending.questions.map((q, qi) => (
         <div key={qi} class="field">
           <strong>

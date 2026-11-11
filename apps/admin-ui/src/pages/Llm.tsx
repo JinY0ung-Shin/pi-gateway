@@ -292,7 +292,9 @@ export function LlmPage() {
           onRemove={() => remove(s)}
         />
       ))}
-      <button onClick={addServer}>+ 서버 추가</button>
+      <div class="section">
+        <button onClick={addServer}>+ 서버 추가</button>
+      </div>
       <div class={dirty ? "save-bar dirty" : "save-bar"}>
         {action.view}
         <div class="row wrap">
@@ -319,7 +321,7 @@ function TierCard(props: { tiers: Tiers; models: string[]; defaultModel: string;
       <p class="muted small-text">
         클라이언트는 모델 id 대신 티어 이름으로 부를 수 있습니다. 가리키는 모델을 바꾸면 그 티어로 진행 중인 대화도 다음 턴부터 새 모델로 갑니다.
       </p>
-      <table class="table compact">
+      <table class="table">
         <thead>
           <tr>
             <th>기본</th>
@@ -342,7 +344,7 @@ function TierCard(props: { tiers: Tiers; models: string[]; defaultModel: string;
                 />
               </td>
               <td class="mono">{tier}</td>
-              <td>
+              <td class="clip">
                 <select aria-label={`${tier} 모델`} value={props.tiers[tier] ?? ""} onChange={(e) => set(tier, e.currentTarget.value)}>
                   <option value="">쓰지 않음</option>
                   {props.models.map((id) => (
@@ -376,7 +378,7 @@ function ServerCard(props: {
   const [picking, setPicking] = useState(false);
   const [tests, setTests] = useState<Record<string, TestResult | "testing">>({});
   const [lastTest, setLastTest] = useState<{ model: string; result: TestResult } | null>(null);
-  const [effortsOf, setEffortsOf] = useState<number | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
   const checking = props.probe === "checking";
   const probe = props.probe === "checking" ? undefined : props.probe;
   const listed = probe?.ok ? new Set(probe.models?.map((m) => m.id)) : null;
@@ -483,16 +485,14 @@ function ServerCard(props: {
           <TestSummary model={lastTest.model} result={lastTest.result} />
         </Notice>
       )}
-      <table class="table compact">
+      <table class="table">
         <thead>
           <tr>
             <th>기본</th>
-            <th>id</th>
-            <th>표시 이름</th>
-            <th>contextWindow</th>
-            <th>maxTokens</th>
-            <th title="답하기 전에 생각(reasoning)하는 모델">reasoning</th>
-            <th title="이미지 입력을 받는 모델">이미지</th>
+            <th>id · 표시 이름</th>
+            <th class="num">contextWindow</th>
+            <th class="num">maxTokens</th>
+            <th>기능</th>
             <th>상태</th>
             <th />
           </tr>
@@ -500,7 +500,7 @@ function ServerCard(props: {
         <tbody>
           {s.models.length === 0 && (
             <tr>
-              <td colSpan={9} class="muted">
+              <td colSpan={7} class="muted">
                 모델이 없습니다. '모델 가져오기'로 서버의 모델을 고르거나 직접 추가하세요.
               </td>
             </tr>
@@ -508,51 +508,36 @@ function ServerCard(props: {
           {s.models.map((m, i) => {
             const t = tests[m.id];
             return (
-              <tr key={i}>
-                <td>
+              <tr key={i} class="clickable" title="눌러서 고칩니다" onClick={() => setEditing(i)}>
+                <td onClick={(e) => e.stopPropagation()}>
                   <input
                     type="radio"
                     name="default-model"
                     aria-label={`${m.id} 기본 모델`}
+                    title="model을 주지 않은 새 세션이 쓰는 모델"
                     checked={m.id !== "" && m.id === props.defaultModel}
                     onChange={() => props.onDefault(m.id)}
                   />
                 </td>
+                <td class="clip" title={m.id}>
+                  <span class="mono">{m.id || <span class="muted">id 없음</span>}</span> {m.name && <span class="muted small-text">{m.name}</span>}
+                </td>
+                <td class="num">{m.contextWindow.toLocaleString()}</td>
+                <td class="num">{m.maxTokens.toLocaleString()}</td>
                 <td>
-                  <input class="mono" value={m.id} placeholder="Qwen/Qwen3-32B" onInput={(e) => setModel(i, { id: e.currentTarget.value })} />
+                  {m.input.includes("image") && <Badge>이미지</Badge>}
+                  {m.reasoning && <Badge title={`받는 effort: ${m.efforts.join(", ")}`}>{`reasoning · ${m.defaultEffort}`}</Badge>}
                 </td>
                 <td>
-                  <input value={m.name ?? ""} placeholder={m.id} onInput={(e) => setModel(i, { name: e.currentTarget.value })} />
-                </td>
-                <td>
-                  <input type="number" min={1} value={m.contextWindow} onInput={(e) => setModel(i, { contextWindow: Number(e.currentTarget.value) })} />
-                </td>
-                <td>
-                  <input type="number" min={1} value={m.maxTokens} onInput={(e) => setModel(i, { maxTokens: Number(e.currentTarget.value) })} />
-                </td>
-                <td>
-                  <div class="row">
-                    <input type="checkbox" checked={m.reasoning} onChange={(e) => setModel(i, { reasoning: e.currentTarget.checked })} />
-                    {m.reasoning && (
-                      <button class="small" title="받는 reasoning.effort와 기본값" onClick={() => setEffortsOf(i)}>
-                        {`effort ${m.efforts.length}개 · 기본 ${m.defaultEffort}`}
-                      </button>
-                    )}
-                  </div>
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={m.input.includes("image")}
-                    onChange={(e) => setModel(i, { input: e.currentTarget.checked ? ["text", "image"] : ["text"] })}
-                  />
-                </td>
-                <td>
-                  {listed && m.id && (listed.has(m.id) ? <Badge tone="green">서버에 있음</Badge> : <Badge tone="amber" title="서버의 /models 목록에 이 id가 없습니다">서버에 없음</Badge>)}
+                  {listed && m.id && !listed.has(m.id) && (
+                    <Badge tone="amber" title="서버의 /models 목록에 이 id가 없습니다">
+                      서버에 없음
+                    </Badge>
+                  )}
                   {t === "testing" && <Badge>테스트 중…</Badge>}
                   {t && t !== "testing" && (t.ok ? <Badge tone="green">{`응답 ${duration(t.durationMs)}`}</Badge> : <Badge tone="red">응답 실패</Badge>)}
                 </td>
-                <td class="actions">
+                <td class="actions" onClick={(e) => e.stopPropagation()}>
                   <button class="small" disabled={!canConnect || !m.id.trim() || t === "testing"} onClick={() => void test(m)}>
                     테스트
                   </button>
@@ -566,14 +551,18 @@ function ServerCard(props: {
         </tbody>
       </table>
       <div class="row">
-        <button class="small" onClick={() => addModels([newModel("", 32768, 8192)])}>
+        <button
+          class="small"
+          onClick={() => {
+            addModels([newModel("", 32768, 8192)]);
+            setEditing(s.models.length);
+          }}
+        >
           + 직접 추가
         </button>
-        <span class="muted small-text">contextWindow는 vLLM의 --max-model-len과 맞춥니다. 뺀 모델로 만든 세션은 이어갈 수 없습니다.</span>
+        <span class="muted small-text">뺀 모델로 만든 세션은 이어갈 수 없습니다.</span>
       </div>
-      {effortsOf !== null && s.models[effortsOf] && (
-        <EffortEditor model={s.models[effortsOf]} onChange={(patch) => setModel(effortsOf, patch)} onClose={() => setEffortsOf(null)} />
-      )}
+      {editing !== null && s.models[editing] && <ModelEditor model={s.models[editing]} onChange={(patch) => setModel(editing, patch)} onClose={() => setEditing(null)} />}
     </Section>
   );
 }
@@ -587,7 +576,7 @@ function ConnectionStatus(props: { checking: boolean; probe: ProbeResult | undef
   if (!probe.ok) return <Notice tone="error">연결 실패: {probe.error}</Notice>;
   return (
     <p class="small-text">
-      <Badge tone="green">연결됨</Badge> <span class="muted">{`${probe.durationMs}ms · 서버의 모델 ${probe.models?.length ?? 0}개`}</span>
+      <Badge tone="green">연결됨</Badge> <span class="muted">{`${probe.durationMs}ms · 서버의 모델 ${probe.models?.length ?? 0}개`}</span>{" "}
       {props.missing > 0 && <Badge tone="amber">{`서버에 없는 모델 ${props.missing}개`}</Badge>}
     </p>
   );
@@ -616,7 +605,7 @@ function ModelPicker(props: {
       {props.available.length === 0 ? (
         <p class="muted small-text">서버가 모델 목록을 주지 않았습니다. 모델 표의 '+ 직접 추가'로 넣으세요.</p>
       ) : (
-        <table class="table compact">
+        <table class="table">
           <thead>
             <tr>
               <th />
@@ -639,7 +628,7 @@ function ModelPicker(props: {
                       onChange={(e) => toggle(m.id, e.currentTarget.checked)}
                     />
                   </td>
-                  <td class="mono">
+                  <td class="clip mono" title={m.id}>
                     {m.id} {m.name && <span class="muted">{m.name}</span>}
                   </td>
                   <td>{m.contextWindow ? m.contextWindow.toLocaleString() : <span class="muted">알 수 없음 (32,768로 넣습니다)</span>}</td>
@@ -651,7 +640,7 @@ function ModelPicker(props: {
         </table>
       )}
       <div class="row">
-        <button class="primary small" disabled={picked.length === 0} onClick={add}>
+        <button class="primary" disabled={picked.length === 0} onClick={add}>
           {`선택한 ${picked.length}개 추가`}
         </button>
         <span class="muted small-text">reasoning·이미지 여부는 서버가 알려 주지 않으니 추가한 뒤 표시하세요.</span>
@@ -660,48 +649,86 @@ function ModelPicker(props: {
   );
 }
 
-/** reasoning 모델이 받는 effort와 기본값. 목록에 없는 effort를 요청하면 gateway가 400을 돌려준다. */
-function EffortEditor(props: { model: ModelRow; onChange: (patch: Partial<ModelRow>) => void; onClose: () => void }) {
+/** 모델 하나를 고치는 창. 고친 값은 화면에만 있고, 페이지의 저장을 눌러야 적용된다. */
+function ModelEditor(props: { model: ModelRow; onChange: (patch: Partial<ModelRow>) => void; onClose: () => void }) {
   const m = props.model;
   const toggle = (effort: string, on: boolean) => props.onChange({ efforts: EFFORTS.filter((e) => (e === effort ? on : m.efforts.includes(e))) });
   return (
-    <Modal title={`${m.id || "새 모델"} reasoning.effort`} onClose={props.onClose}>
-      <table class="table compact">
-        <thead>
-          <tr>
-            <th>effort</th>
-            <th>받음</th>
-            <th>기본</th>
-          </tr>
-        </thead>
-        <tbody>
-          {EFFORTS.map((e) => (
-            <tr key={e}>
-              <td class="mono">{e}</td>
-              <td>
-                <input
-                  type="checkbox"
-                  aria-label={`${e} 받음`}
-                  checked={m.efforts.includes(e)}
-                  disabled={e === m.defaultEffort}
-                  onChange={(ev) => toggle(e, ev.currentTarget.checked)}
-                />
-              </td>
-              <td>
-                <input
-                  type="radio"
-                  name="default-effort"
-                  aria-label={`${e} 기본`}
-                  checked={e === m.defaultEffort}
-                  disabled={!m.efforts.includes(e)}
-                  onChange={() => props.onChange({ defaultEffort: e })}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p class="muted small-text">요청에 effort가 없으면 기본값을 씁니다. 받지 않는 effort를 요청하면 400으로 거절합니다. none은 생각하지 않고 답합니다.</p>
+    <Modal title={m.id ? <span class="mono">{m.id}</span> : "새 모델"} onClose={props.onClose}>
+      <div class="grid-2">
+        <label class="field">
+          <span>id</span>
+          <input class="mono" value={m.id} placeholder="Qwen/Qwen3-32B" onInput={(e) => props.onChange({ id: e.currentTarget.value })} />
+        </label>
+        <label class="field">
+          <span>표시 이름 (선택)</span>
+          <input value={m.name ?? ""} placeholder={m.id} onInput={(e) => props.onChange({ name: e.currentTarget.value })} />
+        </label>
+        <label class="field">
+          <span>contextWindow</span>
+          <input type="number" min={1} value={m.contextWindow} onInput={(e) => props.onChange({ contextWindow: Number(e.currentTarget.value) })} />
+          <small class="muted">vLLM의 --max-model-len과 맞춥니다.</small>
+        </label>
+        <label class="field">
+          <span>maxTokens</span>
+          <input type="number" min={1} value={m.maxTokens} onInput={(e) => props.onChange({ maxTokens: Number(e.currentTarget.value) })} />
+        </label>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" checked={m.input.includes("image")} onChange={(e) => props.onChange({ input: e.currentTarget.checked ? ["text", "image"] : ["text"] })} />
+        <span>이미지 입력을 받습니다</span>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" checked={m.reasoning} onChange={(e) => props.onChange({ reasoning: e.currentTarget.checked })} />
+        <span>답하기 전에 생각(reasoning)합니다</span>
+      </label>
+      {m.reasoning && (
+        <>
+          <h3>reasoning.effort</h3>
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>effort</th>
+                <th>받음</th>
+                <th>기본</th>
+              </tr>
+            </thead>
+            <tbody>
+              {EFFORTS.map((e) => (
+                <tr key={e}>
+                  <td class="clip mono">{e}</td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`${e} 받음`}
+                      checked={m.efforts.includes(e)}
+                      disabled={e === m.defaultEffort}
+                      onChange={(ev) => toggle(e, ev.currentTarget.checked)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="radio"
+                      name="default-effort"
+                      aria-label={`${e} 기본`}
+                      checked={e === m.defaultEffort}
+                      disabled={!m.efforts.includes(e)}
+                      onChange={() => props.onChange({ defaultEffort: e })}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p class="muted small-text">요청에 effort가 없으면 기본값을 씁니다. 받지 않는 effort를 요청하면 400으로 거절합니다. none은 생각하지 않고 답합니다.</p>
+        </>
+      )}
+      <div class="row">
+        <button class="primary" onClick={props.onClose}>
+          확인
+        </button>
+        <span class="muted small-text">페이지의 저장을 눌러야 적용됩니다.</span>
+      </div>
     </Modal>
   );
 }

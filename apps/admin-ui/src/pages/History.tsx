@@ -175,7 +175,7 @@ function SessionList() {
             <th>마지막 활동</th>
             <th>user</th>
             <th>모델</th>
-            <th>턴</th>
+            <th class="num">턴</th>
             <th>세션</th>
           </tr>
         </thead>
@@ -191,9 +191,9 @@ function SessionList() {
             <tr key={s.id} class="clickable" onClick={() => (location.hash = `#/history/${enc(s.id)}`)}>
               <td>{formatTime(s.lastActiveAt)}</td>
               <td class="mono">{s.user}</td>
-              <td class="mono small-text">{s.model}</td>
-              <td>{s.turn}</td>
-              <td class="mono small-text">{s.id}</td>
+              <td class="mono">{s.model}</td>
+              <td class="num">{s.turn}</td>
+              <td class="clip mono muted">{s.id}</td>
             </tr>
           ))}
         </tbody>

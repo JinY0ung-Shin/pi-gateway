@@ -117,17 +117,26 @@ export function McpPage(props: { focus?: string | undefined }) {
             )}
             {list.servers.map((s) => (
               <tr key={s.config.id} class="clickable" onClick={() => setEditing(s)}>
-                <td>
-                  <span class="mono">{s.config.id}</span>
-                  {s.config.displayName && <div class="muted small-text">{s.config.displayName}</div>}
+                <td class="mono" title={s.config.displayName}>
+                  {s.config.id}
                 </td>
                 <td>
                   <RunsInBadge value={s.config.runIn} />
                 </td>
-                <td class="mono small-text">{s.config.transport.type === "stdio" ? `${s.config.transport.command} ${s.config.transport.args.join(" ")}` : s.config.transport.url}</td>
+                <td class="clip half mono" title={targetOf(s.config)}>
+                  {targetOf(s.config)}
+                </td>
                 <td>{s.config.scope}</td>
-                <td>{s.config.source.kind === "plugin" ? <Badge tone="blue">{s.config.source.pluginId}</Badge> : <span class="muted">직접 등록</span>}</td>
                 <td>
+                  {s.config.source.kind === "plugin" ? (
+                    <Badge tone="blue" title={s.config.source.pluginId}>
+                      {s.config.source.pluginId.split("@")[0]}
+                    </Badge>
+                  ) : (
+                    <span class="muted">직접 등록</span>
+                  )}
+                </td>
+                <td class="clip half">
                   <ServerState entry={s} check={checks[s.config.id]} />
                 </td>
                 {/* 이 칸을 눌러도 편집 창은 열리지 않는다 */}
@@ -159,6 +168,9 @@ export function McpPage(props: { focus?: string | undefined }) {
   );
 }
 
+/** 목록의 대상 칸: sandbox 서버는 명령, broker 서버는 주소 */
+const targetOf = (config: McpServerConfig) => (config.transport.type === "stdio" ? `${config.transport.command} ${config.transport.args.join(" ")}` : config.transport.url);
+
 /** 편집 창에서 env·args·url·headers에 쓰는 자리표시자 */
 function Placeholders() {
   return (
@@ -168,19 +180,19 @@ function Placeholders() {
         <tbody>
           <tr>
             <td class="mono">{"{{secret:NAME}}"}</td>
-            <td>broker 비밀 저장소 값 (broker 서버만)</td>
+            <td class="wrap">broker 비밀 저장소 값 (broker 서버만)</td>
           </tr>
           <tr>
             <td class="mono">{"{{ctx.header:NAME}}"}</td>
-            <td>클라이언트 요청 헤더 (broker 서버만). 개인 토큰처럼 사용자마다 다른 값은 이것을 쓴다</td>
+            <td class="wrap">클라이언트 요청 헤더 (broker 서버만). 개인 토큰처럼 사용자마다 다른 값은 이것을 쓴다</td>
           </tr>
           <tr>
             <td class="mono">{"{{user}}"}</td>
-            <td>사용자 id (sandbox 서버는 per-user 이상)</td>
+            <td class="wrap">사용자 id (sandbox 서버는 per-user 이상)</td>
           </tr>
           <tr>
             <td class="mono">{"{{session}} · {{metadata:KEY}}"}</td>
-            <td>세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, sandbox 서버는 per-session)</td>
+            <td class="wrap">세션 id · 요청 metadata (MCP_METADATA_KEYS 허용분, sandbox 서버는 per-session)</td>
           </tr>
         </tbody>
       </table>
@@ -196,7 +208,7 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
   return (
     <>
       {!entry.config.enabled && <Badge>꺼짐</Badge>}
-      {missing > 0 && <Badge tone="amber">비밀키 {missing}개 없음</Badge>}
+      {missing > 0 && <Badge tone="amber">{`비밀키 ${missing}개 없음`}</Badge>}
       {check === "checking" && <Badge>확인 중…</Badge>}
       {check && check !== "checking" && check.ok && entry.store === "broker" && check.note && (
         <Badge tone="blue" title={check.note}>
@@ -213,15 +225,18 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
       )}
       {check && check !== "checking" && !check.ok && (
         <>
-          <Badge tone="red">{entry.store === "sandbox" ? "설정 오류" : "연결 실패"}</Badge>
-          <div class="small-text err-text">{clip(check.error ?? "")}</div>
+          <Badge tone="red">{entry.store === "sandbox" ? "설정 오류" : "연결 실패"}</Badge>{" "}
+          <span class="small-text err-text" title={check.error}>
+            {check.error}
+          </span>
         </>
       )}
       {!check && entry.config.enabled && missing === 0 && <span class="muted small-text">확인 전</span>}
       {lastError && (
-        <div class="small-text err-text" title={lastError}>
-          최근 오류 {formatTime(entry.status?.lastErrorAt)}: {clip(lastError)}
-        </div>
+        <span class="small-text err-text" title={lastError}>
+          {" "}
+          최근 오류 {formatTime(entry.status?.lastErrorAt)}: {lastError}
+        </span>
       )}
     </>
   );
@@ -230,8 +245,6 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
 /** 새 broker 서버의 url·headers가 쓰는 {{secret:NAME}} 이름 */
 const secretRefs = (f: FormState) =>
   [...new Set([...`${f.url}\n${f.headers}`.matchAll(/\{\{\s*secret:([A-Za-z0-9_.-]{1,64})\s*\}\}/g)].map((m) => m[1]!))].sort();
-
-const clip = (text: string) => (text.length > 160 ? `${text.slice(0, 160)}…` : text);
 
 interface FormState {
   id: string;
@@ -458,7 +471,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
               {newSecretNames.map((name) => (
                 <tr key={name}>
                   <td class="mono">{name}</td>
-                  <td>
+                  <td class="clip">
                     <input
                       type="password"
                       autocomplete="new-password"
@@ -535,7 +548,7 @@ function Secrets(props: { entry: McpServerEntry; required: string[]; onChanged: 
               <tr key={name}>
                 <td class="mono">{name}</td>
                 <td>{info ? <Badge tone="green" title={`fingerprint ${info.fingerprint}`}>{`설정됨 · ${formatTime(info.setAt)}`}</Badge> : <Badge tone="amber">없음</Badge>}</td>
-                <td>
+                <td class="clip">
                   <input
                     type="password"
                     autocomplete="new-password"

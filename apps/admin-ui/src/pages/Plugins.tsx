@@ -113,27 +113,20 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
             </tr>
           )}
           {props.marketplaces.map((m) => (
-            <tr key={m.name}>
+            <tr key={m.name} class="clickable" title="눌러서 plugin을 설치합니다" onClick={() => props.onSelect(m.name)}>
               <td>
-                <button class="link" onClick={() => props.onSelect(m.name)}>
-                  {m.name}
-                </button>
-                {m.owner && <div class="muted small-text">{m.owner}</div>}
+                {m.name} {m.owner && <span class="muted small-text">{m.owner}</span>}
               </td>
-              <td class="mono small-text">
+              <td class="clip mono" title={m.url}>
                 {m.url}
                 {m.ref ? `#${m.ref}` : ""}
               </td>
-              <td class="mono small-text">{m.commitSha.slice(0, 10)}</td>
+              <td class="mono">{m.commitSha.slice(0, 7)}</td>
               <td>
-                {m.pluginCount}
-                {m.invalidEntries > 0 && <Badge tone="amber">{`읽지 못한 항목 ${m.invalidEntries}`}</Badge>}
+                {m.pluginCount}개 {m.invalidEntries > 0 && <Badge tone="amber">{`읽지 못한 항목 ${m.invalidEntries}`}</Badge>}
               </td>
               <td>{formatTime(m.refreshedAt)}</td>
-              <td class="actions">
-                <button class="small" onClick={() => props.onSelect(m.name)}>
-                  plugin 설치
-                </button>
+              <td class="actions" onClick={(e) => e.stopPropagation()}>
                 <button class="small" disabled={action.busy} onClick={() => void refresh(m.name)}>
                   새로고침
                 </button>
@@ -213,37 +206,42 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void>; onClos
             <tr>
               <th>이름</th>
               <th>설명</th>
-              <th title="marketplace.json 항목에 적힌 버전">marketplace 표기 버전</th>
-              <th>source</th>
+              <th title="marketplace.json 항목에 적힌 버전">표기 버전</th>
               <th title="설치본의 plugin.json 버전">설치 상태</th>
             </tr>
           </thead>
           <tbody>
             {entries.map((e) => (
               <tr key={e.name}>
-                <td class="mono">{e.name}</td>
-                <td>{e.description}</td>
-                <td>{e.listedVersion ?? <span class="muted">-</span>}</td>
-                <td class="mono small-text">
-                  {e.source} {!e.supported && <Badge tone="red">지원 안 함</Badge>}
+                <td class="mono" title={e.source}>
+                  {e.name}
                 </td>
+                <td class="clip muted" title={e.description}>
+                  {e.description}
+                </td>
+                <td>{e.listedVersion ?? <span class="muted">-</span>}</td>
                 <td class="actions">
                   {e.installed ? (
                     <>
-                      <Badge tone="green" title="설치본 plugin.json의 버전">{`설치됨 v${e.installed.version}`}</Badge>
+                      {!e.installed.update && e.listedVersion && e.listedVersion !== e.installed.version ? (
+                        <Badge tone="amber" title={`marketplace 표기(${e.listedVersion})와 설치본 plugin.json 버전이 다릅니다`}>{`설치됨 v${e.installed.version}`}</Badge>
+                      ) : (
+                        <Badge tone="green" title="설치본 plugin.json의 버전">{`설치됨 v${e.installed.version}`}</Badge>
+                      )}
                       {e.installed.update && (
                         <button class="small primary" disabled={action.busy} onClick={() => update(e.installed!.id, e.installed!.update!.version)}>
                           {`업데이트 (v${e.installed.update.version})`}
                         </button>
                       )}
-                      {!e.installed.update && e.listedVersion && e.listedVersion !== e.installed.version && (
-                        <div class="small-text muted">marketplace 표기({e.listedVersion})와 설치본 plugin.json 버전이 다릅니다</div>
-                      )}
                     </>
-                  ) : (
-                    <button class="small primary" disabled={!e.supported || action.busy} onClick={() => install(e)}>
+                  ) : e.supported ? (
+                    <button class="small primary" disabled={action.busy} onClick={() => install(e)}>
                       설치
                     </button>
+                  ) : (
+                    <Badge tone="red" title={`받는 방식을 지원하지 않습니다: ${e.source}`}>
+                      지원 안 함
+                    </Badge>
                   )}
                 </td>
               </tr>
@@ -257,116 +255,172 @@ function Catalog(props: { name: string; onInstalled: () => Promise<void>; onClos
 
 function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, string[]>; onChanged: () => Promise<void> }) {
   const action = useAction();
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = props.plugins.find((p) => p.id === openId);
+  const needsSecret = (p: PluginView) => p.mcp.some((m) => m.status === "registered" && m.id && (props.missingSecrets.get(m.id) ?? []).length > 0);
   return (
-    <Section title="설치된 plugin">
+    <Section title="설치된 plugin" actions={<span class="muted small-text">{props.plugins.length}개</span>}>
       {action.view}
-      {props.plugins.length === 0 && <p class="muted">설치된 plugin이 없습니다.</p>}
-      <div class="cards">
-        {props.plugins.map((p) => (
-          <div class="card plugin-card" key={p.id}>
-            <div class="row space">
-              <div>
-                <strong class="mono">{p.id}</strong> <Badge>{p.version}</Badge>
-                {p.update && <Badge tone="blue">{`업데이트 있음 v${p.update.version}`}</Badge>}
-                {p.description && <div class="muted small-text">{p.description}</div>}
-              </div>
-              <Toggle
-                checked={p.enabled}
-                label={`${p.id} 사용`}
-                disabled={action.busy}
-                onChange={(next) =>
-                  action.run(async () => {
-                    await api("POST", `/plugins/${enc(p.id)}/${next ? "enable" : "disable"}`);
-                    await props.onChanged();
-                  })
-                }
-              />
-            </div>
-            <div class="small-text muted">
-              {p.source.display} · {formatTime(p.updatedAt)}
-            </div>
-            <ul class="plain-list small-text">
-              <Names label="skill" items={p.components.skills.map((s) => ({ name: s.name, href: `#/skills/${enc(s.name)}` }))} />
-              <Names label="agent" items={p.components.agents.map((a) => ({ name: a.name, href: `#/agents/${enc(a.name)}` }))} />
-              <Names label="command" items={p.components.commands.map((c) => ({ name: `/${c.name}`, title: c.notes.join(" ") }))} />
-              <Names
-                label="MCP"
-                items={p.mcp.map((m) => ({
-                  name: m.id ?? m.name,
-                  ...(m.status === "registered" && m.id ? { href: `#/mcp/${enc(m.id)}` } : {}),
-                  badge:
-                    m.status !== "registered" ? (
-                      <Badge tone="red" title={m.reason}>
-                        {MCP_STATUS_LABEL[m.status] ?? m.status}
-                      </Badge>
-                    ) : m.id && (props.missingSecrets.get(m.id) ?? []).length > 0 ? (
-                      <Badge tone="amber">비밀키 필요</Badge>
-                    ) : null,
-                }))}
-              />
-            </ul>
-            {p.components.unsupported.length > 0 && (
-              <div class="row wrap">
-                <span class="small-text muted">지원 안 함:</span>
-                {p.components.unsupported.map((u) => (
-                  <Badge key={u.kind} tone="amber" title={u.detail}>
-                    {UNSUPPORTED_LABEL[u.kind] ?? u.kind}
-                  </Badge>
-                ))}
-              </div>
-            )}
-            {(p.components.warnings.length > 0 || p.components.copySkipped.length > 0) && (
-              <details>
-                <summary class="warn-text">경고 {p.components.warnings.length + p.components.copySkipped.length}개</summary>
-                <ul class="plain-list small-text">
-                  {p.components.warnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                  {p.components.copySkipped.map((s) => (
-                    <li key={s.path}>
-                      건너뛴 파일 <span class="mono">{s.path}</span>: {s.reason}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <div class="row">
-              <button
-                class={p.update ? "small primary" : "small"}
-                disabled={action.busy}
-                onClick={() =>
-                  action.run(
-                    async () => {
-                      await api("POST", `/plugins/${enc(p.id)}/update`, {});
-                      await props.onChanged();
-                    },
-                    p.update ? `${p.id}을(를) 업데이트했습니다 (v${p.update.version})` : `${p.id}을(를) 다시 설치했습니다`,
-                  )
-                }
-              >
-                {p.update ? `업데이트 (v${p.update.version})` : "다시 설치"}
-              </button>
-              <button
-                class="small danger"
-                onClick={() =>
-                  confirm(`${p.id}을(를) 제거할까요? 등록된 MCP 서버도 지워집니다.`) &&
-                  action.run(async () => {
-                    await api("DELETE", `/plugins/${enc(p.id)}`);
-                    await props.onChanged();
-                  })
-                }
-              >
-                제거
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>plugin</th>
+            <th>구성</th>
+            <th>확인할 점</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {props.plugins.length === 0 && (
+            <tr>
+              <td colSpan={4} class="muted">
+                설치된 plugin이 없습니다.
+              </td>
+            </tr>
+          )}
+          {props.plugins.map((p) => {
+            const c = p.components;
+            const parts = [
+              c.skills.length > 0 && `skill ${c.skills.length}`,
+              c.agents.length > 0 && `agent ${c.agents.length}`,
+              c.commands.length > 0 && `command ${c.commands.length}`,
+              p.mcp.length > 0 && `MCP ${p.mcp.length}`,
+            ].filter(Boolean);
+            const failed = p.mcp.filter((m) => m.status !== "registered").length;
+            const notes = c.unsupported.length + c.warnings.length + c.copySkipped.length;
+            return (
+              <tr key={p.id} class="clickable" onClick={() => setOpenId(p.id)}>
+                <td>
+                  <span class="mono">{p.id}</span> <Badge>{p.version}</Badge>
+                  {p.update && <Badge tone="blue">{`업데이트 있음 v${p.update.version}`}</Badge>}
+                </td>
+                <td class="clip muted">{parts.join(" · ") || "-"}</td>
+                <td>
+                  {failed > 0 && <Badge tone="red">{`MCP ${failed}개 등록 안 됨`}</Badge>}
+                  {needsSecret(p) && <Badge tone="amber">비밀키 필요</Badge>}
+                  {notes > 0 && <Badge tone="amber">{`경고 ${notes}`}</Badge>}
+                </td>
+                <td class="actions" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    class={p.update ? "small primary" : "small"}
+                    disabled={action.busy}
+                    onClick={() =>
+                      action.run(
+                        async () => {
+                          await api("POST", `/plugins/${enc(p.id)}/update`, {});
+                          await props.onChanged();
+                        },
+                        p.update ? `${p.id}을(를) 업데이트했습니다 (v${p.update.version})` : `${p.id}을(를) 다시 설치했습니다`,
+                      )
+                    }
+                  >
+                    {p.update ? `업데이트 (v${p.update.version})` : "다시 설치"}
+                  </button>
+                  <button
+                    class="small danger"
+                    onClick={() =>
+                      confirm(`${p.id}을(를) 제거할까요? 등록된 MCP 서버도 지워집니다.`) &&
+                      action.run(async () => {
+                        await api("DELETE", `/plugins/${enc(p.id)}`);
+                        await props.onChanged();
+                      })
+                    }
+                  >
+                    제거
+                  </button>
+                  <Toggle
+                    checked={p.enabled}
+                    label={`${p.id} 사용`}
+                    disabled={action.busy}
+                    onChange={(next) =>
+                      action.run(async () => {
+                        await api("POST", `/plugins/${enc(p.id)}/${next ? "enable" : "disable"}`);
+                        await props.onChanged();
+                      })
+                    }
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       <p class="muted small-text">
         marketplace를 새로고침하면 새 버전이 있는 plugin에 '업데이트 있음'이 붙습니다. branch를 바꾸면 그 marketplace의 plugin을 모두 다시 설치합니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
         알 수 있으니, 그 밖의 경우는 '다시 설치'로 최신 내용을 받으세요. 바뀐 내용은 새 세션부터 적용됩니다.
       </p>
+      {open && <PluginDetail plugin={open} missingSecrets={props.missingSecrets} onClose={() => setOpenId(null)} />}
     </Section>
+  );
+}
+
+/** plugin 하나가 설치한 것과 설치하면서 남긴 경고 */
+function PluginDetail(props: { plugin: PluginView; missingSecrets: Map<string, string[]>; onClose: () => void }) {
+  const p = props.plugin;
+  return (
+    <Modal
+      title={
+        <>
+          <span class="mono">{p.id}</span> <Badge>{p.version}</Badge>
+          {!p.enabled && <Badge tone="amber">꺼짐</Badge>}
+        </>
+      }
+      onClose={props.onClose}
+    >
+      {p.description && <p>{p.description}</p>}
+      <p class="small-text muted">
+        {p.source.display} · {formatTime(p.updatedAt)} 설치
+      </p>
+      <table class="table compact">
+        <tbody>
+        <Names label="skill" items={p.components.skills.map((s) => ({ name: s.name, href: `#/skills/${enc(s.name)}` }))} />
+        <Names label="agent" items={p.components.agents.map((a) => ({ name: a.name, href: `#/agents/${enc(a.name)}` }))} />
+        <Names label="command" items={p.components.commands.map((c) => ({ name: `/${c.name}`, title: c.notes.join(" ") }))} />
+        <Names
+          label="MCP"
+          items={p.mcp.map((m) => ({
+            name: m.id ?? m.name,
+            ...(m.status === "registered" && m.id ? { href: `#/mcp/${enc(m.id)}` } : {}),
+            badge:
+              m.status !== "registered" ? (
+                <Badge tone="red" title={m.reason}>
+                  {MCP_STATUS_LABEL[m.status] ?? m.status}
+                </Badge>
+              ) : m.id && (props.missingSecrets.get(m.id) ?? []).length > 0 ? (
+                <Badge tone="amber">비밀키 필요</Badge>
+              ) : null,
+          }))}
+        />
+        </tbody>
+      </table>
+      {p.components.unsupported.length > 0 && (
+        <>
+          <h3>지원하지 않아 건너뛴 것</h3>
+          <p>
+            {p.components.unsupported.map((u) => (
+              <Badge key={u.kind} tone="amber" title={u.detail}>
+                {UNSUPPORTED_LABEL[u.kind] ?? u.kind}
+              </Badge>
+            ))}
+          </p>
+        </>
+      )}
+      {(p.components.warnings.length > 0 || p.components.copySkipped.length > 0) && (
+        <>
+          <h3>경고</h3>
+          <ul class="plain-list">
+            {p.components.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+            {p.components.copySkipped.map((s) => (
+              <li key={s.path}>
+                건너뛴 파일 <span class="mono">{s.path}</span>: {s.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -374,9 +428,10 @@ function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, s
 function Names(props: { label: string; items: { name: string; href?: string; title?: string; badge?: ComponentChildren }[] }) {
   if (props.items.length === 0) return null;
   return (
-    <li>
-      <span class="muted">{props.label}</span>{" "}
-      {props.items.map((i, index) => (
+    <tr>
+      <th>{props.label}</th>
+      <td class="wrap">
+        {props.items.map((i, index) => (
         <span key={i.name} title={i.title}>
           {index > 0 && ", "}
           {i.href ? (
@@ -388,8 +443,9 @@ function Names(props: { label: string; items: { name: string; href?: string; tit
           )}
           {i.badge && <> {i.badge}</>}
         </span>
-      ))}
-    </li>
+        ))}
+      </td>
+    </tr>
   );
 }
 

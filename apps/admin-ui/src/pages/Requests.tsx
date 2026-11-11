@@ -40,7 +40,9 @@ export function RequestsPage() {
             <tr key={r.id} class="clickable" onClick={() => setOpen(r)}>
               <td>{formatTime(r.createdAt)}</td>
               <td class="mono">{r.user}</td>
-              <td>{r.title}</td>
+              <td class="clip" title={r.title}>
+                {r.title}
+              </td>
             </tr>
           ))}
         </tbody>

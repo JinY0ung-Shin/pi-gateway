@@ -55,7 +55,10 @@ export function errorText(error: unknown): string {
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "-";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("ko-KR", { hour12: false });
+  if (Number.isNaN(d.getTime())) return iso;
+  // 표 칸에 한 줄로 들어가는 고정 폭: 2026-11-11 21:12
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 export function formatBytes(n: number | undefined): string {

@@ -10,7 +10,7 @@ export function Brand() {
         π
       </span>
       <span>
-        <strong class="mono">pi-gateway</strong>
+        <strong>pi-gateway</strong>
         <span class="brand-sub">관리</span>
       </span>
     </div>

@@ -17,7 +17,7 @@ export function Login(props: { onLogin: () => void }) {
 
   return (
     <div class="login">
-      <form class="card login-card" onSubmit={submit}>
+      <form class="login-card" onSubmit={submit}>
         <Brand />
         <p class="muted">관리자 API 키(ADMIN_API_KEY)로 로그인합니다.</p>
         <label class="field">

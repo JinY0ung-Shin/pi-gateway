@@ -19,13 +19,21 @@ export function StatusPage() {
   return (
     <>
       {error && <Notice tone="warn">새로고침 실패: {error}</Notice>}
+      <div class="stats">
+        <Stat label="메모리의 세션" value={status.stats.liveSessions} />
+        <Stat label="실행 중인 턴" value={status.stats.activeTurns} />
+        <Stat label="대기 중인 턴" value={status.stats.queuedTurns} />
+        <Stat label="활성 sandbox" value={status.sandboxes.items.filter((s) => s.state === "running").length} />
+        <Stat label="gateway RSS" value={formatBytes(status.process.rssBytes)} />
+        <Stat label="heap" value={formatBytes(status.process.heapUsedBytes)} of={formatBytes(status.process.heapTotalBytes)} />
+      </div>
       <Section title="연결 상태">
-        <table class="table compact">
+        <table class="table">
           <tbody>
             {services.llm.length === 0 && (
               <tr>
                 <th>LLM</th>
-                <td>
+                <td class="clip">
                   <Badge tone="amber">설정 안 됨</Badge> <a href="#/llm">LLM 화면</a>에서 서버를 등록하세요.
                 </td>
               </tr>
@@ -33,11 +41,14 @@ export function StatusPage() {
             {services.llm.map((s) => (
               <tr key={s.id}>
                 <th>
-                  LLM <a class="mono" href="#/llm">{s.id}</a>
+                  LLM{" "}
+                  <a class="mono" href="#/llm">
+                    {s.id}
+                  </a>
                 </th>
-                <td>
+                <td class="clip">
                   <Check check={s} />
-                  {s.ok && <span class="muted small-text"> · 모델 {s.models}개</span>}
+                  {s.ok && <span class="muted small-text"> · 모델 {s.models}개</span>}{" "}
                   {s.missingModels.length > 0 && <Badge tone="amber">{`서버에 없는 모델: ${s.missingModels.join(", ")}`}</Badge>}
                 </td>
               </tr>
@@ -46,44 +57,36 @@ export function StatusPage() {
               <th>
                 <a href="#/mcp">MCP broker</a>
               </th>
-              <td>
+              <td class="clip">
                 <Check check={services.broker} />
               </td>
             </tr>
             <tr>
               <th>sandboxd</th>
-              <td>
+              <td class="clip">
                 <Check check={services.sandboxd} />
               </td>
             </tr>
           </tbody>
         </table>
       </Section>
-      <div class="stats">
-        <Stat label="메모리의 세션" value={status.stats.liveSessions} />
-        <Stat label="실행 중인 턴" value={status.stats.activeTurns} />
-        <Stat label="대기 중인 턴" value={status.stats.queuedTurns} />
-        <Stat label="활성 sandbox" value={status.sandboxes.items.filter((s) => s.state === "running").length} />
-        <Stat label="gateway RSS" value={formatBytes(status.process.rssBytes)} />
-        <Stat label="heap" value={`${formatBytes(status.process.heapUsedBytes)} / ${formatBytes(status.process.heapTotalBytes)}`} />
-      </div>
       {status.activeTurns.length > 0 && <ActiveTurns turns={status.activeTurns} reload={reload} />}
       <Section title="구성">
-        <table class="table compact">
+        <table class="table">
           <tbody>
             <tr>
-              <td>가동 시간</td>
-              <td>
+              <th>가동 시간</th>
+              <td class="clip">
                 {uptimeH}시간 {uptimeM}분 · Node {status.process.nodeVersion}
               </td>
             </tr>
             <tr>
-              <td>시스템 프롬프트</td>
-              <td>{status.prompt.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${status.prompt.name} v${status.prompt.version}`}</Badge>}</td>
+              <th>시스템 프롬프트</th>
+              <td class="clip">{status.prompt.isDefault ? <Badge tone="green">기본 프롬프트</Badge> : <Badge tone="blue">{`${status.prompt.name} v${status.prompt.version}`}</Badge>}</td>
             </tr>
             <tr>
-              <td>plugin</td>
-              <td>
+              <th>plugin</th>
+              <td class="clip">
                 {status.plugins.enabled} / {status.plugins.installed} 사용 중
               </td>
             </tr>
@@ -125,7 +128,7 @@ export function StatusPage() {
             {status.sandboxes.items.map((s) => (
               <tr key={s.key}>
                 <td class="mono">{s.key}</td>
-                <td class="mono small-text">{s.containerName}</td>
+                <td class="clip mono">{s.containerName}</td>
                 <td>{s.state === "running" ? <Badge tone="green">running</Badge> : <Badge>{s.state}</Badge>}</td>
                 <td>{formatTime(s.lastActiveAt)}</td>
               </tr>
@@ -161,7 +164,7 @@ function ActiveTurns(props: { turns: StatusView["activeTurns"]; reload: () => Pr
           {props.turns.map((t) => (
             <tr key={t.responseId}>
               <td>{t.user}</td>
-              <td class="mono">{t.responseId}</td>
+              <td class="clip mono">{t.responseId}</td>
               <td class="num">{Math.round((Date.now() - Date.parse(t.startedAt)) / 1000)}초</td>
               <td class="actions">
                 <button class="small danger" disabled={action.busy} onClick={() => void stop(t)}>
@@ -219,7 +222,9 @@ function ToolTable(props: { tools: ToolStat[] }) {
         )}
         {props.tools.map((t) => (
           <tr key={t.tool}>
-            <td class="mono">{t.tool}</td>
+            <td class="clip mono" title={t.tool}>
+              {t.tool}
+            </td>
             <td class="num">{t.calls.toLocaleString()}</td>
             <td class="num">{t.errors > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "0%"}</td>
             <td class="num">{t.avgMs < 1000 ? `${t.avgMs}ms` : `${(t.avgMs / 1000).toFixed(1)}s`}</td>
@@ -254,7 +259,7 @@ function SearchTable(props: { searches: SearchStat[] }) {
         )}
         {props.searches.map((s) => (
           <tr key={s.method}>
-            <td>{s.method === "model" ? "System One" : "BM25"}</td>
+            <td class="clip">{s.method === "model" ? "System One" : "BM25"}</td>
             <td class="num">{s.searches.toLocaleString()}</td>
             <td class="num">{s.called.toLocaleString()}</td>
             <td class="num">{rate(s.top1, s)}</td>
@@ -289,7 +294,7 @@ function UserTable(props: { users: UserUsage[] }) {
         )}
         {props.users.map((u) => (
           <tr key={u.user}>
-            <td>{u.user}</td>
+            <td class="clip">{u.user}</td>
             <td class="num">{u.llmCalls.toLocaleString()}</td>
             <td class="num">{u.inputTokens.toLocaleString()}</td>
             <td class="num">{u.inputTokens > 0 ? `${((u.cachedTokens / u.inputTokens) * 100).toFixed(1)}%` : "-"}</td>
@@ -312,16 +317,23 @@ function Check(props: { check: ServiceCheck }) {
   }
   return (
     <>
-      <Badge tone="red">응답 없음</Badge> <span class="small-text err-text">{check.error}</span>
+      <Badge tone="red">응답 없음</Badge>{" "}
+      <span class="small-text err-text" title={check.error}>
+        {check.error}
+      </span>
     </>
   );
 }
 
-function Stat(props: { label: string; value: string | number }) {
+/** 지금 수치 하나. of는 전체 크기 (heap 사용량 / 전체). */
+function Stat(props: { label: string; value: string | number; of?: string }) {
   return (
-    <div class="card stat">
-      <div class="stat-value">{props.value}</div>
+    <div class="stat">
       <div class="muted small-text">{props.label}</div>
+      <div class="stat-value">
+        {props.value}
+        {props.of && <small> / {props.of}</small>}
+      </div>
     </div>
   );
 }

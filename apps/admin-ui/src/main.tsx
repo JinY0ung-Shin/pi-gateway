@@ -98,7 +98,6 @@ function App() {
       </aside>
       <main class="content">
         <header class="page-head">
-          <div class="eyebrow">{current.group}</div>
           <h1>{current.label}</h1>
           <p class="muted">{current.desc}</p>
         </header>

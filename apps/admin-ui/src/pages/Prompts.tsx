@@ -37,15 +37,17 @@ export function PromptsPage() {
           </thead>
           <tbody>
             <tr class="clickable" onClick={() => setSelection({ kind: "default" })}>
-              <td class="nowrap">기본 프롬프트</td>
-              <td class="muted small-text">배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트</td>
+              <td>기본 프롬프트</td>
+              <td class="clip muted">배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트</td>
               <td class="muted">-</td>
               <td>{list.live.isDefault && <Badge tone="green">배포 중</Badge>}</td>
             </tr>
             {list.prompts.map((p) => (
               <tr key={p.name} class="clickable" onClick={() => setSelection({ kind: "prompt", name: p.name })}>
-                <td class="mono nowrap">{p.name}</td>
-                <td class="muted small-text">{p.description}</td>
+                <td class="mono">{p.name}</td>
+                <td class="clip muted" title={p.description}>
+                  {p.description}
+                </td>
                 <td>v{p.latestVersion}</td>
                 <td>{p.liveVersion !== null && <Badge tone="green">v{p.liveVersion} 배포 중</Badge>}</td>
               </tr>
@@ -325,7 +327,9 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
                 <td>
                   v{v.version} {detail.liveVersion === v.version && <Badge tone="green">배포 중</Badge>}
                 </td>
-                <td>{v.message || <span class="muted">-</span>}</td>
+                <td class="clip" title={v.message}>
+                  {v.message || <span class="muted">-</span>}
+                </td>
                 <td>{formatTime(v.createdAt)}</td>
                 <td class="actions">
                   <button class="small" onClick={() => setShown(v.version)}>
@@ -379,7 +383,9 @@ function Deployments(props: { revision: string }) {
               </td>
               <td>{d.name ? `${d.name} v${d.version}` : "기본 프롬프트"}</td>
               <td class="muted">{d.fromName ? `${d.fromName} v${d.fromVersion}` : "기본 프롬프트"}</td>
-              <td>{d.note}</td>
+              <td class="clip" title={d.note}>
+                {d.note}
+              </td>
             </tr>
           ))}
         </tbody>

@@ -14,11 +14,8 @@ interface Item {
   actions?: ComponentChildren;
 }
 
-/** 목록에 보이는 설명 첫 줄 */
-function firstLine(text: string): string {
-  const line = text.trim().split("\n")[0] ?? "";
-  return line.length > 140 ? `${line.slice(0, 140)}…` : line;
-}
+/** 목록에 보이는 설명 첫 줄 (칸보다 길면 말줄임된다) */
+const firstLine = (text: string) => text.trim().split("\n")[0] ?? "";
 
 function Explorer(props: {
   page: string;
@@ -49,17 +46,17 @@ function Explorer(props: {
         <tbody>
           {props.items.length === 0 && (
             <tr>
-              <td colSpan={2} class="muted">
+              <td colSpan={3} class="muted">
                 {props.empty}
               </td>
             </tr>
           )}
           {props.items.map((i) => (
             <tr key={i.name} class="clickable" onClick={() => (location.hash = `#/${props.page}/${enc(i.name)}`)}>
-              <td class="nowrap">
+              <td>
                 <span class="mono">{i.name}</span> {i.badge}
               </td>
-              <td class="muted small-text">{firstLine(i.description)}</td>
+              <td class="clip muted">{firstLine(i.description)}</td>
               {hasActions && (
                 <td class="actions" onClick={(e) => e.stopPropagation()}>
                   {i.actions}
@@ -270,7 +267,7 @@ function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean;
       <tbody>
         <tr>
           <th>기본 도구</th>
-          <td>
+          <td class="wrap">
             {props.loading ? (
               <span class="muted">불러오는 중…</span>
             ) : !toolset ? (
@@ -291,7 +288,7 @@ function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean;
         </tr>
         <tr>
           <th>MCP 도구</th>
-          <td>
+          <td class="wrap">
             {toolset?.mcp === "all" ? (
               <span>
                 세션의 <a href="#/mcp">MCP 도구</a> 전부
@@ -305,11 +302,11 @@ function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean;
         </tr>
         <tr>
           <th>skill</th>
-          <td class="muted">없음 (하위 agent에는 skill 목록을 넣지 않습니다)</td>
+          <td class="wrap muted">없음 (하위 agent에는 skill 목록을 넣지 않습니다)</td>
         </tr>
         <tr>
           <th>frontmatter tools</th>
-          <td>{props.declared ? <span class="mono">{props.declared.join(", ")}</span> : <span class="muted">지정 안 함 (AskUserQuestion·present_file·request_admin·Agent·SendMessage를 뺀 전부)</span>}</td>
+          <td class="wrap">{props.declared ? <span class="mono">{props.declared.join(", ")}</span> : <span class="muted">지정 안 함 (AskUserQuestion·present_file·request_admin·Agent·SendMessage를 뺀 전부)</span>}</td>
         </tr>
       </tbody>
     </table>
