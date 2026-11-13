@@ -33,12 +33,12 @@ describe("POST /v1/responses — non-stream", () => {
     expect(body.output[0]).toMatchObject({ type: "message", role: "assistant", status: "completed" });
     expect(body.output[0].id).toMatch(/^msg_[0-9a-f]{24}$/);
     expect(body.output[0].content).toEqual([{ type: "output_text", text: "Hello there.", annotations: [] }]);
-    // input_tokens는 캐시 읽기를 포함한다
+    // input_tokens는 캐시 읽기를 포함한다. context_tokens는 이 호출 뒤의 context라서 출력도 포함한다
     expect(body.usage).toEqual({
       input_tokens: 100,
       output_tokens: 20,
       total_tokens: 120,
-      input_tokens_details: { cached_tokens: 30, cache_creation_tokens: 0, context_tokens: 100 },
+      input_tokens_details: { cached_tokens: 30, cache_creation_tokens: 0, context_tokens: 120 },
       context_window: 32000,
     });
     expect(body).toMatchObject({ error: null, incomplete_details: null, structured_output: null, background: null, metadata: {} });

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
-import { estimateTokens } from "@earendil-works/pi-coding-agent";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import type { GatewayModels, LlmModelConfig } from "../agent/runtime.js";
@@ -16,7 +15,14 @@ import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore, TurnPoint } from "../sessions/store.js";
 import type { ToolStats } from "../tools/stats.js";
 import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
-import { emptyUsage, functionCallItem, ResponseEventMapper, type ResponseUsage } from "./mapper.js";
+import {
+  contextTokensAfterCompaction,
+  emptyUsage,
+  estimateMessageTokens,
+  functionCallItem,
+  ResponseEventMapper,
+  type ResponseUsage,
+} from "./mapper.js";
 import {
   type OutputFormat,
   outputFormatOf,
@@ -336,7 +342,7 @@ export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, 
     deps.store.touch(record.id);
     const session = live.agent.session;
     const sm = session.sessionManager;
-    const messageTokens = sm.buildSessionProjection().messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+    const messageTokens = estimateMessageTokens(session);
 
     // 요약은 LLM 호출이라 오래 걸릴 수 있다. 턴처럼 SSE로 답해 keepalive가 연결을 붙잡게 한다.
     reply.hijack();
@@ -380,14 +386,11 @@ export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, 
         const turn = record.turn + 1;
         deps.store.commit(record.id, { turn, leafId: sm.getLeafId(), sessionFile: sm.getSessionFile() ?? null, pendingToolCall: null });
         live.record = deps.store.get(record.id) ?? live.record;
-        // tokens_before는 마지막 응답의 usage 기준(시스템 프롬프트·도구 선언 포함)이고 pi의 요약 뒤 추정치는 메시지만 센다.
-        // 둘이 같은 기준이 되게 메시지 밖의 몫을 요약 뒤 값에 더한다.
-        const outsideMessages = Math.max(0, result.tokensBefore - messageTokens);
         sse.send("response.compaction", {
           status: "completed",
           id: responseId(record.id, turn),
           tokens_before: result.tokensBefore,
-          tokens_after: result.estimatedTokensAfter == null ? null : result.estimatedTokensAfter + outsideMessages,
+          tokens_after: contextTokensAfterCompaction(result, messageTokens),
           context_window: session.model?.contextWindow ?? null,
         });
       }
@@ -582,6 +585,7 @@ async function runLocked(
   const log = deps.log.child({ session: record.id, turn });
   const leafBefore = live.agent.session.sessionManager.getLeafId();
   const contextWindow = live.agent.session.model?.contextWindow;
+  const messageTokens = () => estimateMessageTokens(live.agent.session);
 
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
@@ -637,7 +641,7 @@ async function runLocked(
     reply.hijack();
     const sse = new SseWriter(reply.raw);
     sse.start();
-    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload), contextWindow);
+    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload), contextWindow, messageTokens);
     try {
       await streamTurn();
     } catch (err) {
@@ -691,7 +695,7 @@ async function runLocked(
   }
 
   // 비스트리밍
-  const mapper = new ResponseEventMapper(null, contextWindow);
+  const mapper = new ResponseEventMapper(null, contextWindow, messageTokens);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;

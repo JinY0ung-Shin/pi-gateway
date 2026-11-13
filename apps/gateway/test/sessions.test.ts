@@ -182,7 +182,8 @@ describe("compaction events", () => {
 
   it("streams response.compaction around pi's compaction and reports the context after it", async () => {
     h.llm.enqueue({ text: "First answer with some history to summarize." });
-    const first = await h.post({ input: "first question" });
+    // 요약되는 부분(첫 질문)이 요약보다 길어야 요약 뒤에 context가 줄어든다
+    const first = await h.post({ input: "first question, with a long background. ".repeat(40) });
     h.llm.enqueue({ text: "Second answer.", usage: { prompt_tokens: 30000, completion_tokens: 20 } }, { text: "Summary of the conversation." });
     const res = await h.stream({ input: "second question", previous_response_id: first.json.id });
     const compaction = ofType(res.events, "response.compaction").map((e) => e.data.status);
@@ -191,8 +192,9 @@ describe("compaction events", () => {
     expect(done.type).toBe("response.completed");
     const { usage } = done.data.response as { usage: ResponseUsage };
     expect(usage.context_window).toBe(32000);
-    // 요약 전 크기(30000)가 아니라 요약 뒤의 추정치
-    expect(usage.input_tokens_details.context_tokens).toBeLessThan(30000);
+    // 요약 전 크기(입력 30000 + 출력 20)가 메시지가 줄어든 비율만큼 준다. 메시지만 센 추정치(3000 안팎)가 아니다
+    expect(usage.input_tokens_details.context_tokens).toBeLessThan(30020);
+    expect(usage.input_tokens_details.context_tokens).toBeGreaterThan(20000);
   });
 });
 

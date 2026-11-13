@@ -141,7 +141,7 @@ function readDataUrl(file: File): Promise<string> {
   });
 }
 
-/** 입력은 마지막 LLM 호출의 대화 크기(context_tokens)다. input_tokens는 도구를 쓸 때마다 대화 전체를 다시 센 턴 합계라서 쓰지 않는다. */
+/** input은 마지막 LLM 호출 뒤의 대화 크기(context_tokens)다. input_tokens는 도구를 쓸 때마다 대화 전체를 다시 센 턴 합계라서 쓰지 않는다. */
 function usageOf(u: any): Usage | undefined {
   if (!u || (!u.input_tokens && !u.output_tokens)) return undefined;
   return { input: u.input_tokens_details?.context_tokens ?? 0, output: u.output_tokens ?? 0 };
@@ -547,7 +547,7 @@ export function TurnView(props: { turn: Turn; waiting?: boolean }) {
       {turn.role === "assistant" && props.waiting && !turn.text && <span class="muted">…</span>}
       {turn.usage && (
         <div class="muted small-text">
-          토큰: 입력 {turn.usage.input.toLocaleString()} · 출력 {turn.usage.output.toLocaleString()}
+          토큰: 대화 {turn.usage.input.toLocaleString()} · 출력 {turn.usage.output.toLocaleString()}
         </div>
       )}
       {turn.note && <Notice tone={turn.note.tone}>{turn.note.text}</Notice>}
