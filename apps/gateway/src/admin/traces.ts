@@ -138,6 +138,8 @@ export interface TraceStats {
   firstTokenMs: Percentiles;
   /** 턴 시간의 합을 나눈 것. other는 LLM 호출도 도구 실행도 아닌 시간 (세션 준비, 요약 등). */
   share: { llmMs: number; toolMs: number; otherMs: number };
+  /** 턴을 시작 시각으로 stepMs씩 묶은 것 (가장 오래된 턴부터 최근 턴까지). 턴이 없는 칸은 turns가 0이다. */
+  timeline: { stepMs: number; buckets: { start: string; turns: number; turnMs: Percentiles }[] };
   /** tokensPerSecond는 출력 token 합 ÷ 호출 시간 합 (첫 token을 기다린 시간 포함) */
   models: { model: string; calls: number; errors: number; firstTokenMs: Percentiles; tokensPerSecond: number }[];
   /** 턴 아래의 span을 서비스와 이름으로 묶은 것 (mcp_call은 실제로 부른 도구별), 쓴 시간이 큰 순 */
@@ -146,6 +148,9 @@ export interface TraceStats {
 }
 
 const SLOWEST = 10;
+/** 추이의 한 칸 길이. 턴들이 TIMELINE_BUCKETS칸 안팎에 들어가는 가장 짧은 것을 쓴다 (보관 기간 7일이면 6시간). */
+const TIMELINE_STEPS_MS = [5 * 60_000, 15 * 60_000, 3_600_000, 3 * 3_600_000, 6 * 3_600_000];
+const TIMELINE_BUCKETS = 28;
 
 function percentiles(values: number[]): Percentiles {
   const sorted = [...values].sort((a, b) => a - b);
@@ -165,6 +170,19 @@ function covered(spans: TraceSpan[]): number {
   return total;
 }
 
+function timeline(turns: { startMs: number; durationMs: number }[]): TraceStats["timeline"] {
+  const longest = TIMELINE_STEPS_MS.at(-1)!;
+  if (turns.length === 0) return { stepMs: longest, buckets: [] };
+  const starts = turns.map((t) => t.startMs);
+  const first = Math.min(...starts);
+  const last = Math.max(...starts);
+  const stepMs = TIMELINE_STEPS_MS.find((step) => (last - first) / step <= TIMELINE_BUCKETS) ?? longest;
+  const from = Math.floor(first / stepMs);
+  const buckets: number[][] = Array.from({ length: Math.floor(last / stepMs) - from + 1 }, () => []);
+  for (const t of turns) buckets[Math.floor(t.startMs / stepMs) - from]?.push(t.durationMs);
+  return { stepMs, buckets: buckets.map((ms, i) => ({ start: new Date((from + i) * stepMs).toISOString(), turns: ms.length, turnMs: percentiles(ms) })) };
+}
+
 /** 최근 턴들의 trace로 낸 통계: 턴 시간, 시간이 쓰인 곳, 모델별 응답 속도, 단계별 시간, 느린 턴 */
 export async function traceStats(jaegerHost: string): Promise<TraceStats> {
   const traces = await findTraces(jaegerHost, new Date(Date.now() - RETENTION_MS), MAX_STAT_TRACES);
@@ -174,12 +192,14 @@ export async function traceStats(jaegerHost: string): Promise<TraceStats> {
   const models = new Map<string, { calls: number; errors: number; firstToken: number[]; outputTokens: number; outputMs: number }>();
   const steps = new Map<string, { service: string; name: string; errors: number; ms: number[] }>();
   const slowest: TraceStats["slowest"] = [];
+  const started: { startMs: number; durationMs: number }[] = [];
   let failed = 0;
 
   for (const t of traces) {
     const root = t.spans.find((s) => !s.parentId);
     if (!root) continue;
     turnMs.push(root.durationMs);
+    started.push({ startMs: Date.parse(t.startedAt), durationMs: root.durationMs });
     if (root.error) failed++;
     const turn = root.attributes["pi_gateway.turn"];
     slowest.push({
@@ -238,6 +258,7 @@ export async function traceStats(jaegerHost: string): Promise<TraceStats> {
     turnMs: percentiles(turnMs),
     firstTokenMs: percentiles(firstTokenMs),
     share: { llmMs: Math.round(share.llmMs), toolMs: Math.round(share.toolMs), otherMs: Math.round(share.otherMs) },
+    timeline: timeline(started),
     models: [...models]
       .map(([model, m]) => ({ model, calls: m.calls, errors: m.errors, firstTokenMs: percentiles(m.firstToken), tokensPerSecond: m.outputMs > 0 ? Math.round(m.outputTokens / (m.outputMs / 1000)) : 0 }))
       .sort((a, b) => b.calls - a.calls),

@@ -1,6 +1,7 @@
 /*
  * 흰 바탕에 잉크색 글자. 상자는 입력칸·버튼·표·창에만 쓰고, 화면의 구역은 제목과 여백으로 나눈다.
  * 색은 상태를 말할 때만 쓴다: 초록 신호색은 "켜짐·지금 화면", 배지 색은 정상·주의·오류.
+ * 차트만 예외로 종류를 색으로 나눈다: 파랑은 LLM 호출, 주황은 도구 실행, 회색은 둘 다 아닌 것.
  * 표의 줄은 높이가 같다. 긴 글은 한 줄에서 말줄임하고 전체는 창에서 본다.
  * 식별자(도구·MCP·plugin 이름, 경로, 스키마)는 IBM Plex Mono, 나머지는 Pretendard.
  */
@@ -51,6 +52,10 @@
   --info-text: #1f4f96;
   --violet-bg: #ede8fa;
   --violet-text: #57359b;
+  --chart-llm: #2a78d6;
+  --chart-tool: #eb6834;
+  --chart-other: #98a1ae;
+  --chart-other-ink: #15181e;
   --shadow: 0 24px 64px rgba(15, 20, 30, 0.28);
   --sans: Pretendard, -apple-system, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, Pretendard, monospace;
@@ -84,6 +89,10 @@
     --info-text: #9fbff0;
     --violet-bg: #2b2344;
     --violet-text: #c6b5f3;
+    --chart-llm: #3987e5;
+    --chart-tool: #d95926;
+    --chart-other: #5d6673;
+    --chart-other-ink: #ffffff;
     --shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
     color-scheme: dark;
   }
@@ -1221,6 +1230,251 @@ button.thumb-button {
   font-weight: 500;
   letter-spacing: 0;
   color: var(--muted);
+}
+
+/* ── 차트: 실행 시간 화면의 막대. 값은 늘 옆에 글자로도 적는다 ── */
+
+.k-llm {
+  --mark: var(--chart-llm);
+  --mark-ink: #ffffff;
+}
+
+.k-tool {
+  --mark: var(--chart-tool);
+  --mark-ink: #ffffff;
+}
+
+.k-other {
+  --mark: var(--chart-other);
+  --mark-ink: var(--chart-other-ink);
+}
+
+.k-p50 {
+  --mark: var(--text);
+}
+
+.k-p95 {
+  --mark: var(--muted);
+}
+
+/* 추이: 왼쪽에 축의 값, 오른쪽에 위부터 선 · 턴 수 막대 · 시각. 선과 막대는 같은 칸에 맞춰 선다 */
+.trend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px 10px;
+  margin: 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-axis {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  line-height: 1;
+}
+
+/* 축의 값이 눈금선의 가운데에 오게 */
+.trend-axis span:first-child {
+  margin-top: -6px;
+}
+
+.trend-axis span:last-child:not(:first-child) {
+  margin-bottom: -6px;
+}
+
+.trend-plot {
+  grid-area: 1 / 2;
+  position: relative;
+  height: 160px;
+  background:
+    linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) bottom / 100% 1px no-repeat;
+}
+
+.trend-plot svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.trend-plot path {
+  fill: none;
+  stroke: var(--mark);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 점은 올려 둔 칸의 세로선 위에 그린다 */
+.trend-dot {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--mark);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.trend-count {
+  grid-area: 2 / 2;
+  display: flex;
+  height: 40px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.trend-count span {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 1px;
+}
+
+.trend-count i {
+  width: 100%;
+  max-width: 24px;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: var(--chart-other);
+}
+
+/* 선과 막대를 함께 덮는 칸들. 올려 둔 칸에 세로선이 선다 */
+.trend-hover {
+  grid-area: 1 / 2 / 3 / 3;
+  position: relative;
+  display: flex;
+}
+
+.trend-hover i {
+  flex: 1;
+}
+
+.trend-hover i.on {
+  background: linear-gradient(var(--line-strong), var(--line-strong)) center / 1px 100% no-repeat;
+}
+
+.trend-time {
+  grid-area: 3 / 2;
+  position: relative;
+  height: 14px;
+  margin-top: -6px;
+  line-height: 14px;
+}
+
+.trend-time span {
+  position: absolute;
+  white-space: nowrap;
+}
+
+/* 전체를 나눈 막대: 조각의 폭이 몫이고, 몫은 들어갈 자리가 있는 조각에만 적는다 */
+.split {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+  margin: 12px 0;
+}
+
+.split span {
+  flex: 0 0 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  border-radius: 4px;
+  background: var(--mark);
+  color: var(--mark-ink);
+  container-type: inline-size;
+}
+
+.split b {
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@container (max-width: 44px) {
+  .split b {
+    display: none;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--mark);
+}
+
+.legend .muted {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 막대가 든 표: 남는 폭은 막대 칸이 갖는다 */
+.table.chart td.clip {
+  width: 40%;
+}
+
+.table td.bar-cell {
+  width: 30%;
+  min-width: 80px;
+  padding-right: 0;
+}
+
+.bar {
+  position: relative;
+  display: block;
+  height: 10px;
+}
+
+.bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--mark);
+}
+
+/* 막대 끝에서 p95까지 가는 선과 그 끝의 눈금 */
+.bar i.upto {
+  inset: 4px auto 4px 0;
+  border-radius: 0;
+}
+
+.bar i.upto::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: 0;
+  width: 2px;
+  height: 10px;
+  background: var(--mark);
 }
 
 /* ── 로그인 ── */

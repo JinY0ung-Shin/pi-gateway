@@ -130,6 +130,8 @@ describe("admin history", () => {
         firstTokenMs: { p50: 498, p95: 498 },
         // s1: LLM 100~500, 동시에 돈 도구 둘이 500~900 (겹쳐도 한 번), 나머지 200. s2: 전부 그 외 2000
         share: { llmMs: 400, toolMs: 400, otherMs: 2200 },
+        // 두 턴이 5초 사이에 시작했으므로 가장 짧은 5분 칸 하나에 든다
+        timeline: { stepMs: 300_000, buckets: [{ start: "2023-11-14T22:10:00.000Z", turns: 2, turnMs: { p50: 1000, p95: 2000 } }] },
         // 출력 70 token을 호출 400ms 동안 = 175 token/초 (첫 token이 끝나기 2ms 전에 와도 그 2ms로 나누지 않는다)
         models: [{ model: "m1", calls: 1, errors: 0, firstTokenMs: { p50: 398, p95: 398 }, tokensPerSecond: 175 }],
       });
