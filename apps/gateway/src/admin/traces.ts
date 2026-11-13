@@ -138,6 +138,7 @@ export interface TraceStats {
   firstTokenMs: Percentiles;
   /** 턴 시간의 합을 나눈 것. other는 LLM 호출도 도구 실행도 아닌 시간 (세션 준비, 요약 등). */
   share: { llmMs: number; toolMs: number; otherMs: number };
+  /** tokensPerSecond는 출력 token 합 ÷ 호출 시간 합 (첫 token을 기다린 시간 포함) */
   models: { model: string; calls: number; errors: number; firstTokenMs: Percentiles; tokensPerSecond: number }[];
   /** 턴 아래의 span을 서비스와 이름으로 묶은 것 (mcp_call은 실제로 부른 도구별), 쓴 시간이 큰 순 */
   steps: { service: string; name: string; calls: number; errors: number; totalMs: number; ms: Percentiles }[];
@@ -170,7 +171,7 @@ export async function traceStats(jaegerHost: string): Promise<TraceStats> {
   const turnMs: number[] = [];
   const firstTokenMs: number[] = [];
   const share = { llmMs: 0, toolMs: 0, otherMs: 0 };
-  const models = new Map<string, { calls: number; errors: number; firstToken: number[]; speed: number[] }>();
+  const models = new Map<string, { calls: number; errors: number; firstToken: number[]; outputTokens: number; outputMs: number }>();
   const steps = new Map<string, { service: string; name: string; errors: number; ms: number[] }>();
   const slowest: TraceStats["slowest"] = [];
   let failed = 0;
@@ -213,14 +214,17 @@ export async function traceStats(jaegerHost: string): Promise<TraceStats> {
       const model = s.attributes["gen_ai.request.model"];
       if (!s.name.startsWith("chat ") || typeof model !== "string") continue;
       let m = models.get(model);
-      if (!m) models.set(model, (m = { calls: 0, errors: 0, firstToken: [], speed: [] }));
+      if (!m) models.set(model, (m = { calls: 0, errors: 0, firstToken: [], outputTokens: 0, outputMs: 0 }));
       m.calls++;
       if (s.error) m.errors++;
       const first = s.attributes["pi_gateway.first_token_ms"];
       const output = s.attributes["gen_ai.usage.output_tokens"];
-      if (typeof first !== "number") continue;
-      m.firstToken.push(first);
-      if (typeof output === "number" && output > 0 && s.durationMs > first) m.speed.push(output / ((s.durationMs - first) / 1000));
+      if (typeof first === "number") m.firstToken.push(first);
+      // 첫 token 뒤의 시간으로 나누지 않는다: 숨긴 reasoning이나 한꺼번에 오는 도구 호출은 첫 token 전에 만들어진다
+      if (typeof output === "number" && output > 0) {
+        m.outputTokens += output;
+        m.outputMs += s.durationMs;
+      }
     }
   }
 
@@ -235,7 +239,7 @@ export async function traceStats(jaegerHost: string): Promise<TraceStats> {
     firstTokenMs: percentiles(firstTokenMs),
     share: { llmMs: Math.round(share.llmMs), toolMs: Math.round(share.toolMs), otherMs: Math.round(share.otherMs) },
     models: [...models]
-      .map(([model, m]) => ({ model, calls: m.calls, errors: m.errors, firstTokenMs: percentiles(m.firstToken), tokensPerSecond: Math.round(percentiles(m.speed).p50) }))
+      .map(([model, m]) => ({ model, calls: m.calls, errors: m.errors, firstTokenMs: percentiles(m.firstToken), tokensPerSecond: m.outputMs > 0 ? Math.round(m.outputTokens / (m.outputMs / 1000)) : 0 }))
       .sort((a, b) => b.calls - a.calls),
     steps: [...steps.values()]
       .map((s) => ({ service: s.service, name: s.name, calls: s.ms.length, errors: s.errors, totalMs: Math.round(sum(s.ms)), ms: percentiles(s.ms) }))

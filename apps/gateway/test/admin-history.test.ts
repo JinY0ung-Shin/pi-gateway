@@ -82,7 +82,7 @@ describe("admin history", () => {
           parentSpanId: "a",
           attributes: [
             attr("gen_ai.request.model", { stringValue: "m1" }),
-            attr("pi_gateway.first_token_ms", { intValue: "50" }),
+            attr("pi_gateway.first_token_ms", { intValue: "398" }),
             attr("gen_ai.usage.output_tokens", { intValue: "70" }),
           ],
         }),
@@ -126,12 +126,12 @@ describe("admin history", () => {
         turns: 2,
         failed: 1,
         turnMs: { p50: 1000, p95: 2000 },
-        // 턴 s1: 첫 LLM 호출이 100ms에 시작해 50ms 뒤 첫 token
-        firstTokenMs: { p50: 150, p95: 150 },
+        // 턴 s1: 첫 LLM 호출이 100ms에 시작해 398ms 뒤 첫 token
+        firstTokenMs: { p50: 498, p95: 498 },
         // s1: LLM 100~500, 동시에 돈 도구 둘이 500~900 (겹쳐도 한 번), 나머지 200. s2: 전부 그 외 2000
         share: { llmMs: 400, toolMs: 400, otherMs: 2200 },
-        // 출력 70 token을 첫 token 뒤 350ms 동안 = 200 token/초
-        models: [{ model: "m1", calls: 1, errors: 0, firstTokenMs: { p50: 50, p95: 50 }, tokensPerSecond: 200 }],
+        // 출력 70 token을 호출 400ms 동안 = 175 token/초 (첫 token이 끝나기 2ms 전에 와도 그 2ms로 나누지 않는다)
+        models: [{ model: "m1", calls: 1, errors: 0, firstTokenMs: { p50: 398, p95: 398 }, tokensPerSecond: 175 }],
       });
       expect(stats.steps.map((s: any) => [s.service, s.name, s.calls, s.errors, s.totalMs])).toEqual([
         ["gateway", "chat m1", 1, 0, 400],

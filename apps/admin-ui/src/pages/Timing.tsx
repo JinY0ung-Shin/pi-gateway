@@ -84,6 +84,7 @@ export function TimingPage() {
         </table>
       </Section>
       <Section title="모델별 응답 속도">
+        <p class="muted small-text">출력 속도는 출력 token 합을 호출 시간 합으로 나눈 값입니다 (첫 token을 기다린 시간도 들어 있습니다).</p>
         <table class="table">
           <thead>
             <tr>
