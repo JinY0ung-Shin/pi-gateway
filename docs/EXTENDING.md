@@ -189,7 +189,9 @@ Saved to the workspace: {"saved_path":"/workspace/artifacts/<세션 id>/report-3
 - plugin의 `.mcp.json`은 MCP 서버로 등록돼요. 비밀키 자리표시자가 있으면 broker 서버가 돼요. 관리자가 넣지 않은 키는 빈 값으로 가고, 그 키가 필요한 호출만 업스트림이 거절해요.
 - 직접 만든 skill도 같은 방식이에요: `.claude-plugin/marketplace.json`이 있는 git 저장소를 marketplace로 추가해요.
 
-설치·제거는 새 세션부터 적용돼요 (진행 중인 세션의 시스템 프롬프트를 바꾸지 않아요).
+gateway는 1시간마다 marketplace를 새로고침하고, 새 버전이 있는 plugin을 다시 설치해요 (관리 화면의 "새로고침"도 같아요). 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만 따라가요.
+
+설치·업데이트·제거는 새 세션부터 적용돼요 (진행 중인 세션의 시스템 프롬프트를 바꾸지 않아요).
 
 ---
 

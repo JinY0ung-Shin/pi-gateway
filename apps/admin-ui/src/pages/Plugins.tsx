@@ -71,11 +71,16 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
 
   const refresh = (name: string, body: { ref?: string } = {}) =>
     action.run(async () => {
-      const result = await api<{ warnings: string[] }>("POST", `/marketplaces/${enc(name)}/refresh`, body);
+      const result = await api<{ updated: string[]; warnings: string[] }>("POST", `/marketplaces/${enc(name)}/refresh`, body);
       await props.onChanged();
       return result;
     }, (r) => {
-      const done = body.ref !== undefined ? `${name}의 branch를 바꾸고 설치된 plugin을 다시 설치했습니다` : `${name}을(를) 새로고침했습니다`;
+      const done =
+        body.ref !== undefined
+          ? `${name}의 branch를 바꾸고 설치된 plugin을 다시 설치했습니다`
+          : r.updated.length
+            ? `${name}을(를) 새로고침하고 ${r.updated.join(", ")}을(를) 업데이트했습니다`
+            : `${name}을(를) 새로고침했습니다 (새 버전 없음)`;
       return r.warnings.length ? `${done}. 확인할 점: ${r.warnings.join(" / ")}` : done;
     });
 
@@ -346,7 +351,7 @@ function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, s
         </tbody>
       </table>
       <p class="muted small-text">
-        marketplace를 새로고침하면 새 버전이 있는 plugin에 '업데이트 있음'이 붙습니다. branch를 바꾸면 그 marketplace의 plugin을 모두 다시 설치합니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
+        marketplace를 새로고침하면 새 버전이 있는 plugin을 바로 업데이트합니다. gateway도 1시간마다 새로고침합니다. 업데이트하지 못한 plugin에는 '업데이트 있음'이 남습니다. branch를 바꾸면 그 marketplace의 plugin을 모두 다시 설치합니다. 다른 git 저장소에서 받는 plugin은 marketplace가 고정한 sha나 버전이 바뀔 때만
         알 수 있으니, 그 밖의 경우는 '다시 설치'로 최신 내용을 받으세요. 바뀐 내용은 새 세션부터 적용됩니다.
       </p>
       {open && <PluginDetail plugin={open} missingSecrets={props.missingSecrets} onClose={() => setOpenId(null)} />}

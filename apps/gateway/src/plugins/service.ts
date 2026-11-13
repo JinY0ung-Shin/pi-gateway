@@ -43,7 +43,7 @@ const AddMarketplaceInput = z.object({
 });
 
 const RefreshMarketplaceInput = z.object({
-  /** 주면 branch·tag를 바꾸고 이 marketplace에서 설치한 plugin을 다시 설치한다. 빈 문자열은 기본 브랜치. */
+  /** 주면 branch·tag를 바꾸고 이 marketplace에서 설치한 plugin을 모두 다시 설치한다. 빈 문자열은 기본 브랜치. */
   ref: z.string().max(200).optional(),
 });
 
@@ -302,7 +302,20 @@ export class PluginService implements PluginResources {
     });
   }
 
-  refreshMarketplace(name: string, input: unknown): Promise<MarketplaceView & { warnings: string[] }> {
+  /** 모든 marketplace를 새로고침한다 (gateway가 주기적으로 부른다). 볼 사람이 없으므로 실패와 경고는 로그에 남긴다. */
+  async refreshAll(): Promise<void> {
+    for (const { name } of this.store.listMarketplaces()) {
+      try {
+        const { warnings } = await this.refreshMarketplace(name, {});
+        if (warnings.length > 0) this.#log.warn({ marketplace: name, warnings }, "marketplace refresh had warnings");
+      } catch (error) {
+        this.#log.warn({ marketplace: name, reason: describe(error) }, "marketplace refresh failed");
+      }
+    }
+  }
+
+  /** 저장소를 다시 받고, 새 버전이 있는 plugin을 다시 설치한다 (ref를 주면 이 marketplace의 plugin 모두). */
+  refreshMarketplace(name: string, input: unknown): Promise<MarketplaceView & { updated: string[]; warnings: string[] }> {
     const req = parse(RefreshMarketplaceInput, input);
     return this.#exclusive(async () => {
       const record = this.store.getMarketplace(name);
@@ -316,18 +329,20 @@ export class PluginService implements PluginResources {
         const localPath = await this.#placeMarketplace(dir, name);
         this.store.upsertMarketplace({ ...record, ref, commitSha: commit, localPath, manifest });
         this.#log.info({ marketplace: name, commit }, "marketplace refreshed");
+        const fresh = this.store.getMarketplace(name)!;
+        const updated: string[] = [];
         const warnings: string[] = [];
-        if (req.ref !== undefined) {
-          for (const plugin of this.store.listPlugins().filter((p) => p.marketplace === name)) {
-            try {
-              const result = await this.#install({ marketplace: name, plugin: plugin.name });
-              warnings.push(...result.warnings.map((w) => `${plugin.id}: ${w}`));
-            } catch (error) {
-              warnings.push(`${plugin.id}: 다시 설치하지 못해 그대로 둡니다 (${describe(error)})`);
-            }
+        for (const plugin of this.store.listPlugins().filter((p) => p.marketplace === name)) {
+          if (req.ref === undefined && !updateOf(plugin, fresh).update) continue;
+          try {
+            const result = await this.#install({ marketplace: name, plugin: plugin.name });
+            updated.push(`${plugin.id} v${result.plugin.version}`);
+            warnings.push(...result.warnings.map((w) => `${plugin.id}: ${w}`));
+          } catch (error) {
+            warnings.push(`${plugin.id}: 다시 설치하지 못해 그대로 둡니다 (${describe(error)})`);
           }
         }
-        return { ...toMarketplaceView(this.store.getMarketplace(name)!), warnings };
+        return { ...toMarketplaceView(fresh), updated, warnings };
       } finally {
         await rm(work, { recursive: true, force: true });
       }
@@ -374,7 +389,7 @@ export class PluginService implements PluginResources {
     return this.#exclusive(() => this.#install(req));
   }
 
-  /** marketplace의 현재 내용으로 다시 설치한다 (먼저 marketplace를 새로고침해야 새 버전이 보인다). */
+  /** marketplace 사본의 현재 내용으로 다시 설치한다 (marketplace 저장소를 다시 받지는 않는다). */
   update(id: string): Promise<{ plugin: PluginView; warnings: string[] }> {
     const record = this.store.getPlugin(id);
     if (!record) throw notFound(`plugin '${id}' not found`);

@@ -450,12 +450,9 @@ describe("plugin 업데이트·broker 장애", () => {
       await harness.mcp.upsert({ ...current, transport: { ...current.transport, env: { ...current.transport.env, SERVICE_URL: "http://admin:9000" } } });
 
       setMcp(fixture.mkt, "1.9.1", { LOG_FORMAT: "text" });
-      await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
-      // 새로고침하면 marketplace 사본의 plugin.json 버전으로 업데이트가 있는지 안다
-      expect(harness.plugins.getPlugin(ID).update).toEqual({ version: "1.9.1" });
-      const entry = harness.plugins.getMarketplace("defect-agent-plugins").plugins.find((p) => p.name === "defect-agent-frontend")!;
-      expect(entry.installed).toMatchObject({ version: "1.9.0", update: { version: "1.9.1" } });
-      const { plugin } = await harness.plugins.update(ID);
+      // 새로고침하면 marketplace 사본의 plugin.json 버전이 설치본과 다른 plugin을 다시 설치한다
+      expect(await harness.plugins.refreshMarketplace("defect-agent-plugins", {})).toMatchObject({ updated: [`${ID} v1.9.1`] });
+      const plugin = harness.plugins.getPlugin(ID);
       expect(plugin.version).toBe("1.9.1");
       expect(plugin.update).toBeUndefined();
       const after = harness.mcp.store.get("monsemi-frontend")!;
@@ -531,7 +528,7 @@ describe("plugin 업데이트·broker 장애", () => {
     }
   });
 
-  it("업데이트 표시: git source는 marketplace가 고정한 sha가 바뀌면 알고, 고정하지 않았으면 모른다", async () => {
+  it("주기 새로고침: git source는 marketplace가 고정한 sha가 바뀌면 다시 설치하고, 고정하지 않았으면 그대로 둔다", async () => {
     const fixture = buildFixture(tempDir("fixture-pin"));
     const broker = await startFakeBroker();
     const harness = await buildHarness({ env: brokerEnv(broker.url) });
@@ -547,13 +544,13 @@ describe("plugin 업데이트·broker 장애", () => {
       manifest.plugins.find((p) => p.name === "remote")!.source!.sha = next;
       write(fixture.mkt, ".claude-plugin/marketplace.json", JSON.stringify(manifest));
       commitAll(fixture.mkt);
-      await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
+      const subdir = harness.plugins.getPlugin("subdir@defect-agent-plugins");
+      await harness.plugins.refreshAll();
 
-      expect(harness.plugins.getPlugin("remote@defect-agent-plugins").update).toEqual({ version: next.slice(0, 12) });
-      expect(harness.plugins.getPlugin("subdir@defect-agent-plugins").update).toBeUndefined();
-      const { plugin } = await harness.plugins.update("remote@defect-agent-plugins");
+      const plugin = harness.plugins.getPlugin("remote@defect-agent-plugins");
       expect(plugin).toMatchObject({ version: next.slice(0, 12) });
       expect(plugin.update).toBeUndefined();
+      expect(harness.plugins.getPlugin("subdir@defect-agent-plugins")).toEqual(subdir);
     } finally {
       await harness.close();
       await broker.close();
@@ -651,8 +648,8 @@ describe("plugin 업데이트·broker 장애", () => {
         expect(secretsBefore?.map((s) => s.name)).toEqual(["DOCS_TOKEN"]);
         for (const version of ["0.1.1", "0.1.2"]) {
           bump(version);
-          await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
-          const { plugin, warnings } = await harness.plugins.update(sid);
+          const { warnings } = await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
+          const plugin = harness.plugins.getPlugin(sid);
           expect(plugin.version).toBe(version);
           expect(readlinkSync(join(pluginDir, "current"))).toBe(version);
           expect(warnings.join("\n")).not.toMatch(/DOCS_TOKEN/);
@@ -693,7 +690,10 @@ describe("plugin 업데이트·broker 장애", () => {
       const manifest = join(fixture.mkt, "plugins/defect-agent-frontend/.claude-plugin/plugin.json");
       writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, "utf8")), version: "1.9.1" }));
       commitAll(fixture.mkt);
-      await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
+      // 새로고침은 끝나고, 설치하지 못한 plugin은 경고로 알린다
+      const refreshed = await harness.plugins.refreshMarketplace("defect-agent-plugins", {});
+      expect(refreshed).toMatchObject({ updated: [], warnings: [expect.stringContaining("그대로 둡니다")] });
+      expect(harness.plugins.getPlugin(ID).update).toEqual({ version: "1.9.1" });
       await expect(harness.plugins.update(ID)).rejects.toMatchObject({ status: 503 });
       expect(harness.plugins.getPlugin(ID).version).toBe("1.9.0");
       expect(harness.mcp.store.get("monsemi-frontend")?.enabled).toBe(true);

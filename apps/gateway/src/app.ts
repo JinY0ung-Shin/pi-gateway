@@ -147,6 +147,9 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
 
   const interval = overrides.reaperIntervalMs ?? 30_000;
   if (interval > 0) hub.startReaper(interval);
+  // plugin marketplace를 1시간마다 새로고침한다 (새 버전이 있는 plugin은 그때 다시 설치된다).
+  const pluginRefresher = setInterval(() => void pluginService.refreshAll(), 3_600_000);
+  pluginRefresher.unref();
 
   return {
     app,
@@ -155,6 +158,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
     models,
     limiter,
     async close() {
+      clearInterval(pluginRefresher);
       // 1. 새 턴을 받지 않고 실행 중인 턴을 멈춘다 (스트리밍 연결이 끝나야 HTTP 서버가 닫힌다).
       hub.beginShutdown();
       // 2. 동시 실행 대기열에 있던 요청은 바로 503으로 끝낸다.
