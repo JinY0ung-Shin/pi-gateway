@@ -208,7 +208,7 @@ export class BrokerService {
           ...(onProgress ? { onprogress: (p: Progress) => onProgress(redactor.redactDeep(p)) } : {}),
         },
       );
-      return capResult(redactor.redactDeep(result), this.#config.limits.maxResultBytes);
+      return capResult(redactor.redactDeep(result), this.#config.limits);
     } catch (error) {
       const kind = classify(error, { deadline, caller: options.signal });
       return errorResult(this.#fail(serverId, `tools/call ${params.name}`, error, prepared?.redactor, kind, timeoutSec));
@@ -327,13 +327,29 @@ function classify(error: unknown, signals: { deadline?: AbortSignal; caller?: Ab
   return "error";
 }
 
-/** 결과가 너무 크면 텍스트만 남겨 자른다. 표시는 앞에 둔다 (gateway가 긴 결과의 앞부분만 모델에 보여 주므로). */
-export function capResult(result: CallToolResult, maxBytes: number): CallToolResult {
-  const size = Buffer.byteLength(JSON.stringify(result), "utf8");
-  if (size <= maxBytes) return result;
-  const text = (result.content ?? [])
-    .map((c) => (c.type === "text" ? c.text : `[${c.type} content omitted]`))
-    .join("\n");
+/**
+ * 결과가 너무 크면 텍스트만 남겨 자른다. 표시는 앞에 둔다 (gateway가 긴 결과의 앞부분만 모델에 보여 주므로).
+ * 파일(resource 블록의 blob)은 따로 센다: 합계가 maxFileBytes 안이면 maxResultBytes에 들지 않는다.
+ * 이미지·파일이 빠졌으면 오류로 돌려준다 (받지 못한 파일을 받은 것으로 알지 않게).
+ */
+export function capResult(result: CallToolResult, limits: { maxResultBytes: number; maxFileBytes: number }): CallToolResult {
+  const maxBytes = limits.maxResultBytes;
+  const content = result.content ?? [];
+  // base64 글자 수(글자마다 1바이트라 JSON 크기에서 그대로 뺄 수 있다)와 푼 크기(끝의 `=`만큼 작다)
+  let fileChars = 0;
+  let fileBytes = 0;
+  for (const c of content) {
+    if (c.type !== "resource" || !("blob" in c.resource)) continue;
+    const blob = c.resource.blob;
+    fileChars += blob.length;
+    fileBytes += Math.floor((blob.length * 3) / 4) - (blob.endsWith("==") ? 2 : blob.endsWith("=") ? 1 : 0);
+  }
+  const size = Buffer.byteLength(JSON.stringify(result), "utf8") - fileChars;
+  if (size <= maxBytes && fileBytes <= limits.maxFileBytes) return result;
+  const dropped = content.some((c) => c.type !== "text");
+  const reason =
+    size > maxBytes ? `${size} bytes exceeds the ${maxBytes}-byte limit` : `its files are ${fileBytes} bytes, over the ${limits.maxFileBytes}-byte limit`;
+  const text = content.map((c) => (c.type === "text" ? c.text : `[${c.type} content omitted]`)).join("\n");
   const budget = Math.max(512, maxBytes - 512);
   const bytes = Buffer.from(text, "utf8");
   const truncated = bytes.length > budget ? bytes.subarray(0, budget).toString("utf8").replace(/�$/, "") : text;
@@ -341,9 +357,9 @@ export function capResult(result: CallToolResult, maxBytes: number): CallToolRes
     content: [
       {
         type: "text",
-        text: `[mcp-broker: result truncated — ${size} bytes exceeds the ${maxBytes}-byte limit]\n\n${truncated}`,
+        text: `[mcp-broker: result truncated — ${reason}${dropped ? "; its images and files were not delivered" : ""}]\n\n${truncated}`,
       },
     ],
-    isError: result.isError ?? false,
+    isError: dropped || (result.isError ?? false),
   };
 }

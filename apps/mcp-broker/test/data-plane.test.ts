@@ -48,6 +48,23 @@ describe("data plane (pi-mcp client ↔ broker ↔ upstream fixture)", { timeout
     await client.close();
   });
 
+  it("파일은 결과 한도와 따로 세어 그대로 전달하고, 파일 한도를 넘으면 오류로 돌려준다", async () => {
+    const client = await piClient(tb, "shared", { sub: "alice", sid: "s1" });
+    // 테스트 설정: 결과 1MiB, 파일 2MiB
+    const ok = await client.callTool("file", { size: 1_500_000 });
+    expect(ok.isError).toBeFalsy();
+    const block = ok.content.find((c) => c.type === "resource")!;
+    const bytes = Buffer.from((block.resource as { blob: string }).blob, "base64");
+    expect(bytes.length).toBe(1_500_000);
+    expect(bytes[1_499_999]).toBe(1_499_999 % 256);
+
+    const over = await client.callTool("file", { size: 2_500_000 });
+    expect(over.isError).toBe(true);
+    expect(over.content).toHaveLength(1);
+    expect(textOf(over)).toMatch(/^\[mcp-broker: result truncated — its files are 2500000 bytes, over the 2097152-byte limit; its images and files were not delivered\]/);
+    await client.close();
+  });
+
   it("toolAllow면 목록에 있는 도구만 보인다", async () => {
     const client = await piClient(tb, "allowonly", { sub: "alice", sid: "s1" });
     expect((await client.listTools()).map((t) => t.name)).toEqual(["whoami"]);

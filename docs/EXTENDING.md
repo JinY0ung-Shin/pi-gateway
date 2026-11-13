@@ -129,6 +129,28 @@ stdio 서버는 env·args가 프로세스를 띄울 때 정해져요. 그래서 
 - `mcp_search` 설명에 서버마다 id, 표시 이름, 설명 첫 줄이 들어가요. 모델은 이걸 보고 어떤 서비스가 있는지 알아요. 서버 설명을 채워 두세요.
 - 관리 화면 **System One** 페이지에 decision model 서버를 넣으면 `mcp_search`는 모든 도구의 이름과 설명(앞 500자)을 선택지로 주고 질의에 맞는 도구를 고르게 해요. 도구 설명의 앞부분에 무엇을 하는 도구인지 적어 두세요. System One이 없거나 그 호출이 실패하면 BM25(단어 일치)로 찾아요.
 
+### 파일을 돌려주는 도구
+
+도구가 파일을 돌려주려면 결과에 MCP 표준 `resource` 블록을 넣어요. gateway가 사용자 sandbox에 저장하고, 모델에는 블록 대신 저장 결과를 줘요.
+
+```json
+{"type": "resource",
+ "resource": {"uri": "artifact://<서버가 정한 id>/report.pdf", "mimeType": "application/pdf", "blob": "<base64>",
+              "_meta": {"size": 12345, "sha256": "<hex>"}}}
+```
+
+```
+Saved to the workspace: {"saved_path":"/workspace/artifacts/<세션 id>/report-3fa9c1d2.pdf","size":12345,"sha256":"…","mime":"application/pdf","truncated":false}
+```
+
+- 파일 이름은 `uri`의 마지막 조각에 sha256 앞 8자를 붙여요. 같은 내용은 같은 경로가 되고, 내용이 다르면 다른 파일이 돼요. 마지막 조각을 파일 이름으로 쓸 수 없으면 `artifact.bin`이에요.
+- `_meta`의 `size`·`sha256`은 없어도 돼요. 있으면 받은 바이트와 비교하고, 다르거나 base64가 깨졌으면 저장하지 않고 도구 오류로 돌려줘요.
+- 결과 하나에 든 파일은 합쳐서 28MiB까지예요 (base64를 푼 크기). 넘으면 broker가 파일을 빼고 도구 오류로 돌려줘요. 파일을 뺀 나머지(텍스트·이미지)는 전처럼 4MiB까지예요.
+- 이미지(`image/*`)는 저장도 하고 모델에도 보여 줘요. `image` 블록은 보여 주기만 해요.
+- `resource_link`는 저장하지 않아요. gateway는 링크를 대신 가져오지 않아요.
+- `read_only` 세션에서는 저장하지 않아요.
+- 도구 인자로 경로나 URL을 받아 그대로 가져오지 마세요. 서버가 발급한 id만 받으세요.
+
 ---
 
 ## 2. plugin skill 추가 (코드 수정 없음)

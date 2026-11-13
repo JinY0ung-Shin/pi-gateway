@@ -25,6 +25,7 @@ const TOOLS = [
   tool("slow", "sleeps, emitting progress (SSE)", { ms: { type: "number" }, steps: { type: "number" } }),
   tool("progress_burst", "progress and result in the same write (SSE)"),
   tool("hidden", "should be filtered by toolDeny"),
+  tool("file", "returns a binary file of the given size", { size: { type: "number" } }),
 ];
 
 type Message = { id?: number | string; method: string; params?: { name?: string; arguments?: Record<string, unknown>; _meta?: { progressToken?: unknown } } };
@@ -34,7 +35,7 @@ const text = (t: string, extra: Record<string, unknown> = {}) => ({ content: [{ 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 const event = (msg: unknown) => `event: message\ndata: ${JSON.stringify(msg)}\n\n`;
 
-function callTool(name: string | undefined, headers: IncomingHttpHeaders): Reply {
+function callTool(name: string | undefined, headers: IncomingHttpHeaders, args: Record<string, unknown> = {}): Reply {
   const secret = String(headers["x-leak"] ?? "");
   switch (name) {
     case "headers":
@@ -73,6 +74,18 @@ function callTool(name: string | undefined, headers: IncomingHttpHeaders): Reply
       return { error: { code: -32602, message: `missing required argument 'repo' (token ${secret})` } };
     case "hidden":
       return { result: text("you should not see this") };
+    case "file": {
+      // 0..255가 되풀이되는 size 바이트
+      const bytes = Buffer.alloc(Number(args.size), Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+      return {
+        result: {
+          content: [
+            { type: "text", text: "file attached" },
+            { type: "resource", resource: { uri: "artifact://f1/data.bin", mimeType: "application/octet-stream", blob: bytes.toString("base64") } },
+          ],
+        },
+      };
+    }
     default:
       return { error: { code: -32602, message: `unknown tool ${name}` } };
   }
@@ -141,7 +154,7 @@ export async function startHttpFixture(): Promise<HttpFixture> {
             void streamTool(res, msg, String(req.headers["x-leak"] ?? ""));
             return;
           }
-          reply = callTool(msg.params?.name, req.headers);
+          reply = callTool(msg.params?.name, req.headers, msg.params?.arguments);
           break;
         default:
           reply = { error: { code: -32601, message: "not found" } };

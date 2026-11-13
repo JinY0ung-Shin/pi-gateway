@@ -16,6 +16,7 @@ import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
 import type { SandboxHandle } from "../sandbox/client.js";
 import { guardImageBlocks } from "../tools/image-guard.js";
+import { hasArtifacts, type SavedArtifacts, saveArtifacts } from "./artifacts.js";
 import { AttachedStdioTransport } from "./attached-transport.js";
 
 /**
@@ -24,6 +25,7 @@ import { AttachedStdioTransport } from "./attached-transport.js";
  *   비밀키는 broker에만 있고 gateway는 모른다.
  * - sandbox 서버: sandboxd attach로 사용자 컨테이너 안에 stdio 프로세스를 띄운다.
  *   비밀키가 없는 서버만 여기서 돈다 (shared mcp-config 검증 규칙).
+ * 결과의 파일(바이너리 resource 블록)은 sandbox에 저장한다 (artifacts.ts). read_only 세션에서는 저장하지 않는다.
  * sandbox 서버의 도구 목록은 프로세스 전역 캐시를 쓰고(목록을 보려고 프로세스를 띄우지 않게), 연결은 처음 필요할 때 만든다.
  * broker 서버의 도구 목록은 broker가 캐시한다 (설정이 바뀌면 broker가 바로 버린다).
  */
@@ -109,6 +111,8 @@ export interface McpConnectionDeps {
   sandbox: SandboxHandle;
   principal: string;
   sessionId: string;
+  /** 요청의 read_only. true면 결과의 파일을 workspace에 저장하지 않는다. */
+  readOnly: boolean;
   /** 현재 요청의 전달 헤더·metadata (allowlist를 거친 값) */
   requestContext: () => RequestContext;
   cache: McpToolCache;
@@ -163,7 +167,7 @@ class Slots {
       const onAbort = () => {
         const i = this.waiters.indexOf(grant);
         if (i >= 0) this.waiters.splice(i, 1);
-        reject(new Error("too many MCP tool lists in flight; gave up waiting for a turn"));
+        reject(new Error("too many MCP requests in flight; gave up waiting for a turn"));
       };
       if (signal.aborted) return onAbort();
       signal.addEventListener("abort", onAbort, { once: true });
@@ -185,6 +189,43 @@ class Slots {
 }
 
 const brokerListSlots = new Slots(BROKER_LIST_CONCURRENCY);
+
+/** 동시에 저장하는 결과 수 (gateway 전체). 파일은 통째로 메모리에 올라오므로 한꺼번에 몰리지 않게 한다. */
+const artifactSlots = new Slots(4);
+
+/** broker가 주는 결과의 최대 크기: 텍스트·이미지 4MiB와 파일 28MiB의 base64 (broker의 maxResultBytes·maxFileBytes), 그리고 여유. */
+const BROKER_MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
+
+/**
+ * SSE 응답을 이벤트 단위 chunk로 다시 묶는다.
+ * pi-mcp의 SSE 파서는 chunk를 받을 때마다 모아 둔 글 전체를 다시 훑는다. 파일이 든 결과처럼 큰 이벤트가
+ * 여러 chunk로 오면 크기의 제곱만큼 걸린다 (39MB에 6초). 이벤트가 끝나는 빈 줄까지 모아서 한 번에 넘긴다.
+ * 한도를 넘게 모이면 그대로 넘겨 파서가 거절하게 한다.
+ */
+export function wholeSseEvents(response: Response): Response {
+  if (!response.body || !(response.headers.get("content-type") ?? "").startsWith("text/event-stream")) return response;
+  let held: Uint8Array[] = [];
+  let size = 0;
+  /** 지금까지 받은 글의 마지막 3바이트 (빈 줄이 chunk 경계에 걸쳐 올 수 있다) */
+  let tail = "";
+  const flush = (controller: TransformStreamDefaultController<Uint8Array>) => {
+    if (held.length > 0) controller.enqueue(held.length === 1 ? held[0]! : Buffer.concat(held));
+    held = [];
+    size = 0;
+  };
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        held.push(chunk);
+        size += chunk.length;
+        tail = (tail + Buffer.from(chunk.subarray(-3)).toString("latin1")).slice(-3);
+        if (tail.endsWith("\n\n") || tail.endsWith("\n\r\n") || size > BROKER_MAX_MESSAGE_BYTES) flush(controller);
+      },
+      flush,
+    }),
+  );
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
 
 /** promise를 signal과 경쟁시킨다 (promise 자체는 취소되지 않는다). */
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -333,8 +374,10 @@ export class McpConnectionSet {
       const transport = new StreamableHttpTransport({
         url: `${broker.url}/mcp/${encodeURIComponent(server.id)}`,
         openGetStream: false,
+        maxMessageBytes: BROKER_MAX_MESSAGE_BYTES,
         // 도구 호출의 trace를 broker로 잇는다
-        fetch: (input, init) => fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), ...traceHeaders() } }),
+        fetch: async (input, init) =>
+          wholeSseEvents(await fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), ...traceHeaders() } })),
         authProvider: {
           token: () =>
             signInternalToken(broker.jwtSecret, AUD_BROKER, {
@@ -408,15 +451,28 @@ export class McpConnectionSet {
             onUpdate?.({ content: [{ type: "text", text }], details });
           },
         });
+        const files = await this.saveFiles(result, toolCallId, signal);
         // MCP 서버가 준 이미지는 pi가 gateway에서 디코딩한다. 그 전에 크기를 확인한다.
-        const content = await this.spillLongText(guardImageBlocks(toLlmContent(result), `${server.id}/${tool.name}`), toolCallId, signal);
+        const shown = guardImageBlocks(toLlmContent(files ? { ...result, content: files.content } : result), `${server.id}/${tool.name}`);
+        const content = await this.spillLongText(shown, toolCallId, signal);
         return {
           content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
           details: { server: server.id, tool: tool.name },
-          ...(result.isError ? { isError: true } : {}),
+          ...(result.isError || files?.failed ? { isError: true } : {}),
         };
       },
     };
+  }
+
+  /** 결과에 파일이 있으면 sandbox에 저장한다. 없거나 read_only 세션이면 undefined. */
+  private async saveFiles(result: Parameters<typeof hasArtifacts>[0], toolCallId: string, signal?: AbortSignal): Promise<SavedArtifacts | undefined> {
+    if (this.deps.readOnly || !hasArtifacts(result)) return undefined;
+    const release = await artifactSlots.take(signal ?? this.lifetime.signal);
+    try {
+      return await saveArtifacts(result, this.deps.sandbox, toolCallId, signal);
+    } finally {
+      release();
+    }
   }
 
   /** 텍스트가 길면 앞부분만 모델에 주고 전체는 sandbox /tmp에 저장한다 (bash 도구와 같은 기준). */

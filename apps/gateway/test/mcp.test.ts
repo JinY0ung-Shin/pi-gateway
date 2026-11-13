@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -6,12 +7,15 @@ import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AttachedStdioTransport } from "../src/mcp-client/attached-transport.js";
-import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH } from "../src/mcp-client/connections.js";
+import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH, wholeSseEvents } from "../src/mcp-client/connections.js";
 import { createMcpProxyTools, searchTerms } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
 const stdioServer = fileURLToPath(new URL("./fixtures/stdio-mcp-server.mjs", import.meta.url));
+
+const FILE_BYTES = Buffer.from([0, 1, 2, 3, 250, 251, 252, 253, 254, 255]);
+const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
 let h: Harness;
 beforeAll(async () => {
@@ -30,6 +34,23 @@ beforeAll(async () => {
           name: "picture",
           handler: (args) => ({
             content: [{ type: "image", data: (args.bomb ? bombPng() : tinyPng()).toString("base64"), mimeType: "image/png" }],
+          }),
+        },
+        {
+          name: "file",
+          handler: (args) => ({
+            content: [
+              { type: "text", text: "here is the file" },
+              {
+                type: "resource",
+                resource: {
+                  uri: String(args.uri ?? "artifact://a1/report.bin"),
+                  mimeType: String(args.mime ?? "application/octet-stream"),
+                  blob: String(args.blob ?? (args.mime ? tinyPng() : FILE_BYTES).toString("base64")),
+                  ...(args.meta ? { _meta: args.meta } : {}),
+                },
+              },
+            ],
           }),
         },
       ],
@@ -229,6 +250,95 @@ describe("MCP image results", () => {
     expect(last(res.events).type).toBe("response.completed");
     // 폭탄 이미지는 모델 요청에도 들어가지 않는다
     expect(JSON.stringify(h.llm.requests.slice(before))).not.toContain(bombPng().toString("base64").slice(0, 200));
+  });
+});
+
+describe("MCP file results", () => {
+  const callFile = async (id: string, args: Record<string, unknown>, body: Record<string, unknown> = {}) => {
+    h.llm.enqueue({ toolCalls: [{ id, name: "mcp__demo__file", arguments: args }] }, { text: "ok" });
+    const res = await h.stream({ input: "file", ...body });
+    const sessionId = /^resp_(.+)_\d+$/.exec((last(res.events).data.response as any).id)![1]!;
+    return { result: ofType(res.events, "response.tool_result")[0]!.data, sessionId, id: (last(res.events).data.response as any).id as string };
+  };
+  const filesOf = (sessionId: string) => {
+    const dir = join(h.sandbox.workspaceOf("alice"), "artifacts", sessionId);
+    return existsSync(dir) ? readdirSync(dir) : [];
+  };
+
+  it("saves a binary resource into the session's folder and gives the model the path, size and checksum", async () => {
+    const digest = sha256(FILE_BYTES);
+    const first = await callFile("f1", { meta: { size: FILE_BYTES.length, sha256: digest.toUpperCase() } });
+    const path = `/workspace/artifacts/${first.sessionId}/report-${digest.slice(0, 8)}.bin`;
+    expect(first.result.is_error).toBe(false);
+    expect(first.result.content).toBe(
+      `here is the file\nSaved to the workspace: ${JSON.stringify({ saved_path: path, size: 10, sha256: digest, mime: "application/octet-stream", truncated: false })}`,
+    );
+    expect(readFileSync(join(h.sandbox.workspaceOf("alice"), "artifacts", first.sessionId, `report-${digest.slice(0, 8)}.bin`))).toEqual(FILE_BYTES);
+
+    // 같은 내용을 다시 받으면 같은 경로다. 다른 세션은 다른 폴더에 둔다.
+    h.llm.enqueue({ toolCalls: [{ id: "f2", name: "mcp__demo__file", arguments: {} }] }, { text: "ok" });
+    const again = await h.stream({ input: "again", previous_response_id: first.id });
+    expect(String(ofType(again.events, "response.tool_result")[0]!.data.content)).toContain(path);
+    expect(filesOf(first.sessionId)).toEqual([`report-${digest.slice(0, 8)}.bin`]);
+    const other = await callFile("f3", {});
+    expect(other.sessionId).not.toBe(first.sessionId);
+    expect(String(other.result.content)).toContain(`/workspace/artifacts/${other.sessionId}/report-`);
+  });
+
+  it("keeps the file inside the folder whatever the uri says", async () => {
+    for (const uri of ["artifact://a1/..%2F..%2F.home%2F.bashrc", "artifact://a1/..", "/etc/passwd/"]) {
+      const { result, sessionId } = await callFile("f4", { uri });
+      expect(String(result.content)).toContain(`"saved_path":"/workspace/artifacts/${sessionId}/artifact-${sha256(FILE_BYTES).slice(0, 8)}.bin"`);
+      expect(filesOf(sessionId)).toEqual([`artifact-${sha256(FILE_BYTES).slice(0, 8)}.bin`]);
+    }
+  });
+
+  it("fails the call and saves nothing when the bytes are damaged or differ from what the server declared", async () => {
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ blob: FILE_BYTES.toString("base64").slice(0, -3) }, /not saved: the transfer was truncated or is not valid base64/],
+      [{ meta: { size: 11 } }, /not saved: received 10 bytes, but the server declared 11/],
+      [{ meta: { sha256: "0".repeat(64) } }, /not saved: the sha256 of the received bytes does not match/],
+    ];
+    for (const [args, message] of cases) {
+      const { result, sessionId } = await callFile("f5", args);
+      expect(result.is_error).toBe(true);
+      expect(String(result.content)).toMatch(message);
+      expect(String(result.content)).not.toContain("artifact://");
+      expect(filesOf(sessionId)).toEqual([]);
+    }
+  });
+
+  it("saves an image resource and still shows it to the model", async () => {
+    const { result, sessionId } = await callFile("f6", { uri: "artifact://a2/chart.png", mime: "image/png" });
+    expect(String(result.content)).toMatch(/Saved to the workspace: .*chart-[0-9a-f]{8}\.png.*\n\[image\]$/);
+    expect(filesOf(sessionId)).toHaveLength(1);
+  });
+
+  it("does not write to the workspace in a read_only session", async () => {
+    const { result, sessionId } = await callFile("f7", {}, { read_only: true });
+    expect(String(result.content)).toContain("[binary resource");
+    expect(filesOf(sessionId)).toEqual([]);
+  });
+});
+
+describe("wholeSseEvents", () => {
+  const chunksOf = async (parts: string[], contentType: string) => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(Buffer.from(part));
+        controller.close();
+      },
+    });
+    const out: string[] = [];
+    for await (const chunk of wholeSseEvents(new Response(body, { headers: { "content-type": contentType } })).body!) out.push(Buffer.from(chunk).toString());
+    return out;
+  };
+
+  it("hands each SSE event over in one chunk, and a small event as soon as it ends", async () => {
+    const parts = ['event: message\ndata: {"a"', ":1}\n", "\n", "data: progress\n\n", "data: big\r\n\r", "\n", "data: cut off"];
+    expect(await chunksOf(parts, "text/event-stream")).toEqual(['event: message\ndata: {"a":1}\n\n', "data: progress\n\n", "data: big\r\n\r\n", "data: cut off"]);
+    // SSE가 아니면 건드리지 않는다
+    expect(await chunksOf(['{"a"', ":1}\n\n", "x"], "application/json")).toEqual(['{"a"', ":1}\n\n", "x"]);
   });
 });
 

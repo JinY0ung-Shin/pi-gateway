@@ -26,6 +26,7 @@ export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig 
       // 전체 병렬 실행처럼 부하가 클 때도 넉넉하게 기다린다.
       connectTimeoutSeconds: 60,
       maxResultBytes: 1024 * 1024,
+      maxFileBytes: 2 * 1024 * 1024,
       maxRequestBodyBytes: 4 * 1024 * 1024,
       toolsCacheSeconds: 60,
     },

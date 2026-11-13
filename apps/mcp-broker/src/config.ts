@@ -22,8 +22,10 @@ export interface BrokerConfig {
     /** 서버별 timeoutSec의 상한. gateway의 도구 timeout보다 짧아야 한다. */
     callTimeoutCapSeconds: number;
     connectTimeoutSeconds: number;
-    /** 도구 결과(JSON 직렬화 기준) 최대 크기 */
+    /** 도구 결과(JSON 직렬화 기준) 최대 크기. 파일(resource 블록의 blob)은 빼고 센다. */
     maxResultBytes: number;
+    /** 도구 결과 하나에 든 파일의 합계 (base64를 푼 크기) */
+    maxFileBytes: number;
     maxRequestBodyBytes: number;
     toolsCacheSeconds: number;
   };
@@ -66,6 +68,7 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
       callTimeoutCapSeconds: 600,
       connectTimeoutSeconds: 30,
       maxResultBytes: 4 * MiB,
+      maxFileBytes: 28 * MiB,
       maxRequestBodyBytes: 4 * MiB,
       toolsCacheSeconds: 60,
     },

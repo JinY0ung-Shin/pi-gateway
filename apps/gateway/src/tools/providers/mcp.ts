@@ -54,6 +54,7 @@ export function createMcpToolProvider(deps: McpProviderDeps): ToolProvider {
         sandbox: ctx.sandbox,
         principal: ctx.principal,
         sessionId: ctx.sessionId,
+        readOnly: ctx.readOnly,
         requestContext: ctx.requestContext,
         cache: deps.cache,
         log: ctx.log,
