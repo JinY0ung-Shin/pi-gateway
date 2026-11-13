@@ -3,7 +3,7 @@ import type { SessionRecord } from "../sessions/store.js";
 import { readTranscript } from "../sessions/transcript.js";
 import type { AdminContext } from "./context.js";
 import { PlatformError } from "./errors.js";
-import { sessionTraces } from "./traces.js";
+import { sessionTraces, traceStats } from "./traces.js";
 
 const LIST_LIMIT = 200;
 const MAX_RETENTION_DAYS = 3650;
@@ -33,6 +33,13 @@ export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): 
     const record = sessions.get(req.params.id);
     if (!record) throw new PlatformError(404, "session_not_found", `session ${req.params.id} not found`);
     return { ...summary(record), messages: readTranscript(record) };
+  });
+
+  /** 최근 턴들의 trace로 낸 시간 통계 (관리 화면의 "실행 시간") */
+  app.get("/traces/stats", async () => {
+    const host = ctx.config.jaegerHost;
+    if (!host) throw new PlatformError(404, "tracing_disabled", "JAEGER_HOST is not set");
+    return traceStats(host);
   });
 
   /** 세션의 턴별 trace (최근 턴부터). Jaeger가 지운 뒤(7일)에는 비어 있다. */

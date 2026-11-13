@@ -74,6 +74,24 @@ describe("admin history", () => {
       ]),
       chunk("sandboxd", [span("t1", "c", "sandboxd /v1/exec", 150, 350, { parentSpanId: "b" })]),
     ].join("\n");
+    const root = (session: string, turn: number) => [attr("gen_ai.conversation.id", { stringValue: session }), attr("pi_gateway.turn", { intValue: String(turn) })];
+    const statsBody = [
+      chunk("gateway", [
+        span("s1", "a", "invoke_agent", 0, 1000, { attributes: root("sess-1", 1) }),
+        span("s1", "b", "chat m1", 100, 500, {
+          parentSpanId: "a",
+          attributes: [
+            attr("gen_ai.request.model", { stringValue: "m1" }),
+            attr("pi_gateway.first_token_ms", { intValue: "50" }),
+            attr("gen_ai.usage.output_tokens", { intValue: "70" }),
+          ],
+        }),
+        span("s1", "c", "execute_tool bash", 500, 900, { parentSpanId: "a" }),
+        span("s1", "d", "execute_tool mcp_call", 600, 900, { parentSpanId: "a", status: { code: 2 }, attributes: [attr("pi_gateway.mcp_tool", { stringValue: "srv/find" })] }),
+        span("s2", "f", "invoke_agent", 5000, 7000, { status: { code: 2 }, attributes: root("sess-2", 3) }),
+      ]),
+      chunk("sandboxd", [span("s1", "e", "sandboxd /v1/exec", 550, 750, { parentSpanId: "c" })]),
+    ].join("\n");
     const realFetch = globalThis.fetch;
     let asked: URL | undefined;
     const stub = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -97,6 +115,34 @@ describe("admin history", () => {
         { id: "c", parentId: "b", service: "sandboxd", name: "sandboxd /v1/exec", startMs: 150, durationMs: 200, error: false, attributes: {} },
       ]);
       expect((await admin("GET", "/history/nope/traces")).status).toBe(404);
+
+      // 통계는 세션을 가리지 않고 최근 턴을 읽는다
+      stub.mockImplementation(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        return url.hostname === "jaeger.test" ? new Response(statsBody) : realFetch(input, init);
+      });
+      const stats = (await admin("GET", "/traces/stats")).json;
+      expect(stats).toMatchObject({
+        turns: 2,
+        failed: 1,
+        turnMs: { p50: 1000, p95: 2000 },
+        // 턴 s1: 첫 LLM 호출이 100ms에 시작해 50ms 뒤 첫 token
+        firstTokenMs: { p50: 150, p95: 150 },
+        // s1: LLM 100~500, 동시에 돈 도구 둘이 500~900 (겹쳐도 한 번), 나머지 200. s2: 전부 그 외 2000
+        share: { llmMs: 400, toolMs: 400, otherMs: 2200 },
+        // 출력 70 token을 첫 token 뒤 350ms 동안 = 200 token/초
+        models: [{ model: "m1", calls: 1, errors: 0, firstTokenMs: { p50: 50, p95: 50 }, tokensPerSecond: 200 }],
+      });
+      expect(stats.steps.map((s: any) => [s.service, s.name, s.calls, s.errors, s.totalMs])).toEqual([
+        ["gateway", "chat m1", 1, 0, 400],
+        ["gateway", "execute_tool bash", 1, 0, 400],
+        ["gateway", "execute_tool mcp_call srv/find", 1, 1, 300],
+        ["sandboxd", "sandboxd /v1/exec", 1, 0, 200],
+      ]);
+      expect(stats.slowest.map((t: any) => [t.sessionId, t.turn, t.durationMs, t.error])).toEqual([
+        ["sess-2", 3, 2000, true],
+        ["sess-1", 1, 1000, false],
+      ]);
     } finally {
       stub.mockRestore();
     }

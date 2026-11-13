@@ -180,7 +180,7 @@ function ActiveTurns(props: { turns: StatusView["activeTurns"]; reload: () => Pr
 }
 
 /** 상위 TOP_ROWS줄만 보이고 나머지는 전체 보기 창에서 보는 표 */
-function Ranked<T>(props: { title: string; rows: T[]; table: (rows: T[]) => JSX.Element; children?: ComponentChildren }) {
+export function Ranked<T>(props: { title: string; rows: T[]; table: (rows: T[]) => JSX.Element; children?: ComponentChildren }) {
   const [all, setAll] = useState(false);
   const { rows } = props;
   const more = rows.length > TOP_ROWS && (
@@ -326,7 +326,7 @@ function Check(props: { check: ServiceCheck }) {
 }
 
 /** 지금 수치 하나. of는 전체 크기 (heap 사용량 / 전체). */
-function Stat(props: { label: string; value: string | number; of?: string }) {
+export function Stat(props: { label: string; value: string | number; of?: string }) {
   return (
     <div class="stat">
       <div class="muted small-text">{props.label}</div>
