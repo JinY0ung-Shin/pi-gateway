@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compactionTokens } from "../src/agent/session-factory.js";
-import type { ResponseUsage } from "../src/api/mapper.js";
+import { contextTokensAfterCompaction, estimateContext, type ResponseUsage } from "../src/api/mapper.js";
 import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, parseSse, startHarness } from "./helpers.js";
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
@@ -181,20 +181,24 @@ describe("compaction events", () => {
   });
 
   it("streams response.compaction around pi's compaction and reports the context after it", async () => {
-    h.llm.enqueue({ text: "First answer with some history to summarize." });
     // 요약되는 부분(첫 질문)이 요약보다 길어야 요약 뒤에 context가 줄어든다
-    const first = await h.post({ input: "first question, with a long background. ".repeat(40) });
-    h.llm.enqueue({ text: "Second answer.", usage: { prompt_tokens: 30000, completion_tokens: 20 } }, { text: "Summary of the conversation." });
-    const res = await h.stream({ input: "second question", previous_response_id: first.json.id });
+    const texts = ["first question, with a long background. ".repeat(40), "First answer with some history to summarize.", "second question", "Second answer."];
+    h.llm.enqueue({ text: texts[1] });
+    const first = await h.post({ input: texts[0] });
+    h.llm.enqueue({ text: texts[3], usage: { prompt_tokens: 30000, completion_tokens: 20 } }, { text: "Summary of the conversation." });
+    const res = await h.stream({ input: texts[2], previous_response_id: first.json.id });
     const compaction = ofType(res.events, "response.compaction").map((e) => e.data.status);
     expect(compaction).toEqual(["in_progress", "completed"]);
     const done = last(res.events);
     expect(done.type).toBe("response.completed");
     const { usage } = done.data.response as { usage: ResponseUsage };
     expect(usage.context_window).toBe(32000);
-    // 요약 전 크기(입력 30000 + 출력 20)가 메시지가 줄어든 비율만큼 준다. 메시지만 센 추정치(3000 안팎)가 아니다
+    // 요약 전 usage(입력 30000 + 출력 20)에서 대화 몫이, 대화 추정치(글자 수 / 4)가 준 비율만큼 준다. pi의 추정치 그대로가 아니다
+    const after = estimateContext(h.gateway.hub.get(sessionOf(first.json.id))!.agent.session);
+    const before = { system: after.system, conversation: texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0) };
+    expect(after.conversation).toBeLessThan(before.conversation);
+    expect(usage.input_tokens_details.context_tokens).toBe(contextTokensAfterCompaction(30020, before, after));
     expect(usage.input_tokens_details.context_tokens).toBeLessThan(30020);
-    expect(usage.input_tokens_details.context_tokens).toBeGreaterThan(20000);
   });
 });
 
@@ -261,19 +265,24 @@ describe("POST /v1/responses/{id}/compact", () => {
     expect(branched).not.toContain("SUMMARY-OF-HISTORY");
   });
 
-  it("counts what lies outside the messages (system prompt, tool declarations) on both sides of the summary", async () => {
-    h.llm.enqueue({ text: "The secret word is PINEAPPLE." });
-    const first = await h.post({ input: "tell me the secret word" });
-    // 마지막 응답의 usage가 요약 전 크기다: 메시지 추정치보다 훨씬 크다 (시스템 프롬프트·도구 선언).
-    h.llm.enqueue({ text: "Noted.", usage: { prompt_tokens: 5000, completion_tokens: 5 } });
-    const second = await h.post({ input: "thanks, and now let us move on to a different and much longer topic", previous_response_id: first.json.id });
+  it("reports the context after the summary on the usage's scale, not pi's bare estimate", async () => {
+    const texts = ["tell me the secret word", "The secret word is PINEAPPLE.", "thanks, and now let us move on to a different and much longer topic", "Noted."];
+    h.llm.enqueue({ text: texts[1] });
+    const first = await h.post({ input: texts[0] });
+    // 마지막 응답의 usage가 요약 전 크기다: 글자 수로 센 추정치(수십 token)와 기준이 다르다.
+    h.llm.enqueue({ text: texts[3], usage: { prompt_tokens: 5000, completion_tokens: 5 } });
+    const second = await h.post({ input: texts[2], previous_response_id: first.json.id });
     h.llm.enqueue({ text: "SUMMARY" });
     const res = await compact(second.json.id);
     expect(res.done.status).toBe("completed");
-    expect(res.done.tokens_before).toBeGreaterThanOrEqual(5000);
-    // 메시지만 센 추정치(수십 token)가 아니라, 메시지 밖의 몫이 그대로 남은 값
-    expect(res.done.tokens_after).toBeGreaterThan(4500);
-    expect(res.done.tokens_after).toBeLessThan(res.done.tokens_before + 200);
+    expect(res.done.tokens_before).toBe(5005);
+    // 시스템 프롬프트 몫은 그대로 두고, 나머지(대화)가 대화 추정치가 준 비율만큼 준다
+    const after = estimateContext(h.gateway.hub.get(sessionOf(second.json.id))!.agent.session);
+    const before = { system: after.system, conversation: texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0) };
+    expect(after.conversation).toBeLessThan(before.conversation);
+    expect(res.done.tokens_after).toBe(contextTokensAfterCompaction(5005, before, after));
+    expect(res.done.tokens_after).toBeGreaterThan(after.system + after.conversation);
+    expect(res.done.tokens_after).toBeLessThan(5005);
   });
 
   it("ends failed (nothing_to_compact) right after a compaction and leaves the session as it was", async () => {

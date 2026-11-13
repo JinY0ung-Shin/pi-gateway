@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
-import { type AgentSession, type AgentSessionEvent, calculateContextTokens, type CompactionResult, estimateTokens } from "@earendil-works/pi-coding-agent";
+import { type AssistantMessage, type AssistantMessageEvent, getCurrentSystemMessage, type ToolCall } from "@earendil-works/pi-ai";
+import { type AgentSession, type AgentSessionEvent, calculateContextTokens, estimateTokens } from "@earendil-works/pi-coding-agent";
 import type { SubagentEventDetails } from "../agent/subagents.js";
 import type { McpProgressDetails } from "../mcp-client/connections.js";
 import type { PendingToolCall } from "../sessions/store.js";
@@ -68,21 +68,31 @@ export function emptyUsage(): ResponseUsage {
   return { input_tokens: 0, output_tokens: 0, total_tokens: 0, input_tokens_details: { cached_tokens: 0, cache_creation_tokens: 0 } };
 }
 
-/** 지금 대화 메시지의 token 추정치 (pi가 요약 뒤 크기를 추정하는 방식과 같다) */
-export const estimateMessageTokens = (session: AgentSession): number =>
-  session.sessionManager.buildSessionProjection().messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+/** context의 token 추정치 (pi와 같이 글자 수로 센다): 요약해도 그대로인 시스템 프롬프트와, 요약으로 줄어드는 대화 */
+export interface ContextEstimate {
+  system: number;
+  conversation: number;
+}
+
+export function estimateContext(session: AgentSession): ContextEstimate {
+  const { messages } = session.sessionManager.buildSessionProjection();
+  const system = getCurrentSystemMessage(messages);
+  return {
+    // toolsAdded는 뺀다: 등록된 도구 전부의 선언이라서, 모델에 가는 몇 개(나머지는 mcp_search로 찾는다)보다 훨씬 크다.
+    system: system ? estimateTokens({ ...system, toolsAdded: undefined }) : 0,
+    conversation: messages.reduce((sum, message) => (message.role === "system" ? sum : sum + estimateTokens(message)), 0),
+  };
+}
 
 /**
- * 요약 뒤의 context 크기 (pi가 추정하지 못했으면 null).
- * tokensBefore는 마지막 응답의 usage(실제 token)이고 pi의 추정치는 글자 수로 센 메시지 크기라서 기준이 다르다.
- * 실제 크기가 메시지 추정치와 같은 비율로 줄었다고 본다: 추정이 실제와 얼마나 다르든(한글은 훨씬 작게 나온다) 요약 전후에 같이 걸려 상쇄된다.
+ * 요약 뒤의 context 크기 (알 수 없으면 null). tokensBefore는 요약 전 마지막 응답의 usage(실제 token)다.
+ * 그중 시스템 프롬프트 몫은 그대로 두고, 나머지(대화)가 대화 추정치와 같은 비율로 줄었다고 본다.
+ * 추정이 실제와 얼마나 다르든(한글은 훨씬 작게 나온다) 요약 전후에 같이 걸려 상쇄된다.
  */
-export function contextTokensAfterCompaction(
-  result: Pick<CompactionResult, "tokensBefore" | "estimatedTokensAfter">,
-  messageTokensBefore: number,
-): number | null {
-  if (result.estimatedTokensAfter == null || messageTokensBefore <= 0) return null;
-  return Math.round((result.tokensBefore * result.estimatedTokensAfter) / messageTokensBefore);
+export function contextTokensAfterCompaction(tokensBefore: number, before: ContextEstimate, after: ContextEstimate): number | null {
+  if (before.conversation <= 0) return null;
+  const system = Math.min(before.system, tokensBefore);
+  return Math.round(system + ((tokensBefore - system) * after.conversation) / before.conversation);
 }
 
 export function functionCallItem(call: PendingToolCall): FunctionCallItem {
@@ -128,8 +138,8 @@ export class ResponseEventMapper {
   private readonly startedTools = new Set<string>();
   private readonly usageSum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   private contextTokens: number | null = null;
-  /** 요약이 시작될 때의 메시지 추정치 (contextTokensAfterCompaction에 쓴다) */
-  private messageTokensBeforeCompaction = 0;
+  /** 요약이 시작될 때의 context 추정치 (contextTokensAfterCompaction에 쓴다) */
+  private estimateBeforeCompaction: ContextEstimate = { system: 0, conversation: 0 };
   /** assistant 응답 시도가 시작될 때의 상태. pi가 같은 응답을 다시 시도하면 그 시도에서 나온 항목을 버린다. */
   private checkpoint: { items: number; messageId: string | null; messageTextLength: number } | null = null;
   /** 턴 도중 받은 입력의 client_id (pi 큐 순서). pi가 전달하면 앞에서부터 빠진다. */
@@ -139,12 +149,12 @@ export class ResponseEventMapper {
 
   /**
    * contextWindow: 세션 모델의 context window (usage.context_window).
-   * messageTokens: 지금 대화 메시지의 token 추정치 (estimateMessageTokens)
+   * estimate: 지금 context의 token 추정치 (estimateContext)
    */
   constructor(
     private readonly emit: EmitFn | null,
     private readonly contextWindow: number | undefined,
-    private readonly messageTokens: () => number,
+    private readonly estimate: () => ContextEstimate,
   ) {}
 
   private send(type: string, payload: Record<string, unknown>): void {
@@ -293,12 +303,12 @@ export class ResponseEventMapper {
         return;
       // pi가 대화를 요약하는 동안 클라이언트가 멈춘 것처럼 보이지 않게 알린다.
       case "compaction_start":
-        this.messageTokensBeforeCompaction = this.messageTokens();
+        this.estimateBeforeCompaction = this.estimate();
         this.send("response.compaction", { status: "in_progress" });
         return;
       case "compaction_end":
         // 요약 뒤의 context 크기 (모르면 비운다). 다음 응답의 usage가 오면 그것으로 바뀐다.
-        if (event.result) this.contextTokens = contextTokensAfterCompaction(event.result, this.messageTokensBeforeCompaction);
+        if (event.result) this.contextTokens = contextTokensAfterCompaction(event.result.tokensBefore, this.estimateBeforeCompaction, this.estimate());
         this.send("response.compaction", { status: event.result ? "completed" : "failed" });
         if (event.willRetry) this.discardAttempt();
         return;

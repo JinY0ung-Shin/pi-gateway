@@ -18,7 +18,7 @@ import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
 import {
   contextTokensAfterCompaction,
   emptyUsage,
-  estimateMessageTokens,
+  estimateContext,
   functionCallItem,
   ResponseEventMapper,
   type ResponseUsage,
@@ -342,7 +342,7 @@ export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, 
     deps.store.touch(record.id);
     const session = live.agent.session;
     const sm = session.sessionManager;
-    const messageTokens = estimateMessageTokens(session);
+    const estimateBefore = estimateContext(session);
 
     // 요약은 LLM 호출이라 오래 걸릴 수 있다. 턴처럼 SSE로 답해 keepalive가 연결을 붙잡게 한다.
     reply.hijack();
@@ -390,7 +390,7 @@ export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, 
           status: "completed",
           id: responseId(record.id, turn),
           tokens_before: result.tokensBefore,
-          tokens_after: contextTokensAfterCompaction(result, messageTokens),
+          tokens_after: contextTokensAfterCompaction(result.tokensBefore, estimateBefore, estimateContext(session)),
           context_window: session.model?.contextWindow ?? null,
         });
       }
@@ -585,7 +585,7 @@ async function runLocked(
   const log = deps.log.child({ session: record.id, turn });
   const leafBefore = live.agent.session.sessionManager.getLeafId();
   const contextWindow = live.agent.session.model?.contextWindow;
-  const messageTokens = () => estimateMessageTokens(live.agent.session);
+  const estimate = () => estimateContext(live.agent.session);
 
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
@@ -641,7 +641,7 @@ async function runLocked(
     reply.hijack();
     const sse = new SseWriter(reply.raw);
     sse.start();
-    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload), contextWindow, messageTokens);
+    const mapper = new ResponseEventMapper((type, payload) => sse.send(type, payload), contextWindow, estimate);
     try {
       await streamTurn();
     } catch (err) {
@@ -695,7 +695,7 @@ async function runLocked(
   }
 
   // 비스트리밍
-  const mapper = new ResponseEventMapper(null, contextWindow, messageTokens);
+  const mapper = new ResponseEventMapper(null, contextWindow, estimate);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
