@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, enc, formatTime } from "../api";
-import { Modal, Notice, Section, useAction, useLoad } from "../components";
+import { api, duration, enc, formatTime } from "../api";
+import { EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
 import { newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
 
 /** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간 */
@@ -180,13 +180,7 @@ function SessionList() {
           </tr>
         </thead>
         <tbody>
-          {list?.items.length === 0 && (
-            <tr>
-              <td colSpan={5} class="muted">
-                저장된 세션이 없습니다.
-              </td>
-            </tr>
-          )}
+          {list?.items.length === 0 && <EmptyRow cols={5}>저장된 세션이 없습니다.</EmptyRow>}
           {list?.items.map((s) => (
             <tr key={s.id} class="clickable" onClick={() => (location.hash = `#/history/${enc(s.id)}`)}>
               <td>{formatTime(s.lastActiveAt)}</td>
@@ -284,8 +278,6 @@ interface TurnTrace {
   durationMs: number;
   spans: TraceSpan[];
 }
-
-const duration = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`);
 
 /** span 이름 옆에 붙이는 설명: LLM 호출은 토큰과 첫 토큰까지 시간, mcp_call은 실제로 부른 도구 */
 function spanNote(span: TraceSpan): string {

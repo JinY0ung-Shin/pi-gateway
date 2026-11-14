@@ -22,7 +22,7 @@ export function Login(props: { onLogin: () => void }) {
         <p class="muted">관리자 API 키(ADMIN_API_KEY)로 로그인합니다.</p>
         <label class="field">
           <span>관리자 키</span>
-          <input type="password" autocomplete="current-password" value={key} onInput={(e) => setKey((e.currentTarget as HTMLInputElement).value)} autofocus required />
+          <input type="password" autocomplete="current-password" value={key} onInput={(e) => setKey(e.currentTarget.value)} autofocus required />
         </label>
         {action.view}
         <button class="primary" type="submit" disabled={action.busy || !key}>

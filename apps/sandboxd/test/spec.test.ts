@@ -66,7 +66,7 @@ describe("buildContainerSpec — 보안 옵션은 코드에 고정된다", () =>
       [LABEL_SANDBOX]: "1",
       [LABEL_USER_KEY]: key,
       [LABEL_INSTANCE]: "unit",
-      [LABEL_SPEC]: "2",
+      [LABEL_SPEC]: "3",
     });
     expect(spec.name).toBe(`pi-sbx-test-${key}`);
   });

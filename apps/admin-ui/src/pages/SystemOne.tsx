@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { ApiKeyField, Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, SaveBar, Section, useAction, useLoad } from "../components";
 
 /**
  * System One 설정. mcp_search가 도구를 고를 때 묻는 decision model 서버 하나를 둔다. 저장하면 다음 검색부터 적용된다.
@@ -15,7 +15,6 @@ interface SystemOneView {
 
 interface ProbeResult {
   ok: boolean;
-  durationMs: number;
   error?: string;
   models?: { id: string; name?: string }[];
 }
@@ -104,20 +103,13 @@ export function SystemOnePage() {
 
   const fetchModels = async () => {
     setProbe("checking");
-    try {
-      setProbe(await api<ProbeResult>("POST", "/systemone/probe", { model: connectionOf(form) }));
-    } catch (error) {
-      setProbe({ ok: false, durationMs: 0, error: errorText(error) });
-    }
+    setProbe(await api<ProbeResult>("POST", "/systemone/probe", { model: connectionOf(form) }).catch((error) => ({ ok: false, error: errorText(error) })));
   };
 
   const runTest = async () => {
     setTest("testing");
-    try {
-      setTest(await api<Call>("POST", "/systemone/test", { model: toBody(form) }));
-    } catch (error) {
-      setTest({ at: new Date().toISOString(), durationMs: 0, error: errorText(error) });
-    }
+    // toBody는 둘 중 하나만 채웠을 때 throw한다. 테스트 버튼은 둘 다 채워야 눌린다.
+    setTest(await api<Call>("POST", "/systemone/test", { model: toBody(form) }).catch((error) => ({ at: new Date().toISOString(), durationMs: 0, error: errorText(error) })));
   };
 
   const save = () =>
@@ -125,7 +117,7 @@ export function SystemOnePage() {
 
   return (
     <>
-      {!view.model && <Notice tone="info">System One을 쓰지 않습니다. mcp_search는 BM25(단어 일치)로 도구를 찾습니다.</Notice>}
+      {!view.model && <Notice>System One을 쓰지 않습니다. mcp_search는 BM25(단어 일치)로 도구를 찾습니다.</Notice>}
       <p class="muted small-text">
         mcp_search가 모든 MCP 도구를 선택지로 주고 질의에 맞는 도구를 고르게 합니다. 호출이 실패하거나 10초를 넘은 검색은 BM25로 찾습니다.
         {view.updatedAt && ` · 마지막 저장 ${formatTime(view.updatedAt)}`}
@@ -187,18 +179,7 @@ export function SystemOnePage() {
         </p>
       </Section>
       <RecentCalls />
-      <div class={dirty ? "save-bar dirty" : "save-bar"}>
-        {action.view}
-        <div class="row wrap">
-          <button class="primary" disabled={action.busy || !dirty} onClick={() => void save()}>
-            저장
-          </button>
-          <button disabled={action.busy || !dirty} onClick={() => show(view)}>
-            되돌리기
-          </button>
-          {dirty ? <span class="warn-text small-text">저장하지 않은 변경이 있습니다.</span> : <span class="muted small-text">바뀐 것이 없습니다.</span>}
-        </div>
-      </div>
+      <SaveBar dirty={dirty} action={action} onSave={() => void save()} onRevert={() => show(view)} />
     </>
   );
 }
@@ -285,13 +266,7 @@ function RecentCalls() {
           </tr>
         </thead>
         <tbody>
-          {items.length === 0 && (
-            <tr>
-              <td colSpan={5} class="muted">
-                아직 보낸 요청이 없습니다.
-              </td>
-            </tr>
-          )}
+          {items.length === 0 && <EmptyRow cols={5}>아직 보낸 요청이 없습니다.</EmptyRow>}
           {items.map((c) => (
             <tr key={c.at}>
               <td>{formatTime(c.at)}</td>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Modal, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
+import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
 import type { McpScope, McpServerConfig, McpServerEntry, McpServerList, ToolSummary } from "../types";
 
 /** 연결 확인 결과. broker 서버는 실제로 연결해 도구 목록을 받고, sandbox 서버는 설정과 파일만 본다. */
@@ -12,12 +12,8 @@ interface TestResult {
   durationMs: number;
 }
 
-async function testServer(id: string): Promise<TestResult> {
-  try {
-    return await api<TestResult>("POST", `/mcp/servers/${enc(id)}/test`, {});
-  } catch (error) {
-    return { ok: false, error: errorText(error), durationMs: 0 };
-  }
+function testServer(id: string): Promise<TestResult> {
+  return api<TestResult>("POST", `/mcp/servers/${enc(id)}/test`, {}).catch((error) => ({ ok: false, error: errorText(error), durationMs: 0 }));
 }
 
 /** items를 limit개씩 동시에 처리한다 */
@@ -29,7 +25,7 @@ async function eachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-export function McpPage(props: { focus?: string | undefined }) {
+export function McpPage(props: { focus?: string }) {
   const [list, setList] = useState<McpServerList | null>(null);
   const [editing, setEditing] = useState<McpServerEntry | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,13 +104,7 @@ export function McpPage(props: { focus?: string | undefined }) {
             </tr>
           </thead>
           <tbody>
-            {list.servers.length === 0 && (
-              <tr>
-                <td colSpan={7} class="muted">
-                  등록된 서버가 없습니다.
-                </td>
-              </tr>
-            )}
+            {list.servers.length === 0 && <EmptyRow cols={7}>등록된 서버가 없습니다.</EmptyRow>}
             {list.servers.map((s) => (
               <tr key={s.config.id} class="clickable" onClick={() => setEditing(s)}>
                 <td class="mono" title={s.config.displayName}>
@@ -399,7 +389,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
     >
       {action.view}
       {props.entry?.config.source.kind === "plugin" && (
-        <Notice tone="info">plugin {props.entry.config.source.pluginId}가 등록한 서버입니다. 여기서 바꾼 env·범위·도구 필터는 plugin을 업데이트해도 유지됩니다.</Notice>
+        <Notice>plugin {props.entry.config.source.pluginId}가 등록한 서버입니다. 여기서 바꾼 env·범위·도구 필터는 plugin을 업데이트해도 유지됩니다.</Notice>
       )}
       <div class="grid-2">
         <label class="field">
@@ -412,14 +402,14 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
         </label>
         <label class="field">
           <span>실행 위치</span>
-          <select value={form.runIn} onChange={(e) => set("runIn", (e.currentTarget as HTMLSelectElement).value as FormState["runIn"])}>
+          <select value={form.runIn} onChange={(e) => set("runIn", e.currentTarget.value as FormState["runIn"])}>
             <option value="broker">broker (원격 HTTP 서버, 비밀키 사용)</option>
             <option value="sandbox">sandbox (stdio, 비밀키 없음)</option>
           </select>
         </label>
         <label class="field">
           <span>범위</span>
-          <select value={form.scope} onChange={(e) => set("scope", (e.currentTarget as HTMLSelectElement).value as McpScope)}>
+          <select value={form.scope} onChange={(e) => set("scope", e.currentTarget.value as McpScope)}>
             <option value="shared">shared</option>
             <option value="per-user">per-user</option>
             <option value="per-session">per-session</option>
@@ -442,11 +432,11 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
           </label>
           <label class="field">
             <span>args (한 줄에 하나)</span>
-            <textarea rows={4} class="mono" value={form.args} onInput={(e) => set("args", (e.currentTarget as HTMLTextAreaElement).value)} />
+            <textarea rows={4} class="mono" value={form.args} onInput={(e) => set("args", e.currentTarget.value)} />
           </label>
           <label class="field">
             <span>env (KEY=VALUE)</span>
-            <textarea rows={4} class="mono" value={form.env} onInput={(e) => set("env", (e.currentTarget as HTMLTextAreaElement).value)} />
+            <textarea rows={4} class="mono" value={form.env} onInput={(e) => set("env", e.currentTarget.value)} />
           </label>
         </div>
       ) : (
@@ -457,7 +447,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
           </label>
           <label class="field">
             <span>headers (Name: value)</span>
-            <textarea rows={4} class="mono" value={form.headers} onInput={(e) => set("headers", (e.currentTarget as HTMLTextAreaElement).value)} />
+            <textarea rows={4} class="mono" value={form.headers} onInput={(e) => set("headers", e.currentTarget.value)} />
           </label>
         </div>
       )}
@@ -476,7 +466,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
                       type="password"
                       autocomplete="new-password"
                       value={newSecrets[name] ?? ""}
-                      onInput={(e) => setNewSecrets((v) => ({ ...v, [name]: (e.currentTarget as HTMLInputElement).value }))}
+                      onInput={(e) => setNewSecrets((v) => ({ ...v, [name]: e.currentTarget.value }))}
                     />
                   </td>
                 </tr>
@@ -500,7 +490,7 @@ function ServerEditor(props: { entry: McpServerEntry | null; onClose: () => void
         <input {...input("description")} />
       </label>
       <label class="checkbox">
-        <input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", (e.currentTarget as HTMLInputElement).checked)} /> 사용
+        <input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.currentTarget.checked)} /> 사용
       </label>
       {errors.length > 0 && (
         <Notice tone="error">
@@ -554,7 +544,7 @@ function Secrets(props: { entry: McpServerEntry; required: string[]; onChanged: 
                     autocomplete="new-password"
                     placeholder="새 값"
                     value={values[name] ?? ""}
-                    onInput={(e) => setValues((v) => ({ ...v, [name]: (e.currentTarget as HTMLInputElement).value }))}
+                    onInput={(e) => setValues((v) => ({ ...v, [name]: e.currentTarget.value }))}
                   />
                 </td>
                 <td class="actions">

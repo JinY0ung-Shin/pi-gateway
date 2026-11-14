@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { badRequest, conflict, notFound, PlatformError } from "../admin/errors.js";
+import { conflict, notFound, PlatformError, parseBody } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 import type { PromptRenderInput, PromptService } from "../contracts.js";
 import { type Db, migrate } from "../db.js";
@@ -59,8 +59,8 @@ const MIGRATIONS = [
    ALTER TABLE prompt_live DROP COLUMN deployed_by;`,
 ] as const;
 
-export const PROMPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-export const MAX_PROMPT_CHARS = 200_000;
+const PROMPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const MAX_PROMPT_CHARS = 200_000;
 
 const PromptName = z.string().regex(PROMPT_NAME_PATTERN, "이름은 영문·숫자·_·- 64자 이하여야 합니다");
 const Content = z.string().min(1, "내용이 비어 있습니다").max(MAX_PROMPT_CHARS, `최대 ${MAX_PROMPT_CHARS}자입니다`);
@@ -68,11 +68,11 @@ const Message = z.string().max(200).default("");
 const Description = z.string().max(500).default("");
 const Note = z.string().max(500).default("");
 
-export const CreatePromptInput = z.object({ name: PromptName, description: Description, content: Content, message: Message });
-export const AddVersionInput = z.object({ content: Content, message: Message });
-export const DeployInput = z.object({ version: z.number().int().min(1), note: Note });
-export const ResetInput = z.object({ note: Note });
-export const RenderInput = z.object({ content: z.string().max(MAX_PROMPT_CHARS).optional() });
+const CreatePromptInput = z.object({ name: PromptName, description: Description, content: Content, message: Message });
+const AddVersionInput = z.object({ content: Content, message: Message });
+const DeployInput = z.object({ version: z.number().int().min(1), note: Note });
+const ResetInput = z.object({ note: Note });
+const RenderInput = z.object({ content: z.string().max(MAX_PROMPT_CHARS).optional() });
 
 export interface PromptVersion {
   version: number;
@@ -132,14 +132,6 @@ interface VersionRow {
 
 const now = () => new Date().toISOString();
 const newRevision = () => randomBytes(8).toString("hex");
-
-function parse<T>(schema: z.ZodType<T>, input: unknown): T {
-  const result = schema.safeParse(input);
-  if (!result.success) {
-    throw badRequest(result.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "), result.error.issues);
-  }
-  return result.data;
-}
 
 /** 시스템 프롬프트 저장소와 배포 상태. PromptService(세션용)와 관리 API를 함께 제공한다. */
 export class PromptManager implements PromptService {
@@ -244,7 +236,7 @@ export class PromptManager implements PromptService {
 
   /** 미리보기. content가 없으면 현재 배포본을 렌더링한다. */
   render(input: unknown): { text: string; unknown: string[] } {
-    const template = parse(RenderInput, input ?? {}).content ?? this.live().content;
+    const template = parseBody(RenderInput, input ?? {}).content ?? this.live().content;
     const text = renderPrompt(template, buildPromptVars({ user: "preview-user", model: "model", now: new Date() }, this.#language));
     return { text, unknown: unknownVariables(template) };
   }
@@ -252,7 +244,7 @@ export class PromptManager implements PromptService {
   // ── 변경 ───────────────────────────────────────────────────────
 
   create(input: unknown): PromptDetail {
-    const req = parse(CreatePromptInput, input);
+    const req = parseBody(CreatePromptInput, input);
     const at = now();
     this.#db.transaction(() => {
       if (this.#db.prepare("SELECT 1 FROM prompts WHERE name = ?").get(req.name)) throw conflict("exists", `prompt '${req.name}' already exists`);
@@ -265,7 +257,7 @@ export class PromptManager implements PromptService {
   }
 
   addVersion(name: string, input: unknown): PromptVersion {
-    const req = parse(AddVersionInput, input);
+    const req = parseBody(AddVersionInput, input);
     const at = now();
     let created: PromptVersion | undefined;
     this.#db.transaction(() => {
@@ -280,7 +272,7 @@ export class PromptManager implements PromptService {
   }
 
   deploy(name: string, input: unknown): { live: LivePrompt } {
-    const req = parse(DeployInput, input);
+    const req = parseBody(DeployInput, input);
     this.#db.transaction(() => {
       const live = this.#liveRow();
       if (!this.#versionRow(name, req.version)) throw notFound(`prompt '${name}' v${req.version} not found`);
@@ -292,7 +284,7 @@ export class PromptManager implements PromptService {
   }
 
   reset(input: unknown): { live: LivePrompt } {
-    const req = parse(ResetInput, input ?? {});
+    const req = parseBody(ResetInput, input ?? {});
     this.#db.transaction(() => {
       const live = this.#liveRow();
       if (live.name === null) return; // 이미 기본 프롬프트

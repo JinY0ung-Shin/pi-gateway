@@ -6,7 +6,7 @@
 ## 구조
 
 ```
-client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별 컨테이너, 네트워크 없음)
+client ─▶ gateway ─┬─▶ sandboxd ──▶ pi-sbx-<key> (사용자별 컨테이너, 네트워크 없음)
                    │                    └─▶ egress-proxy ─▶ 허용 목록의 도메인·IP (HTTP/HTTPS만)
                    └─▶ mcp-broker ─▶ 키가 필요한 MCP 서버
 ```

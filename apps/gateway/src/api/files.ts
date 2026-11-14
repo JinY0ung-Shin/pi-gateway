@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AuthResult } from "../auth/auth.js";
 import { apiError, badRequest, notFound } from "../errors.js";
 import { SandboxError } from "../sandbox/client.js";
-import { MAX_PRESENT_BYTES, mimeTypeOf, workspaceFilePath } from "../tools/present-file.js";
+import { mimeTypeOf, workspaceFilePath } from "../tools/present-file.js";
+import { MAX_READ_BYTES } from "../tools/remote-fs.js";
 import { type ResponsesDeps, userOf } from "./responses.js";
 
 /**
@@ -23,7 +24,7 @@ export async function sendWorkspaceFile(deps: ResponsesDeps, req: FastifyRequest
 
   let file: { content: Buffer; truncated: boolean };
   try {
-    file = await deps.sandbox.for(user, "").readFile(path, MAX_PRESENT_BYTES);
+    file = await deps.sandbox.for(user, "").readFile(path, MAX_READ_BYTES);
   } catch (err) {
     if (!(err instanceof SandboxError)) throw err;
     if (err.code === "not_found") throw notFound(`File '${path}' not found`);
@@ -31,7 +32,7 @@ export async function sendWorkspaceFile(deps: ResponsesDeps, req: FastifyRequest
     deps.log.warn({ err, user, path }, "file download failed");
     throw apiError(502, `Sandbox error: ${err.message}`);
   }
-  if (file.truncated) throw apiError(413, `File '${path}' is larger than ${MAX_PRESENT_BYTES} bytes`);
+  if (file.truncated) throw apiError(413, `File '${path}' is larger than ${MAX_READ_BYTES} bytes`);
 
   // RFC 5987: encodeURIComponent가 남기는 ' ( ) *도 인코딩한다.
   const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);

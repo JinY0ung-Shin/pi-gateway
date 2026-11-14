@@ -28,8 +28,8 @@ export function createLogger(level: string): Logger {
   });
 }
 
-export function createBroker(config: BrokerConfig, options: { log?: Logger } = {}): Broker {
-  const log = options.log ?? createLogger(config.logLevel);
+export function createBroker(config: BrokerConfig, options: { log: Logger }): Broker {
+  const { log } = options;
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
   const db = openDatabase(join(config.dataDir, "broker.db"));
   const store = new BrokerStore(db, new SecretCipher(config.kek));

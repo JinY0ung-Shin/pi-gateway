@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from "node:crypto";
 
-export interface EncryptedValue {
+interface EncryptedValue {
   iv: Buffer;
   ciphertext: Buffer;
   tag: Buffer;

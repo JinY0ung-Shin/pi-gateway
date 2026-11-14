@@ -116,7 +116,7 @@ function resolveAlias(name: string, tools: ToolDefinition[]): ToolDefinition[] {
 }
 
 /** 세션을 만들 때 도구 목록을 못 받은 서버를 나중에 다시 받는다 (McpConnectionSet). */
-export interface McpRecovery {
+interface McpRecovery {
   /** 목록을 못 받은 서버의 id */
   readonly failed: ReadonlySet<string>;
   /** 새로 받은 도구 정의 (없거나 아직 다시 물어볼 때가 아니면 빈 목록) */

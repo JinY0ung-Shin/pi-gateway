@@ -1,8 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import type { z } from "zod";
 import { LlmServer, LlmSettings, type LlmSettingsRecord, probeLlmServer, testLlmModel } from "../agent/runtime.js";
 import type { AdminContext } from "./context.js";
-import { PlatformError } from "./errors.js";
+import { PlatformError, parseBody } from "./errors.js";
+
+/** 응답에 넣는 모양: API 키 대신 키가 있는지만 (routes-systemone도 쓴다) */
+export function hideKey<T extends { apiKey: string }>({ apiKey, ...rest }: T): Omit<T, "apiKey"> & { apiKeySet: boolean } {
+  return { ...rest, apiKeySet: apiKey !== "" };
+}
+
+/** apiKey를 빼고 보낸 설정에 저장된 키(없으면 "")를 넣는다. 객체가 아니면 그대로 둔다 (검증이 거절한다). */
+export function withStoredKey(input: unknown, stored: (input: Record<string, unknown>) => string | undefined): unknown {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+  const s = input as Record<string, unknown>;
+  return s.apiKey !== undefined ? s : { ...s, apiKey: stored(s) ?? "" };
+}
 
 /**
  * LLM 연결 설정 (서버마다 API 형식, 주소, 키, 헤더, compat, 모델 목록 / 기본 모델 / 티어). 저장하면 바로 적용된다.
@@ -17,31 +28,19 @@ export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void
     const { servers, defaultModel, tiers } = record.settings;
     return {
       configured: true,
-      settings: { servers: servers.map(({ apiKey, ...s }) => ({ ...s, apiKeySet: apiKey !== "" })), defaultModel, tiers },
+      settings: { servers: servers.map(hideKey), defaultModel, tiers },
       updatedAt: record.updatedAt,
     };
   };
 
-  const withStoredKey = (server: unknown) => {
-    if (typeof server !== "object" || server === null || Array.isArray(server)) return server;
-    const s = server as Record<string, unknown>;
-    if (s.apiKey !== undefined) return s;
-    return { ...s, apiKey: llm.current()?.settings.servers.find((x) => x.id === s.id)?.apiKey ?? "" };
-  };
-
-  const parse = <T>(schema: z.ZodType<T>, input: unknown, code: string): T => {
-    const parsed = schema.safeParse(input);
-    if (parsed.success) return parsed.data;
-    const issues = parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
-    throw new PlatformError(400, code, issues.map((i) => `${i.path || "body"}: ${i.message}`).join("; "), issues);
-  };
+  const storedKey = (server: unknown) => withStoredKey(server, (s) => llm.current()?.settings.servers.find((x) => x.id === s.id)?.apiKey);
 
   app.get("/llm", async () => view(llm.current()));
 
   app.put<{ Body: Record<string, unknown> | null }>("/llm", async (req) => {
     const body = req.body ?? {};
-    const servers = Array.isArray(body.servers) ? body.servers.map(withStoredKey) : body.servers;
-    const settings = parse(LlmSettings, { ...body, servers }, "invalid_llm_settings");
+    const servers = Array.isArray(body.servers) ? body.servers.map(storedKey) : body.servers;
+    const settings = parseBody(LlmSettings, { ...body, servers }, { code: "invalid_llm_settings" });
     let record: LlmSettingsRecord;
     try {
       record = await llm.update(settings);
@@ -57,13 +56,13 @@ export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void
 
   /** 서버의 모델 목록 (연결·인증 확인 겸) */
   app.post<{ Body: { server?: unknown } | null }>("/llm/probe", async (req) => {
-    const server = parse(LlmServer.pick({ api: true, baseUrl: true, apiKey: true, headers: true }), withStoredKey(req.body?.server), "invalid_llm_server");
+    const server = parseBody(LlmServer.pick({ api: true, baseUrl: true, apiKey: true, headers: true }), storedKey(req.body?.server), { code: "invalid_llm_server" });
     return probeLlmServer(server);
   });
 
   /** 모델 하나에 짧은 요청을 보낸다 */
   app.post<{ Body: { server?: unknown; model?: unknown } | null }>("/llm/test", async (req) => {
-    const server = parse(LlmServer, withStoredKey(req.body?.server), "invalid_llm_server");
+    const server = parseBody(LlmServer, storedKey(req.body?.server), { code: "invalid_llm_server" });
     const model = req.body?.model;
     if (typeof model !== "string" || !server.models.some((m) => m.id === model)) {
       throw new PlatformError(400, "invalid_llm_server", "model must be one of the server's models");

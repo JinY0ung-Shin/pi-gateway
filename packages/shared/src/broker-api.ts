@@ -45,7 +45,6 @@ export type SecretInfo = z.infer<typeof SecretInfo>;
 export const ToolSummary = z.object({
   name: z.string(),
   description: z.string().optional(),
-  inputSchema: z.unknown().optional(),
 });
 export type ToolSummary = z.infer<typeof ToolSummary>;
 

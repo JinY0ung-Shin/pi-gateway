@@ -30,16 +30,16 @@ export function RunsInBadge(props: { value: string }) {
   return <Badge tone={tone}>{props.value}</Badge>;
 }
 
-export function Toggle(props: { checked: boolean; disabled?: boolean; onChange: (next: boolean) => void; title?: string; label?: string }) {
+export function Toggle(props: { checked: boolean; disabled?: boolean; onChange: (next: boolean) => void; label: string }) {
   return (
-    <label class={`toggle${props.disabled ? " toggle-disabled" : ""}`} title={props.title}>
+    <label class={`toggle${props.disabled ? " toggle-disabled" : ""}`}>
       <input
         type="checkbox"
         role="switch"
-        aria-label={props.label ?? props.title}
+        aria-label={props.label}
         checked={props.checked}
         disabled={props.disabled}
-        onChange={(e) => props.onChange((e.currentTarget as HTMLInputElement).checked)}
+        onChange={(e) => props.onChange(e.currentTarget.checked)}
       />
       <span class="toggle-track" aria-hidden="true" />
     </label>
@@ -68,6 +68,17 @@ export function Section(props: { title: string; actions?: ComponentChildren; chi
       </header>
       {props.children}
     </section>
+  );
+}
+
+/** 빈 표의 안내 줄 */
+export function EmptyRow(props: { cols: number; children: ComponentChildren }) {
+  return (
+    <tr>
+      <td colSpan={props.cols} class="muted">
+        {props.children}
+      </td>
+    </tr>
   );
 }
 
@@ -158,7 +169,26 @@ export function useAction() {
       {message.text}
     </Notice>
   ) : null;
-  return { busy, run, view, setMessage };
+  return { busy, run, view };
+}
+
+/** 페이지 아래의 저장·되돌리기 줄. 저장하지 않은 변경이 있으면 화면 아래에 붙어 있다. */
+export function SaveBar(props: { dirty: boolean; action: { busy: boolean; view: ComponentChildren }; onSave: () => void; onRevert: () => void }) {
+  const { dirty, action } = props;
+  return (
+    <div class={dirty ? "save-bar dirty" : "save-bar"}>
+      {action.view}
+      <div class="row wrap">
+        <button class="primary" disabled={action.busy || !dirty} onClick={props.onSave}>
+          저장
+        </button>
+        <button disabled={action.busy || !dirty} onClick={props.onRevert}>
+          되돌리기
+        </button>
+        {dirty ? <span class="warn-text small-text">저장하지 않은 변경이 있습니다.</span> : <span class="muted small-text">바뀐 것이 없습니다.</span>}
+      </div>
+    </div>
+  );
 }
 
 /** API 키 칸. 저장된 키는 보여 주지 않고, 비워 두면 그대로 쓴다. */

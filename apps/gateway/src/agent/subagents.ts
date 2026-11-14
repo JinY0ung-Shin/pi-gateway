@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { type AgentSession, type AgentSessionEvent, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { Type } from "typebox";
@@ -9,7 +7,7 @@ import { MCP_CALL_TOOL, MCP_SEARCH_TOOL } from "../mcp-client/proxy.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL } from "../tools/present-file.js";
 import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
-import { limitToolCalls } from "./tool-call-limit.js";
+import { promptWithLimit } from "./tool-call-limit.js";
 
 /**
  * Agent·SendMessage — 내장 general-purpose agent와 plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
@@ -20,8 +18,8 @@ import { limitToolCalls } from "./tool-call-limit.js";
  * - 하위 세션의 도구 이벤트는 부모 도구 호출의 update로 넘긴다. mapper가 `parent_tool_use_id`를 붙여 부모 응답 스트림에 보낸다.
  */
 
-export const AGENT_TOOL = "Agent";
-export const SEND_MESSAGE_TOOL = "SendMessage";
+const AGENT_TOOL = "Agent";
+const SEND_MESSAGE_TOOL = "SendMessage";
 /** 하위 세션 JSONL에 agent 종류를 남기는 custom entry */
 const SUBAGENT_ENTRY = "subagent";
 const AGENT_ID = /^[a-f0-9]{16}$/;
@@ -68,7 +66,7 @@ const CLAUDE_TOOLS: Record<string, string[]> = {
   LS: ["ls"],
 };
 
-export interface SubagentContext {
+interface SubagentContext {
   agents: SubagentDefinition[];
   /** 부모 세션의 도구 */
   tools: ToolDefinition[];
@@ -151,7 +149,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
     description: `Send a follow-up message to a subagent started with ${AGENT_TOOL}. It continues with its previous context and returns its new final answer.`,
     parameters: sendParams,
     async execute(_toolCallId, params, signal, onUpdate) {
-      const file = AGENT_ID.test(params.to) ? transcriptFile(ctx.dir, params.to) : undefined;
+      const file = AGENT_ID.test(params.to) ? SessionManager.findById(SANDBOX_WORKSPACE, params.to, ctx.dir) : undefined;
       if (!file) throw new Error(`agent '${params.to}' not found`);
       const sessionManager = SessionManager.open(file, ctx.dir, SANDBOX_WORKSPACE);
       const entry = sessionManager.getEntries().find((e) => e.type === "custom" && e.customType === SUBAGENT_ENTRY);
@@ -167,25 +165,14 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
 
 /** 하위 세션에 한 번 묻고 마지막 응답 텍스트를 돌려준다. 실패하면 던져서 부모가 도구 오류로 보게 한다. */
 async function prompt(session: AgentSession, text: string, maxToolCalls: number, signal: AbortSignal | undefined, onUpdate: OnUpdate | undefined): Promise<string> {
-  const onAbort = () => {
-    void session.abort();
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  const stopLimit = limitToolCalls(session, maxToolCalls);
-  const unsubscribe = onUpdate
-    ? session.subscribe((event) => {
-        if (forwarded(event)) onUpdate({ content: [], details: { subagentEvent: event } });
-      })
-    : undefined;
-  let limited = false;
-  try {
-    if (signal?.aborted) throw new Error("aborted");
-    await session.prompt(text, { expandPromptTemplates: false });
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    unsubscribe?.();
-    limited = stopLimit();
-  }
+  const { limited, thrown } = await promptWithLimit(session, text, { expandPromptTemplates: false }, {
+    maxToolCalls,
+    signal,
+    onEvent: (event) => {
+      if (onUpdate && forwarded(event)) onUpdate({ content: [], details: { subagentEvent: event } });
+    },
+  });
+  if (thrown) throw thrown;
   if (limited) throw new Error(`subagent stopped after ${maxToolCalls} tool calls`);
   const last = session.messages.findLast((m) => m.role === "assistant");
   if (signal?.aborted || last?.stopReason === "aborted") throw new Error("aborted");
@@ -198,11 +185,4 @@ function result(agentId: string, text: string) {
     content: [{ type: "text" as const, text: `${text || "(no output)"}\n\nagent_id: ${agentId}` }],
     details: { agentId },
   };
-}
-
-/** pi는 `<시각>_<id>.jsonl`로 저장한다. */
-function transcriptFile(dir: string, agentId: string): string | undefined {
-  if (!existsSync(dir)) return undefined;
-  const name = readdirSync(dir).find((n) => n.endsWith(`_${agentId}.jsonl`));
-  return name ? join(dir, name) : undefined;
 }

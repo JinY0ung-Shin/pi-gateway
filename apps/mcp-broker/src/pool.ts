@@ -4,7 +4,7 @@ import type { Logger } from "pino";
 import type { RenderedTransport } from "./render.js";
 import type { ConnectHooks, UpstreamConnection } from "./upstream/connect.js";
 
-export interface PoolKey {
+interface PoolKey {
   serverId: string;
   /** "shared" | "u:<sub>" | "s:<sub>:<sid>" */
   scopeKey: string;
@@ -12,12 +12,12 @@ export interface PoolKey {
   renderedHash: string;
 }
 
-export interface PoolLimits {
+interface PoolLimits {
   maxConnections: number;
   idleTtlSeconds: number;
 }
 
-export type ConnectFn = (rendered: RenderedTransport, hooks: ConnectHooks) => Promise<UpstreamConnection>;
+type ConnectFn = (rendered: RenderedTransport, hooks: ConnectHooks) => Promise<UpstreamConnection>;
 
 interface Entry {
   id: string;
@@ -63,6 +63,7 @@ export class UpstreamPool {
   readonly #limits: PoolLimits;
   readonly #connect: ConnectFn;
   readonly #log: Logger;
+  /** 열린 연결만 있다 (#close가 닫으면서 뺀다) */
   readonly #entries = new Map<string, Entry>();
   readonly #pending = new Map<string, Promise<Entry>>();
   /** 자리는 잡았지만 아직 연결 중인 수 */
@@ -87,7 +88,7 @@ export class UpstreamPool {
     const id = entryId(key);
 
     let entry = this.#entries.get(id);
-    if (!entry || entry.closed || entry.retired) {
+    if (!entry || entry.retired) {
       entry = await (this.#pending.get(id) ?? this.#create(id, key, rendered, signal));
     }
     entry.inflight++;
@@ -182,7 +183,7 @@ export class UpstreamPool {
   async #reserve(key: PoolKey, signal?: AbortSignal): Promise<void> {
     for (;;) {
       if (this.#closing) throw new PoolCapacityError("broker is shutting down");
-      const live = [...this.#entries.values()].filter((e) => !e.closed);
+      const live = [...this.#entries.values()];
       if (live.length + this.#connecting < this.#limits.maxConnections) {
         this.#connecting++;
         return;
@@ -249,7 +250,7 @@ export class UpstreamPool {
 
   count(serverId?: string): number {
     let n = 0;
-    for (const e of this.#entries.values()) if (!e.closed && (serverId === undefined || e.key.serverId === serverId)) n++;
+    for (const e of this.#entries.values()) if (serverId === undefined || e.key.serverId === serverId) n++;
     return n;
   }
 

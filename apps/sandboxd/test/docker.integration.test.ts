@@ -93,7 +93,6 @@ async function post(route: string, user: string, body: object): Promise<{ status
 interface ExecOutcome {
   stdout: string;
   stderr: string;
-  events: ExecEvent[];
   exit: Extract<ExecEvent, { type: "exit" }>;
   ms: number;
 }
@@ -111,7 +110,7 @@ async function exec(user: string, req: Omit<ExecRequest, "user">, signal?: Abort
   const text = (type: "stdout" | "stderr") =>
     Buffer.concat(events.flatMap((e) => (e.type === type ? [Buffer.from(e.data, "base64")] : []))).toString();
   const exit = events.find((e) => e.type === "exit") as Extract<ExecEvent, { type: "exit" }>;
-  return { stdout: text("stdout"), stderr: text("stderr"), events, exit, ms: Date.now() - t0 };
+  return { stdout: text("stdout"), stderr: text("stderr"), exit, ms: Date.now() - t0 };
 }
 
 const sh = (user: string, script: string, extra: Partial<ExecRequest> = {}) =>
@@ -157,7 +156,7 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
   it("ensure가 보안 옵션이 적용된 컨테이너를 만든다", async () => {
     const res = await post(SANDBOXD_ROUTES.ensure, "alice", {});
     expect(res.status).toBe(200);
-    expect(res.json).toMatchObject({ key: userKey("alice"), state: "running", created: true });
+    expect(res.json).toMatchObject({ key: userKey("alice"), state: "running" });
     const info = await docker.getContainer(containerName(config, userKey("alice"))).inspect();
     expect(info.HostConfig.ReadonlyRootfs).toBe(true);
     expect(info.HostConfig.CapDrop).toEqual(["ALL"]);
@@ -170,13 +169,10 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
       "/workspace:rw",
     ]);
     expect(info.HostConfig.NetworkMode).toBe("none");
-    const again = await post(SANDBOXD_ROUTES.ensure, "alice", {});
-    expect(again.json.created).toBe(false);
   });
 
   it("출력을 stdout/stderr로 나눠 흘려보내고 종료 코드를 준다", async () => {
     const r = await sh("alice", "echo out; echo err >&2; id -u; pwd; exit 3");
-    expect(r.events[0]).toMatchObject({ type: "started" });
     expect(r.stdout).toBe("out\n1000\n/workspace\n");
     expect(r.stderr).toBe("err\n");
     expect(r.exit).toMatchObject({ exitCode: 3, signal: null, timedOut: false, truncated: false });
@@ -271,11 +267,11 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
   it("파일 조작: binary 쓰기·읽기, stat, list, mkdir, glob(.gitignore 존중), 오류 매핑", async () => {
     const bytes = Buffer.from([0, 1, 2, 255, 10, 13]);
     const w = await post(SANDBOXD_ROUTES.fsWrite, "alice", { path: "data/bin.dat", content: bytes.toString("base64") });
-    expect(w).toEqual({ status: 200, json: { size: 6 } });
+    expect(w).toEqual({ status: 200, json: {} });
     const r = await post(SANDBOXD_ROUTES.fsRead, "alice", { path: "/workspace/data/bin.dat" });
     expect(Buffer.from(r.json.content, "base64")).toEqual(bytes);
     const part = await post(SANDBOXD_ROUTES.fsRead, "alice", { path: "data/bin.dat", maxBytes: 2 });
-    expect(part.json).toMatchObject({ size: 6, truncated: true });
+    expect(part.json).toMatchObject({ truncated: true });
     expect(Buffer.from(part.json.content, "base64")).toEqual(bytes.subarray(0, 2));
 
     expect((await post(SANDBOXD_ROUTES.fsStat, "alice", { path: "data" })).json).toMatchObject({
@@ -304,7 +300,7 @@ describe.skipIf(!enabled)("sandboxd + Docker", () => {
       pattern: "*.txt",
       ignore: ["**/node_modules/**"],
     });
-    expect(glob.json).toEqual({ paths: ["/workspace/g/keep.txt"], truncated: false });
+    expect(glob.json).toEqual({ paths: ["/workspace/g/keep.txt"] });
     const nested = await post(SANDBOXD_ROUTES.fsGlob, "alice", { pattern: "data/**/*.dat" });
     expect(nested.json.paths).toEqual(["/workspace/data/bin.dat"]);
 

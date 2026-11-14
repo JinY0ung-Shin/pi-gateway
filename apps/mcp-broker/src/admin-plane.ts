@@ -11,15 +11,12 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, t
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
+import { errorBody } from "./http-bridge.js";
 import type { BrokerService } from "./service.js";
 import type { BrokerStore } from "./store.js";
 
 /** /mcp/servers와 겹치는 id */
 const RESERVED_IDS = new Set(["servers"]);
-
-function errorBody(code: string, message: string) {
-  return { error: { code, message } };
-}
 
 function issues(error: z.ZodError): string {
   // 입력값은 넣지 않는다 (비밀값이 섞여 들어올 수 있다).
@@ -55,8 +52,6 @@ export function buildAdminPlane(deps: {
       .code(status)
       .send(errorBody(status === 500 ? "internal" : "invalid_request", status === 500 ? "internal error" : "invalid request"));
   });
-
-  app.get("/healthz", async () => ({ ok: true }));
 
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/admin")) return;

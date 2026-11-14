@@ -3,7 +3,7 @@ import type { FastifyError, FastifyInstance } from "fastify";
 import type { AdminDeps } from "../contracts.js";
 import { CSRF_HEADER, isMutating } from "./auth.js";
 import { type AdminContext, createAdminContext } from "./context.js";
-import { isPlatformError, PlatformError } from "./errors.js";
+import { PlatformError } from "./errors.js";
 import { registerChatRoutes } from "./routes-chat.js";
 import { registerHistoryRoutes } from "./routes-history.js";
 import { registerLlmRoutes } from "./routes-llm.js";
@@ -39,12 +39,10 @@ export async function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps)
 
 async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<void> {
   api.setErrorHandler((error: FastifyError | PlatformError, req, reply) => {
-    if (isPlatformError(error)) {
+    if (error instanceof PlatformError) {
       const retryAfter = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
       if (error.status === 429 && typeof retryAfter === "number") reply.header("retry-after", String(retryAfter));
-      return reply.code(error.status).send({
-        error: { code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) },
-      });
+      return reply.code(error.status).send({ error: { code: error.code, message: error.message } });
     }
     const status = typeof error.statusCode === "number" ? error.statusCode : 500;
     if (status < 500) {

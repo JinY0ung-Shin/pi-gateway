@@ -29,7 +29,7 @@ class FakeRuntime implements SandboxRuntime {
 
   async ensure(principal: string): Promise<SandboxInfo> {
     this.calls.push(`ensure:${principal}`);
-    return { key: "u-000000000000000000000000", containerName: "c", state: "running", created: true };
+    return { key: "u-000000000000000000000000", containerName: "c", state: "running" };
   }
   async list(): Promise<SandboxInfo[]> {
     return [{ key: "u-000000000000000000000000", containerName: "c", state: "running" }];
@@ -39,7 +39,6 @@ class FakeRuntime implements SandboxRuntime {
     this.calls.push(`exec:${principal}`);
     this.lastExec = params;
     return {
-      execId: "e1",
       run: async (onEvent, signal) => {
         this.lastAbort = signal;
         for (const ev of this.execEvents) onEvent(ev);
@@ -51,10 +50,10 @@ class FakeRuntime implements SandboxRuntime {
     return value;
   }
   async fsRead() {
-    return this.fs({ size: 3, content: Buffer.from("abc").toString("base64"), truncated: false });
+    return this.fs({ content: Buffer.from("abc").toString("base64"), truncated: false });
   }
-  async fsWrite(_p: string, _path: string, content: Buffer) {
-    return this.fs({ size: content.length });
+  async fsWrite() {
+    this.fs(undefined);
   }
   async fsStat() {
     return this.fs({ exists: false });
@@ -66,14 +65,13 @@ class FakeRuntime implements SandboxRuntime {
     this.fs(undefined);
   }
   async fsGlob(_p: string, params: GlobParams) {
-    return this.fs({ paths: [`${params.cwd}/x`], truncated: false });
+    return this.fs({ paths: [`${params.cwd}/x`] });
   }
   async attach(_principal: string, params: AttachParams, io: AttachIO): Promise<AttachProcess> {
     let resolveDone!: (v: { exitCode: number | null; signal: string | null }) => void;
     const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => (resolveDone = r));
     this.calls.push(`attach:${params.argv.join(" ")}`);
     return {
-      procId: "p1",
       // cat처럼 받은 그대로 돌려준다. "EXIT"를 받으면 끝난다.
       write: (chunk) => {
         if (chunk.toString() === "EXIT") resolveDone({ exitCode: 0, signal: null });
@@ -199,7 +197,7 @@ describe("검증과 오류 형식", () => {
   });
 
   it("기본값이 채워져 runtime에 전달된다", async () => {
-    runtime.execEvents = [{ type: "exit", exitCode: 0, signal: null, timedOut: false, truncated: false, durationMs: 1 }];
+    runtime.execEvents = [{ type: "exit", exitCode: 0, signal: null, timedOut: false, truncated: false }];
     await app.inject({ method: "POST", url: "/v1/exec", payload: { user: "alice", argv: ["true"] }, headers: await auth("alice") });
     expect(runtime.lastExec).toMatchObject({ cwd: "/workspace", env: {}, maxOutputBytes: 8 * 1024 * 1024 });
     const glob = await app.inject({
@@ -208,7 +206,7 @@ describe("검증과 오류 형식", () => {
       payload: { user: "alice", pattern: "*.ts" },
       headers: await auth("alice"),
     });
-    expect(glob.json()).toEqual({ paths: ["/workspace/x"], truncated: false });
+    expect(glob.json()).toEqual({ paths: ["/workspace/x"] });
   });
 
   it("없는 경로는 404 not_found", async () => {
@@ -221,9 +219,8 @@ describe("검증과 오류 형식", () => {
 describe("exec NDJSON", () => {
   it("이벤트를 한 줄씩 흘려보낸다", async () => {
     runtime.execEvents = [
-      { type: "started", execId: "e1" },
       { type: "stdout", data: Buffer.from("hi\n").toString("base64") },
-      { type: "exit", exitCode: 0, signal: null, timedOut: false, truncated: false, durationMs: 5 },
+      { type: "exit", exitCode: 0, signal: null, timedOut: false, truncated: false },
     ];
     const res = await app.inject({
       method: "POST",
@@ -234,7 +231,7 @@ describe("exec NDJSON", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/x-ndjson");
     const lines = res.body.trim().split("\n").map((l) => JSON.parse(l) as ExecEvent);
-    expect(lines.map((l) => l.type)).toEqual(["started", "stdout", "exit"]);
+    expect(lines.map((l) => l.type)).toEqual(["stdout", "exit"]);
   });
 
   it("시작 전 오류는 스트림이 아니라 JSON 오류로 나간다", async () => {
@@ -260,7 +257,7 @@ describe("attach (WebSocket)", () => {
     const ws = await app.injectWS("/v1/attach", { headers: await auth("alice") });
     const started = nextMessage(ws);
     ws.send(JSON.stringify({ type: "start", user: "alice", argv: ["cat"] }));
-    expect(JSON.parse((await started).data.toString())).toEqual({ type: "started", procId: "p1" });
+    expect(JSON.parse((await started).data.toString())).toEqual({ type: "started" });
     const echoed = nextMessage(ws);
     ws.send(Buffer.from('{"jsonrpc":"2.0"}\n'), { binary: true });
     const echo = await echoed;

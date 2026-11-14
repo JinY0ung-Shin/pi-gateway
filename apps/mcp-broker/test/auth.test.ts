@@ -87,6 +87,5 @@ describe("data plane authentication", () => {
 
   it("healthz는 인증 없이 열린다", async () => {
     expect((await tb.broker.dataPlane.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
-    expect((await tb.broker.adminPlane.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
   });
 });

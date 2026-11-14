@@ -1,6 +1,6 @@
 import { type ApiErrorBody, SandboxErrorCode } from "@pi-gateway/shared";
 
-export const HTTP_STATUS: Record<SandboxErrorCode, number> = {
+const HTTP_STATUS: Record<SandboxErrorCode, number> = {
   invalid_request: 400,
   unauthorized: 401,
   forbidden: 403,

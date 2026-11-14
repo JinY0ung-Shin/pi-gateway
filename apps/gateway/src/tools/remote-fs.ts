@@ -111,7 +111,7 @@ export class PathNamespace {
 
 type CacheEntry = { at: number; content?: Buffer; error?: Error };
 
-export interface RemoteFs {
+interface RemoteFs {
   read: ReadOperations;
   write: WriteOperations;
   edit: EditOperations;

@@ -6,7 +6,7 @@ import { z } from "zod";
  * - 모든 요청에 `Authorization: Bearer <internal JWT, aud=AUD_SANDBOXD>`가 필요하다.
  *   sandboxd는 본문의 `user`가 토큰의 `sub`와 같은지 확인한다.
  * - 경로는 sandbox 컨테이너 안의 경로다. 상대 경로는 `/workspace` 기준이다.
- *   컨테이너 경계가 곧 접근 범위이므로 sandboxd는 경로를 따로 제한하지 않는다.
+ *   컨테이너 경계가 곧 접근 범위다. 예외로 fs 요청은 /proc 아래를 막는다 (다른 프로세스의 environ).
  * - 대상 사용자의 컨테이너가 없거나 멈춰 있으면 sandboxd가 먼저 만들거나 시작한다.
  * - 오류 응답은 `{ error: { code, message } }` 형식이고 code는 `SandboxErrorCode` 중 하나다.
  */
@@ -65,15 +65,11 @@ const MiB = 1024 * 1024;
 
 /** POST /v1/sandboxes/ensure — 컨테이너를 만들거나 시작한다. */
 export const EnsureSandboxRequest = z.object({ user: principal });
-export type EnsureSandboxRequest = z.input<typeof EnsureSandboxRequest>;
 
-export const SandboxState = z.enum(["running", "stopped", "missing"]);
 export const SandboxInfo = z.object({
   key: z.string(),
   containerName: z.string(),
-  state: SandboxState,
-  /** 이번 호출에서 새로 만들었는지 (ensure 응답에만 있음) */
-  created: z.boolean().optional(),
+  state: z.enum(["running", "stopped"]),
   lastActiveAt: z.string().optional(),
 });
 export type SandboxInfo = z.infer<typeof SandboxInfo>;
@@ -89,7 +85,7 @@ export const ADMIN_PRINCIPAL = "_admin";
  * - sandboxd는 argv를 셸 해석 없이 그대로 실행한다. 셸이 필요하면 `["bash", "-c", cmd]`로 보낸다.
  * - 프로세스는 새 process group으로 띄운다. 클라이언트가 요청을 끊거나 timeout이 되면
  *   group 전체에 SIGTERM을 보내고, 5초 뒤에도 살아 있으면 SIGKILL을 보낸다.
- * - env는 sandbox 기본 env(HOME, PATH 등) 위에 덮어쓴다. gateway는 allowlist된 값만 보낸다.
+ * - env는 sandbox 기본 env(HOME, PATH 등) 위에 덮어쓴다. gateway는 그 턴의 sandbox_env만 보낸다.
  * - 출력이 maxOutputBytes를 넘으면 나머지 chunk는 버리고 exit 이벤트에 truncated=true를 준다.
  */
 export const ExecRequest = z.object({
@@ -105,7 +101,6 @@ export const ExecRequest = z.object({
 export type ExecRequest = z.input<typeof ExecRequest>;
 
 export const ExecEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("started"), execId: z.string() }),
   /** data는 base64 */
   z.object({ type: z.literal("stdout"), data: z.string() }),
   z.object({ type: z.literal("stderr"), data: z.string() }),
@@ -115,7 +110,6 @@ export const ExecEvent = z.discriminatedUnion("type", [
     signal: z.string().nullable(),
     timedOut: z.boolean(),
     truncated: z.boolean(),
-    durationMs: z.number(),
   }),
   z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
 ]);
@@ -123,8 +117,7 @@ export type ExecEvent = z.infer<typeof ExecEvent>;
 
 // ── 파일 ────────────────────────────────────────────────────────────
 
-export const FileKind = z.enum(["file", "dir", "symlink", "other"]);
-export type FileKind = z.infer<typeof FileKind>;
+const FileKind = z.enum(["file", "dir", "symlink", "other"]);
 
 /** POST /v1/fs/read — 없으면 404 not_found, 디렉토리면 400 is_directory. 심볼릭 링크는 따라간다 (컨테이너 안). */
 export const FsReadRequest = z.object({
@@ -132,33 +125,27 @@ export const FsReadRequest = z.object({
   path: sandboxPath,
   maxBytes: z.number().int().min(0).max(64 * MiB).default(32 * MiB),
 });
-export type FsReadRequest = z.input<typeof FsReadRequest>;
 export const FsReadResponse = z.object({
-  size: z.number(),
   /** base64 */
   content: z.string(),
   truncated: z.boolean(),
 });
 export type FsReadResponse = z.infer<typeof FsReadResponse>;
 
-/** POST /v1/fs/write — 덮어쓴다. mkdirs면 상위 디렉토리를 만든다. */
+/** POST /v1/fs/write — 덮어쓴다. 상위 디렉토리가 없으면 만든다. */
 export const FsWriteRequest = z.object({
   user: principal,
   path: sandboxPath,
   /** base64 */
   content: z.string(),
-  mkdirs: z.boolean().default(true),
 });
-export type FsWriteRequest = z.input<typeof FsWriteRequest>;
 
 /** POST /v1/fs/stat — 없으면 200 `{exists:false}`. 심볼릭 링크 자체를 본다 (lstat). */
 export const FsStatRequest = z.object({ user: principal, path: sandboxPath });
-export type FsStatRequest = z.input<typeof FsStatRequest>;
 export const FsStatResponse = z.object({
   exists: z.boolean(),
   kind: FileKind.optional(),
   size: z.number().optional(),
-  mtimeMs: z.number().optional(),
   /** 심볼릭 링크를 따라갔을 때 디렉토리인지 (ls/read 판단용) */
   targetIsDir: z.boolean().optional(),
 });
@@ -166,21 +153,15 @@ export type FsStatResponse = z.infer<typeof FsStatResponse>;
 
 /** POST /v1/fs/list — 이름순. 없으면 404, 파일이면 400 not_directory. */
 export const FsListRequest = z.object({ user: principal, path: sandboxPath });
-export type FsListRequest = z.input<typeof FsListRequest>;
 export const FsListResponse = z.object({
   entries: z.array(z.object({ name: z.string(), kind: FileKind })),
 });
 export type FsListResponse = z.infer<typeof FsListResponse>;
 
-/** POST /v1/fs/mkdir */
-export const FsMkdirRequest = z.object({
-  user: principal,
-  path: sandboxPath,
-  recursive: z.boolean().default(true),
-});
-export type FsMkdirRequest = z.input<typeof FsMkdirRequest>;
+/** POST /v1/fs/mkdir — 상위 디렉토리도 만든다. 이미 있어도 된다. */
+export const FsMkdirRequest = z.object({ user: principal, path: sandboxPath });
 
-/** POST /v1/fs/glob — 결과는 절대 경로, 이름순. .gitignore는 존중한다 (fd 동작). */
+/** POST /v1/fs/glob — 결과는 절대 경로, 이름순, 최대 limit개. .gitignore는 존중한다 (fd 동작). */
 export const FsGlobRequest = z.object({
   user: principal,
   cwd: sandboxPath.default(SANDBOX_WORKSPACE),
@@ -188,8 +169,7 @@ export const FsGlobRequest = z.object({
   ignore: z.array(z.string()).default([]),
   limit: z.number().int().min(1).max(100_000).default(1000),
 });
-export type FsGlobRequest = z.input<typeof FsGlobRequest>;
-export const FsGlobResponse = z.object({ paths: z.array(z.string()), truncated: z.boolean() });
+export const FsGlobResponse = z.object({ paths: z.array(z.string()) });
 export type FsGlobResponse = z.infer<typeof FsGlobResponse>;
 
 // ── 장기 실행 프로세스 (WebSocket) ───────────────────────────────────
@@ -209,10 +189,9 @@ export const AttachStart = z.object({
   cwd: sandboxPath.default(SANDBOX_WORKSPACE),
   env: z.record(envName, z.string()).default({}),
 });
-export type AttachStart = z.input<typeof AttachStart>;
 
 export const AttachServerMessage = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("started"), procId: z.string() }),
+  z.object({ type: z.literal("started") }),
   /** base64 */
   z.object({ type: z.literal("stderr"), data: z.string() }),
   z.object({ type: z.literal("exit"), exitCode: z.number().int().nullable(), signal: z.string().nullable() }),

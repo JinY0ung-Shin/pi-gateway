@@ -1,7 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
-import { api, enc, formatBytes, formatTime } from "../api";
-import { Badge, Modal, Notice, Section, useAction, useLoad } from "../components";
+import { api, duration, enc, formatBytes, formatTime, percent } from "../api";
+import { Badge, EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
 import type { SearchStat, ServiceCheck, StatusView, ToolStat, UserUsage } from "../types";
 
 /** 통계 표에 바로 보이는 줄 수. 나머지는 전체 보기에서 */
@@ -96,7 +96,7 @@ export function StatusPage() {
       <Ranked title="도구 사용 (최근 30일)" rows={status.tools} table={(rows) => <ToolTable tools={rows} />}>
         <p class="muted small-text">
           턴 {status.turns.turns.toLocaleString()}개 · 재생성·수정 {status.turns.branched.toLocaleString()}개
-          {status.turns.turns > 0 && ` (${((status.turns.branched / status.turns.turns) * 100).toFixed(1)}%)`}
+          {status.turns.turns > 0 && ` (${percent(status.turns.branched, status.turns.turns)})`}
         </p>
       </Ranked>
       <Section title="MCP 검색 정확도 (최근 30일)">
@@ -107,7 +107,7 @@ export function StatusPage() {
       </Section>
       <Ranked title="사용자별 토큰 (최근 30일)" rows={status.users} table={(rows) => <UserTable users={rows} />} />
       <Section title="sandbox">
-        {status.sandboxes.error && <Notice tone="error">sandboxd 조회 실패: {status.sandboxes.error}</Notice>}
+        {services.sandboxd.error && <Notice tone="error">sandboxd 조회 실패: {services.sandboxd.error}</Notice>}
         <table class="table">
           <thead>
             <tr>
@@ -118,13 +118,7 @@ export function StatusPage() {
             </tr>
           </thead>
           <tbody>
-            {status.sandboxes.items.length === 0 && (
-              <tr>
-                <td colSpan={4} class="muted">
-                  실행 중인 sandbox가 없습니다.
-                </td>
-              </tr>
-            )}
+            {status.sandboxes.items.length === 0 && <EmptyRow cols={4}>실행 중인 sandbox가 없습니다.</EmptyRow>}
             {status.sandboxes.items.map((s) => (
               <tr key={s.key}>
                 <td class="mono">{s.key}</td>
@@ -213,21 +207,15 @@ function ToolTable(props: { tools: ToolStat[] }) {
         </tr>
       </thead>
       <tbody>
-        {props.tools.length === 0 && (
-          <tr>
-            <td colSpan={4} class="muted">
-              아직 호출된 도구가 없습니다.
-            </td>
-          </tr>
-        )}
+        {props.tools.length === 0 && <EmptyRow cols={4}>아직 호출된 도구가 없습니다.</EmptyRow>}
         {props.tools.map((t) => (
           <tr key={t.tool}>
             <td class="clip mono" title={t.tool}>
               {t.tool}
             </td>
             <td class="num">{t.calls.toLocaleString()}</td>
-            <td class="num">{t.errors > 0 ? `${((t.errors / t.calls) * 100).toFixed(1)}%` : "0%"}</td>
-            <td class="num">{t.avgMs < 1000 ? `${t.avgMs}ms` : `${(t.avgMs / 1000).toFixed(1)}s`}</td>
+            <td class="num">{t.errors > 0 ? percent(t.errors, t.calls) : "0%"}</td>
+            <td class="num">{duration(t.avgMs)}</td>
           </tr>
         ))}
       </tbody>
@@ -236,7 +224,6 @@ function ToolTable(props: { tools: ToolStat[] }) {
 }
 
 function SearchTable(props: { searches: SearchStat[] }) {
-  const rate = (hits: number, s: SearchStat) => (s.called > 0 ? `${((hits / s.called) * 100).toFixed(1)}%` : "-");
   return (
     <table class="table">
       <thead>
@@ -250,21 +237,15 @@ function SearchTable(props: { searches: SearchStat[] }) {
         </tr>
       </thead>
       <tbody>
-        {props.searches.length === 0 && (
-          <tr>
-            <td colSpan={6} class="muted">
-              아직 검색이 없습니다.
-            </td>
-          </tr>
-        )}
+        {props.searches.length === 0 && <EmptyRow cols={6}>아직 검색이 없습니다.</EmptyRow>}
         {props.searches.map((s) => (
           <tr key={s.method}>
             <td class="clip">{s.method === "model" ? "System One" : "BM25"}</td>
             <td class="num">{s.searches.toLocaleString()}</td>
             <td class="num">{s.called.toLocaleString()}</td>
-            <td class="num">{rate(s.top1, s)}</td>
-            <td class="num">{rate(s.top2, s)}</td>
-            <td class="num">{rate(s.top3, s)}</td>
+            <td class="num">{percent(s.top1, s.called)}</td>
+            <td class="num">{percent(s.top2, s.called)}</td>
+            <td class="num">{percent(s.top3, s.called)}</td>
           </tr>
         ))}
       </tbody>
@@ -285,19 +266,13 @@ function UserTable(props: { users: UserUsage[] }) {
         </tr>
       </thead>
       <tbody>
-        {props.users.length === 0 && (
-          <tr>
-            <td colSpan={5} class="muted">
-              아직 사용 기록이 없습니다.
-            </td>
-          </tr>
-        )}
+        {props.users.length === 0 && <EmptyRow cols={5}>아직 사용 기록이 없습니다.</EmptyRow>}
         {props.users.map((u) => (
           <tr key={u.user}>
             <td class="clip">{u.user}</td>
             <td class="num">{u.llmCalls.toLocaleString()}</td>
             <td class="num">{u.inputTokens.toLocaleString()}</td>
-            <td class="num">{u.inputTokens > 0 ? `${((u.cachedTokens / u.inputTokens) * 100).toFixed(1)}%` : "-"}</td>
+            <td class="num">{percent(u.cachedTokens, u.inputTokens)}</td>
             <td class="num">{u.outputTokens.toLocaleString()}</td>
           </tr>
         ))}

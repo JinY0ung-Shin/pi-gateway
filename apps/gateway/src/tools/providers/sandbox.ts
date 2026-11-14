@@ -22,20 +22,15 @@ import { createRemoteFs, mapHomePath, PathNamespace } from "../remote-fs.js";
  * read_only 세션에는 sandbox를 바꾸거나 명령을 실행하는 write/edit/bash를 주지 않는다.
  */
 
-function preparePath(def: ToolDefinition, map: (path: string) => string): ToolDefinition["prepareArguments"] {
-  const original = def.prepareArguments;
-  return (args: unknown) => {
-    const prepared = (original ? original(args) : args) as Record<string, unknown>;
-    if (prepared && typeof prepared === "object" && typeof prepared.path === "string") {
-      return { ...prepared, path: map(prepared.path) } as never;
-    }
-    return prepared as never;
-  };
-}
-
 /** `~` 경로를 sandbox HOME으로 바꾼다 (ls, find). grep은 execute에서 sandbox 경로로 바꾼다. */
 function withHomeMapping(def: ToolDefinition): ToolDefinition {
-  return { ...def, prepareArguments: preparePath(def, mapHomePath) };
+  return {
+    ...def,
+    prepareArguments: (args: unknown) => {
+      const a = args as Record<string, unknown>;
+      return (a && typeof a === "object" && typeof a.path === "string" ? { ...a, path: mapHomePath(a.path) } : a) as never;
+    },
+  };
 }
 
 /**

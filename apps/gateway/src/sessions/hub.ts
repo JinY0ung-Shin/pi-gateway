@@ -1,7 +1,8 @@
 import { rmSync } from "node:fs";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { RequestContext } from "@pi-gateway/shared";
 import type { Logger } from "pino";
-import { type AgentFactoryDeps, type BuiltAgent, buildAgentSession, subagentDirFor } from "../agent/session-factory.js";
+import { type AgentFactoryDeps, buildAgentSession, subagentDirFor } from "../agent/session-factory.js";
 import type { ResponseEventMapper } from "../api/mapper.js";
 import { KeyedMutex } from "./limiter.js";
 import type { SessionRecord, SessionStore } from "./store.js";
@@ -13,7 +14,7 @@ import type { SessionRecord, SessionStore } from "./store.js";
 
 export interface LiveSession {
   record: SessionRecord;
-  agent: BuiltAgent;
+  session: AgentSession;
   /** 현재 턴 요청의 전달 헤더·metadata. MCP 호출이 이 값을 쓴다. */
   requestContext: RequestContext;
   /** 현재 턴 요청의 sandbox_env. bash가 쓰고 도구 결과에서 값을 가린다. 메모리에만 있다 (DB·JSONL에 쓰지 않는다). */
@@ -33,7 +34,7 @@ export interface SessionPreview {
   tools: { name: string; description: string; parameters: unknown }[];
 }
 
-export interface SessionHubDeps {
+interface SessionHubDeps {
   store: SessionStore;
   factory: AgentFactoryDeps;
   log: Logger;
@@ -64,7 +65,7 @@ export class SessionHub {
    * 세션을 메모리에 올리고 이번 요청의 컨텍스트(전달 헤더·metadata·sandbox_env)를 붙인다.
    * 호출하는 쪽이 세션 lock을 잡고 있어야 한다.
    */
-  async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext = {}, sandboxEnv: Record<string, string> = {}): Promise<LiveSession> {
+  async acquire(record: SessionRecord, signal: AbortSignal, requestContext: RequestContext, sandboxEnv: Record<string, string> = {}): Promise<LiveSession> {
     let existing = this.live.get(record.id);
     if (
       existing &&
@@ -85,13 +86,13 @@ export class SessionHub {
     // 도구를 만드는 동안(예: sandbox MCP 서버 목록 조회)에도 이번 요청의 컨텍스트가 보이게 한다.
     const holder: { live?: LiveSession; ctx: RequestContext } = { ctx: requestContext };
     const revision = this.settingsRevision();
-    const agent = await buildAgentSession(
+    const session = await buildAgentSession(
       this.deps.factory,
       record,
       { requestContext: () => holder.live?.requestContext ?? holder.ctx, sandboxEnv: () => holder.live?.sandboxEnv ?? sandboxEnv },
       signal,
     );
-    const live: LiveSession = { record, agent, requestContext, sandboxEnv, lastActive: Date.now(), activeTurn: null, activeMapper: null, revision };
+    const live: LiveSession = { record, session, requestContext, sandboxEnv, lastActive: Date.now(), activeTurn: null, activeMapper: null, revision };
     holder.live = live;
     this.live.set(record.id, live);
     return live;
@@ -100,16 +101,15 @@ export class SessionHub {
   /** 기록으로 세션을 열어 프롬프트와 도구만 읽고 바로 정리한다 (메모리·JSONL에 남기지 않는다). */
   async preview(record: SessionRecord): Promise<SessionPreview> {
     const abort = new AbortController();
-    const agent = await buildAgentSession(this.deps.factory, record, { requestContext: () => ({}), sandboxEnv: () => ({}) }, abort.signal);
+    const session = await buildAgentSession(this.deps.factory, record, { requestContext: () => ({}), sandboxEnv: () => ({}) }, abort.signal);
     try {
-      const { session } = agent;
       return {
         model: record.model,
         systemPrompt: session.systemPrompt,
         tools: session.agent.state.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
       };
     } finally {
-      await this.teardown({ record, agent, requestContext: {}, sandboxEnv: {}, lastActive: 0, activeTurn: abort, activeMapper: null, revision: "" });
+      await this.teardown({ record, session, requestContext: {}, sandboxEnv: {}, lastActive: 0, activeTurn: abort, activeMapper: null, revision: "" });
     }
   }
 
@@ -125,7 +125,7 @@ export class SessionHub {
   private async teardown(live: LiveSession): Promise<void> {
     const { id } = live.record;
     this.live.delete(id);
-    const { session } = live.agent;
+    const { session } = live;
     live.activeTurn?.abort();
     await withTimeout(session.abort(), ABORT_TIMEOUT_MS);
     try {
@@ -160,7 +160,7 @@ export class SessionHub {
     const live = this.live.get(id);
     const record = this.deps.store.get(id) ?? live?.record;
     if (live) await this.teardown(live);
-    const file = live?.agent.session.sessionManager.getSessionFile() ?? record?.sessionFile;
+    const file = live?.session.sessionManager.getSessionFile() ?? record?.sessionFile;
     if (file) rmSync(file, { force: true });
     if (record) rmSync(subagentDirFor(this.deps.factory.config, record), { recursive: true, force: true });
     this.deps.store.delete(id);
@@ -194,7 +194,7 @@ export class SessionHub {
     }
   }
 
-  startReaper(intervalMs = 30_000): void {
+  startReaper(intervalMs: number): void {
     this.reaper = setInterval(() => {
       void Promise.all([this.reap(), this.purgeExpired()]).catch((err) => this.deps.log.warn({ err }, "session reaper failed"));
     }, intervalMs);

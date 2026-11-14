@@ -25,7 +25,7 @@ export class SseWriter {
     });
   }
 
-  get isClosed(): boolean {
+  private get isClosed(): boolean {
     return this.closed || this.res.writableEnded || this.res.destroyed;
   }
 
@@ -35,7 +35,7 @@ export class SseWriter {
     this.res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
-  comment(text: string): void {
+  private comment(text: string): void {
     if (this.isClosed) return;
     this.res.write(`: ${text}\n\n`);
   }

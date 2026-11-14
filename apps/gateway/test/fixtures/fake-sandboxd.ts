@@ -131,14 +131,14 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
           if (st.isDirectory()) return sendJson(res, 400, errorBody("is_directory", "is a directory"));
           const data = await readFile(host);
           const max = typeof body.maxBytes === "number" ? body.maxBytes : data.length;
-          return sendJson(res, 200, { size: data.length, content: data.subarray(0, max).toString("base64"), truncated: data.length > max });
+          return sendJson(res, 200, { content: data.subarray(0, max).toString("base64"), truncated: data.length > max });
         }
         case SANDBOXD_ROUTES.fsWrite: {
           const host = toHost(user, String(body.path));
           await mkdir(dirname(host), { recursive: true });
           const data = Buffer.from(String(body.content), "base64");
           await writeFile(host, data);
-          return sendJson(res, 200, { size: data.length });
+          return sendJson(res, 200, {});
         }
         case SANDBOXD_ROUTES.fsStat: {
           const host = toHost(user, String(body.path));
@@ -150,7 +150,6 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
             exists: true,
             kind,
             size: st.size,
-            mtimeMs: st.mtimeMs,
             ...(target ? { targetIsDir: target.isDirectory() } : {}),
           });
         }
@@ -166,7 +165,7 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
         }
         case SANDBOXD_ROUTES.fsMkdir:
           await mkdir(toHost(user, String(body.path)), { recursive: true });
-          return sendJson(res, 200, { ok: true });
+          return sendJson(res, 200, {});
         case SANDBOXD_ROUTES.fsGlob: {
           const cwd = toHost(user, String(body.cwd ?? "/workspace"));
           const limit = typeof body.limit === "number" ? body.limit : 1000;
@@ -176,7 +175,7 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
             if (paths.length >= limit) break;
           }
           paths.sort();
-          return sendJson(res, 200, { paths, truncated: paths.length >= limit });
+          return sendJson(res, 200, { paths });
         }
         case SANDBOXD_ROUTES.exec: {
           // 진짜 sandbox에서는 /workspace·/tmp가 그대로 보인다. 여기서는 그 경로 인자를 임시 디렉토리로 바꿔 흉내 낸다.
@@ -190,13 +189,12 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
             // FAKE_SANDBOX_*: 가짜 도구(fake-rg)가 sandbox 경로를 이 머신의 경로로 바꿀 때 쓴다.
             env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(ws, ".home"), FAKE_SANDBOX_WS: ws, FAKE_SANDBOX_TMP: tmp, ...env },
             detached: true,
-            stdio: ["pipe", "pipe", "pipe"],
+            stdio: ["ignore", "pipe", "pipe"],
           });
           res.writeHead(200, { "content-type": "application/x-ndjson" });
           const write = (o: unknown) => {
             if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`);
           };
-          const started = Date.now();
           let timedOut = false;
           const kill = () => {
             try {
@@ -209,9 +207,6 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
           res.on("close", () => {
             if (child.exitCode === null) kill();
           });
-          write({ type: "started", execId: String(child.pid) });
-          if (typeof body.stdin === "string") child.stdin.end(Buffer.from(body.stdin, "base64"));
-          else child.stdin.end();
           child.stdout.on("data", (d: Buffer) => write({ type: "stdout", data: d.toString("base64") }));
           child.stderr.on("data", (d: Buffer) => write({ type: "stderr", data: d.toString("base64") }));
           child.on("error", (err) => {
@@ -220,7 +215,7 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
           });
           child.on("close", (code, signal) => {
             if (timer) clearTimeout(timer);
-            write({ type: "exit", exitCode: code, signal, timedOut, truncated: false, durationMs: Date.now() - started });
+            write({ type: "exit", exitCode: code, signal, timedOut, truncated: false });
             res.end();
           });
           return;
@@ -266,7 +261,7 @@ export async function startFakeSandboxd(secret: Uint8Array, options: FakeSandbox
             ws.send(JSON.stringify({ type: "exit", exitCode: code, signal }));
             ws.close();
           });
-          ws.send(JSON.stringify({ type: "started", procId: String(child.pid) }));
+          ws.send(JSON.stringify({ type: "started" }));
           return;
         }
         if (isBinary) child.stdin!.write(data as Buffer);

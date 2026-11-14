@@ -15,7 +15,7 @@ export interface ConnectHooks {
   onToolsChanged(): void;
 }
 
-export interface ConnectOptions {
+interface ConnectOptions {
   connectTimeoutMs: number;
   hooks: ConnectHooks;
 }

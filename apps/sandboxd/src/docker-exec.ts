@@ -17,7 +17,7 @@ export const HELPER_ENV: Record<string, string> = {
   LANG: "C.UTF-8",
 };
 
-export type StreamName = "stdout" | "stderr";
+type StreamName = "stdout" | "stderr";
 
 /**
  * Docker 다중화 스트림(Tty=false) 해석기.
@@ -73,12 +73,12 @@ export class Demuxer {
   }
 }
 
-export interface StartedExec {
+interface StartedExec {
   exec: Docker.Exec;
   socket: Duplex;
 }
 
-export interface StartExecOptions {
+interface StartExecOptions {
   argv: string[];
   cwd: string;
   env: Record<string, string>;
@@ -131,7 +131,7 @@ export async function waitExitCode(exec: Docker.Exec, timeoutMs = 3000): Promise
   }
 }
 
-export interface CollectedExec {
+interface CollectedExec {
   stdout: Buffer;
   stderr: Buffer;
   exitCode: number | null;
@@ -187,14 +187,8 @@ export async function signalProcessGroup(container: Docker.Container, execId: st
   }
 }
 
-const SIGNAL_NAMES: Record<number, string> = {
-  1: "SIGHUP",
-  2: "SIGINT",
-  6: "SIGABRT",
-  9: "SIGKILL",
-  13: "SIGPIPE",
-  15: "SIGTERM",
-};
+/** 우리가 보내는 신호 (그 밖의 신호는 SIG<번호>로 적는다) */
+const SIGNAL_NAMES: Record<number, string> = { 9: "SIGKILL", 15: "SIGTERM" };
 
 /**
  * sbx-run의 종료 코드 해석. 우리가 신호를 보낸 경우에만 128+N을 신호로 본다

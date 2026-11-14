@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
+import { envInt, jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 
 export interface SandboxdConfig {
   port: number;
@@ -23,14 +23,11 @@ export interface SandboxdConfig {
   nanoCpus: number;
   pidsLimit: number;
   tmpSize: string;
-  shmSizeBytes: number;
   idleSeconds: number;
   reapIntervalMs: number;
   /** 컨테이너 이름 접두사와 label 값. 테스트는 다른 값을 써서 운영 컨테이너를 건드리지 않는다. */
   containerPrefix: string;
   instance: string;
-  /** fs 도우미 한 번의 최대 실행 시간 */
-  fsTimeoutSeconds: number;
 }
 
 const UNITS: Record<string, number> = { "": 1, b: 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 };
@@ -42,14 +39,6 @@ export function parseBytes(name: string, raw: string): number {
   const value = Number(m[1]) * UNITS[(m[2] ?? "").toLowerCase()]!;
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be positive`);
   return Math.floor(value);
-}
-
-function int(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 0): number {
-  const raw = env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < min) throw new Error(`${name} must be an integer >= ${min}`);
-  return n;
 }
 
 function absolute(name: string, value: string | undefined): string {
@@ -69,10 +58,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
   const cpus = Number(env.SANDBOX_CPUS ?? "1");
   if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 64) throw new Error("SANDBOX_CPUS must be between 0 and 64");
 
-  const idleSeconds = int(env, "SANDBOX_IDLE_SECONDS", 900, 10);
+  const idleSeconds = envInt(env, "SANDBOX_IDLE_SECONDS", 900, 10);
 
   return {
-    port: int(env, "PORT", 7070, 1),
+    port: envInt(env, "PORT", 7070, 1),
     logLevel: env.LOG_LEVEL ?? "info",
     jwtSecret: jwtSecretBytes(secret),
     image: env.SANDBOX_IMAGE ?? "pi-gateway/sandbox:latest",
@@ -83,13 +72,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxdConfig
     pluginsHostDir,
     memoryBytes: parseBytes("SANDBOX_MEMORY", env.SANDBOX_MEMORY ?? "1g"),
     nanoCpus: Math.round(cpus * 1e9),
-    pidsLimit: int(env, "SANDBOX_PIDS_LIMIT", 256, 16),
+    pidsLimit: envInt(env, "SANDBOX_PIDS_LIMIT", 256, 16),
     tmpSize: "256m",
-    shmSizeBytes: 64 * 1024 * 1024,
     idleSeconds,
     reapIntervalMs: Math.min(60, Math.max(5, Math.floor(idleSeconds / 4))) * 1000,
     containerPrefix: "pi-sbx-",
     instance: "default",
-    fsTimeoutSeconds: 60,
   };
 }

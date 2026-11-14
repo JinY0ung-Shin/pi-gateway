@@ -67,6 +67,18 @@ export interface ResponsesDeps {
 const USER_CANCELLED = "user_cancelled";
 
 const notFoundSession = (prev: string) => notFound(`Session for previous_response_id '${prev}' not found or expired`);
+const modelGone = (model: string) =>
+  badRequest(`This session's model '${model}' is no longer configured. Start a new conversation.`, "model_not_configured");
+
+/** `POST …/{id}/cancel|input|compact?user=`의 응답 id와 그 세션. 다른 사용자의 세션이면 없는 것으로 본다. */
+function findResponse(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): { id: string; turn: number; record: SessionRecord } {
+  const { id } = req.params as { id: string };
+  const user = userOf(auth, (req.query as { user?: string }).user);
+  const parsed = parseResponseId(id);
+  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
+  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  return { id, turn: parsed.turn, record };
+}
 
 async function requestContext(headers: IncomingHttpHeaders, metadata: Record<string, string> | null | undefined, deps: ResponsesDeps): Promise<RequestContext> {
   const ctx: RequestContext = {};
@@ -88,7 +100,6 @@ async function requestContext(headers: IncomingHttpHeaders, metadata: Record<str
 interface NewSession {
   model: string;
   thinkingLevel: string | undefined;
-  outputFormat: OutputFormat | null;
   interactive: boolean;
   readOnly: boolean;
 }
@@ -101,6 +112,8 @@ interface TurnPlan {
   prevTurn: number;
   body: ResponseCreateRequest;
   input: ParsedInput;
+  /** text.format json_schema. 새 세션이면 세션에 남기고, 이어지는 턴이면 세션의 것과 같아야 한다. */
+  outputFormat: OutputFormat | null;
   /** 새 세션일 때만. 이어지는 세션은 세션의 모델을 쓴다. */
   newSession: NewSession | null;
   /** 이번 턴의 bash env. 세션 기록에 남기지 않는다. */
@@ -140,12 +153,8 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
  * 그 응답이 속한 세션의 턴별 trace (`GET …/{id}/traces?user=`, 최근 턴부터). 관리 API의 `history/:id/traces`와 같은 모양이다.
  * 턴이 끝나야 그 턴의 trace가 나온다.
  */
-export async function responseTraces(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
-  const { id } = req.params as { id: string };
-  const user = userOf(auth, (req.query as { user?: string }).user);
-  const parsed = parseResponseId(id);
-  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
-  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+async function responseTraces(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
+  const { record } = findResponse(deps, req, auth);
   const host = deps.config.jaegerHost;
   if (!host) throw apiError(404, "Tracing is not enabled on this gateway.", { code: "tracing_disabled" });
   try {
@@ -161,14 +170,10 @@ export async function responseTraces(deps: ResponsesDeps, req: FastifyRequest, a
  * 그 응답 id로 다음 턴을 이어갈 수 있다. 원래 요청의 연결이 끊긴 경우는 지금처럼 버린다.
  */
 export function cancelResponse(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): unknown {
-  const { id } = req.params as { id: string };
-  const user = userOf(auth, (req.query as { user?: string }).user);
-  const parsed = parseResponseId(id);
-  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
-  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  const { id, turn, record } = findResponse(deps, req, auth);
   const active = deps.hub.get(record.id)?.activeTurn;
-  if (!active || parsed.turn !== record.turn + 1) {
-    if (parsed.turn <= record.turn) {
+  if (!active || turn !== record.turn + 1) {
+    if (turn <= record.turn) {
       throw apiError(409, `Response '${id}' is no longer in progress.`, { type: "invalid_request_error", code: "response_not_cancellable" });
     }
     throw notFound(`Response '${id}' not found`);
@@ -182,34 +187,30 @@ export function cancelResponse(deps: ResponsesDeps, req: FastifyRequest, auth: A
  * pi가 다음 도구 호출 경계에서 모델에 넣고, 그때 스트림에 `response.input_consumed {client_id}`가 나간다.
  * 턴이 끝날 때까지 들어가지 못한 입력은 최종 응답의 `undelivered_input`에 실리고 버려진다.
  */
-export async function queueResponseInput(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
-  const { id } = req.params as { id: string };
-  const user = userOf(auth, (req.query as { user?: string }).user);
+async function queueResponseInput(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
   const { client_id: clientId, text } = (req.body ?? {}) as { client_id?: unknown; text?: unknown };
   if (typeof clientId !== "string" || !clientId) throw badRequest("client_id is required");
   if (typeof text !== "string" || !text.trim()) throw badRequest("text is required");
-  const parsed = parseResponseId(id);
-  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
-  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  const { id, turn, record } = findResponse(deps, req, auth);
   const live = deps.hub.get(record.id);
   const mapper = live?.activeMapper;
   const notRunning = () =>
     apiError(409, `Response '${id}' is no longer running and cannot take input.`, { type: "invalid_request_error", code: "response_not_running" });
-  if (!live || !mapper || parsed.turn !== record.turn + 1) {
-    if (parsed.turn <= record.turn) throw notRunning();
+  if (!live || !mapper || turn !== record.turn + 1) {
+    if (turn <= record.turn) throw notRunning();
     throw notFound(`Response '${id}' not found`);
   }
   // AskUserQuestion·StructuredOutput이 불린 턴은 곧 끝난다.
   if (!mapper.acceptsInput) throw notRunning();
   mapper.queueInput(clientId);
   try {
-    await live.agent.session.steer(text);
+    await live.session.steer(text);
   } catch (err) {
     mapper.dropInput(clientId);
     throw badRequest(err instanceof Error ? err.message : String(err));
   }
   // 넣는 동안 턴이 끝났으면 pi 큐에 남은 것이 다음 턴으로 새지 않게 비운다 (client_id는 미전달로 이미 알렸다).
-  if (live.activeMapper === null) live.agent.session.clearQueue();
+  if (live.activeMapper === null) live.session.clearQueue();
   return { id, object: "response.input", client_id: clientId, status: "queued" };
 }
 
@@ -262,13 +263,12 @@ export async function createResponse(deps: ResponsesDeps, req: FastifyRequest, r
     newSession = {
       model,
       thinkingLevel: thinkingLevelFor(body.reasoning?.effort, modelConfig),
-      outputFormat,
       interactive: body.interactive ?? true,
       readOnly: body.read_only ?? false,
     };
   }
 
-  const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, newSession, sandboxEnv };
+  const plan: TurnPlan = { sessionId, principal, prev, prevTurn, body, input, outputFormat, newSession, sandboxEnv };
   return withSessionSlot(deps, reply, principal, sessionId, (abort) => runLocked(deps, req, reply, plan, abort));
 }
 
@@ -333,30 +333,25 @@ async function openLive(
  * `{id}` 응답까지의 기록을 요약해 새 turn으로 commit하고, 그 응답 id를 SSE `response.compaction`(`completed`)으로 알린다.
  * 다음 턴은 그 id로 이어간다. 원래 `{id}`로 이어가면 요약 전 기록에서 갈라진다.
  */
-export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, reply: FastifyReply, auth: AuthResult): Promise<unknown> {
+async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, reply: FastifyReply, auth: AuthResult): Promise<unknown> {
   if (deps.hub.isShuttingDown) throw shuttingDownError();
-  const { id } = req.params as { id: string };
-  const user = userOf(auth, (req.query as { user?: string }).user);
   const { instructions } = (req.body ?? {}) as { instructions?: unknown };
   if (instructions != null && typeof instructions !== "string") throw badRequest("instructions must be a string");
-  const parsed = parseResponseId(id);
-  const found = parsed ? deps.store.get(parsed.sessionId) : undefined;
-  if (!parsed || !found || found.principal !== user || parsed.turn > found.turn) throw notFound(`Response '${id}' not found`);
+  const { id, turn: compactTurn, record: found } = findResponse(deps, req, auth);
+  if (compactTurn > found.turn) throw notFound(`Response '${id}' not found`);
   // 진행 중인 턴이 끝나기를 기다리지 않는다 (pi의 수동 compaction은 진행 중인 실행을 중단시킨다).
   if (deps.hub.get(found.id)?.activeTurn) {
     throw apiError(409, "This session has a response in progress. Compact after it ends.", { type: "invalid_request_error", code: "response_in_progress" });
   }
 
-  return withSessionSlot(deps, reply, user, found.id, async (abort) => {
+  return withSessionSlot(deps, reply, found.principal, found.id, async (abort) => {
     const record = deps.store.get(found.id);
-    const point = record && deps.store.turnPoint(record.id, parsed.turn);
+    const point = record && deps.store.turnPoint(record.id, compactTurn);
     if (!record || !point) throw notFound(`Response '${id}' not found`);
     if (point.pendingToolCall) {
       throw conflict(`This session is waiting for the user's decision on ${point.pendingToolCall.name}. Answer it before compacting.`);
     }
-    if (!deps.models.config(record.model)) {
-      throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
-    }
+    if (!deps.models.config(record.model)) throw modelGone(record.model);
     const liveBefore = deps.hub.get(record.id);
     const live = await openLive(deps, req, record, abort, {}, () => notFound(`Response '${id}' not found`));
     // 이 요청이 연 세션은 턴 요청의 컨텍스트(전달 헤더·metadata) 없이 도구를 만들었다. 끝나면 내려서 다음 턴이 다시 열게 한다.
@@ -365,7 +360,7 @@ export async function compactResponse(deps: ResponsesDeps, req: FastifyRequest, 
     live.activeTurn = abort;
     live.lastActive = Date.now();
     deps.store.touch(record.id);
-    const session = live.agent.session;
+    const session = live.session;
     const sm = session.sessionManager;
     const estimateBefore = estimateContext(session);
 
@@ -453,7 +448,7 @@ export async function previewSession(deps: ResponsesDeps, body: unknown): Promis
   return deps.hub.preview(newRecord(deps, { sessionId: randomUUID(), principal: user, model: id, thinkingLevel: undefined, outputFormat: null, interactive: true, readOnly: false }, null));
 }
 
-function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal"> & NewSession, instructions: string | null): SessionRecord {
+function newRecord(deps: ResponsesDeps, plan: Pick<TurnPlan, "sessionId" | "principal" | "outputFormat"> & NewSession, instructions: string | null): SessionRecord {
   const now = new Date();
   const promptText = deps.prompts.snapshotForSession({ user: plan.principal, model: plan.model, now });
   const append: string[] = [];
@@ -512,7 +507,7 @@ async function runLocked(
     requireAttachmentsAllowed(deps, plan.newSession.model, plan.newSession.readOnly, plan.input);
     record = newRecord(
       deps,
-      { sessionId: plan.sessionId, principal: plan.principal, ...plan.newSession },
+      { sessionId: plan.sessionId, principal: plan.principal, outputFormat: plan.outputFormat, ...plan.newSession },
       plan.body.instructions ?? (plan.input.kind === "prompt" ? plan.input.systemText : null),
     );
     deps.store.insert(record);
@@ -525,9 +520,7 @@ async function runLocked(
     const model = plan.body.model ?? record.model;
     const modelChanged = model !== record.model;
     const sessionModel = modelChanged ? requireModel(deps, model) : deps.models.config(record.model);
-    if (!sessionModel) {
-      throw badRequest(`This session's model '${record.model}' is no longer configured. Start a new conversation.`, "model_not_configured");
-    }
+    if (!sessionModel) throw modelGone(record.model);
     // effort를 빼면 고른 값을 그대로 둔다. model만 바꾸면 새 모델의 기본값을 따른다 (null).
     const thinkingLevel = thinkingLevelFor(plan.body.reasoning?.effort, sessionModel) ?? (modelChanged ? null : record.thinkingLevel);
     requireAttachmentsAllowed(deps, model, record.readOnly, plan.input);
@@ -536,8 +529,7 @@ async function runLocked(
     if (!point) throw conflict(`previous_response_id '${plan.prev}' can no longer be continued`);
     from = point;
     // 클라이언트는 보통 매 턴 같은 설정을 다시 보낸다. 같으면 통과, 다르면 거부한다 (도구가 세션을 만들 때 정해진다).
-    const outputFormat = outputFormatOf(plan.body);
-    if (outputFormat && JSON.stringify(outputFormat) !== JSON.stringify(record.outputFormat)) {
+    if (plan.outputFormat && JSON.stringify(plan.outputFormat) !== JSON.stringify(record.outputFormat)) {
       throw badRequest("text.format 'json_schema' is fixed when the session is created. Start a new session to use a different schema.");
     }
     if (plan.body.interactive != null && plan.body.interactive !== record.interactive) {
@@ -608,9 +600,8 @@ async function runLocked(
   });
   const failed = (error: { code: string; message: string } | undefined) => body("failed", [], emptyUsage(), { error });
   const log = deps.log.child({ session: record.id, turn });
-  const leafBefore = live.agent.session.sessionManager.getLeafId();
-  const contextWindow = live.agent.session.model?.contextWindow;
-  const estimate = () => estimateContext(live.agent.session);
+  const contextWindow = live.session.model?.contextWindow;
+  const estimate = () => estimateContext(live.session);
 
   /** 턴을 실행한다. 예상하지 못한 예외도 실패 결과로 바꿔서 commit/rewind가 항상 일어나게 한다. */
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
@@ -623,11 +614,11 @@ async function runLocked(
       return outcome;
     } catch (err) {
       log.error({ err }, "turn crashed");
-      return { status: "failed", error: { code: "server_error", message: "Internal server error" }, leafBefore };
+      return { status: "failed", error: { code: "server_error", message: "Internal server error" } };
     } finally {
       // 전달되지 않은 입력은 다음 턴으로 넘기지 않는다: pi 큐를 비우고 최종 응답에 알린다.
       live.activeMapper = null;
-      live.agent.session.clearQueue();
+      live.session.clearQueue();
       undelivered = mapper.takeUndeliveredInputs();
     }
   };
@@ -635,7 +626,7 @@ async function runLocked(
   const finish = async (outcome: TurnOutcome): Promise<void> => {
     live.activeTurn = null;
     live.lastActive = Date.now();
-    const sm = live.agent.session.sessionManager;
+    const sm = live.session.sessionManager;
     if (outcome.status === "completed" || outcome.status === "incomplete" || outcome.status === "requires_action") {
       deps.store.commit(record.id, {
         turn,
@@ -653,7 +644,7 @@ async function runLocked(
       return;
     }
     try {
-      moveLeaf(live, outcome.leafBefore);
+      moveLeaf(live, from.leafId);
     } catch (err) {
       log.warn({ err }, "rewind failed; evicting session");
       await deps.hub.discardLive(record.id);

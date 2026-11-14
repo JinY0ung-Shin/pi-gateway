@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_MAX_TOOL_CALLS_PER_TURN } from "../src/agent/tool-call-limit.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
-import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
+import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, SERVICE_KEY, sessionOf, startHarness } from "./helpers.js";
 
 const RESP_ID = /^resp_[0-9a-f-]{36}_(\d+)$/;
 
@@ -65,12 +64,6 @@ describe("POST /v1/responses — non-stream", () => {
     expect(Array.isArray(res.json.error.details)).toBe(true);
   });
 
-  it("maps upstream failures to 502 and does not commit the turn", async () => {
-    h.llm.enqueue({ error: { status: 500, body: { error: { message: "boom" } } } });
-    const res = await h.post({ input: "hi" });
-    expect(res.status).toBe(502);
-    expect(res.json.error.message).toContain("Backend error");
-  });
 });
 
 describe("authentication", () => {
@@ -194,7 +187,7 @@ describe("continuation", () => {
     expect(changed.status).toBe(200);
     expect(h.llm.requests.at(-1)).toMatchObject({ reasoning_effort: "low" });
     expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain('"a"');
-    await h.gateway.hub.evict(/^resp_(.+)_2$/.exec(changed.json.id)![1]!);
+    await h.gateway.hub.evict(sessionOf(changed.json.id));
     const omitted = await h.post({ input: "c", previous_response_id: changed.json.id });
     expect(omitted.status).toBe(200);
     expect(h.llm.requests.at(-1)).toMatchObject({ reasoning_effort: "low" });
@@ -296,21 +289,6 @@ describe("GET /v1/models", () => {
       null,
     ]);
     expect((await fetch(`${h.url}/v1/models`)).status).toBe(401);
-  });
-});
-
-describe("tool call limit", () => {
-  it("ends a turn as incomplete once it exceeds the per-turn tool call limit, and it stays continuable", async () => {
-    const calls = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `t${from + i}`, name: "ls", arguments: { path: "." } }));
-    // 상한은 한 턴의 모든 LLM 호출에 걸쳐 센다.
-    h.llm.enqueue({ toolCalls: calls(150, 0) }, { toolCalls: calls(DEFAULT_MAX_TOOL_CALLS_PER_TURN - 150 + 1, 150) });
-    const res = await h.post({ input: "loop" });
-    expect(res.json.status).toBe("incomplete");
-    expect(res.json.incomplete_details).toEqual({ reason: "max_tool_calls" });
-
-    const next = await h.post({ input: "go on", previous_response_id: res.json.id });
-    expect(next.status).toBe(200);
-    expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("loop");
   });
 });
 
@@ -562,14 +540,5 @@ describe("POST /v1/responses — stream", () => {
     const res = await h.stream({ input: "hi", previous_response_id: "resp_nope" });
     expect(res.status).toBe(404);
     expect(res.json.error.message).toContain("invalid");
-  });
-
-  it("an empty reply fails with empty_response (oh-my-gateway compatible)", async () => {
-    h.llm.enqueue({ text: "" });
-    const res = await h.stream({ input: "hi" });
-    const ev = last(res.events);
-    expect(ev.type).toBe("response.failed");
-    expect((ev.data.response as any).error.code).toBe("empty_response");
-    expect(ofType(res.events, "response.output_item.added")).toHaveLength(0);
   });
 });

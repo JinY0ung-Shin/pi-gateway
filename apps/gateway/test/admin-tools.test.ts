@@ -1,14 +1,10 @@
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ChatRequest } from "./fixtures/fake-llm.js";
-import { type Harness, last, startHarness } from "./helpers.js";
-
-const ADMIN_KEY = "admin-key-for-tests-0123456789";
+import { type Harness, last, startHarness, toolNames } from "./helpers.js";
 
 let h: Harness;
 beforeAll(async () => {
   h = await startHarness({
-    env: { ADMIN_API_KEY: ADMIN_KEY },
     skills: [
       {
         name: "p:report",
@@ -31,18 +27,15 @@ afterAll(async () => {
   await h.close();
 });
 
-const admin = (method: string, path: string) => fetch(`${h.url}/admin/api${path}`, { method, headers: { authorization: `Bearer ${ADMIN_KEY}` } });
-const toolNames = (r: ChatRequest) => (r.tools ?? []).map((t) => t.function.name);
-
 describe("built-in tool switches", () => {
   it("a disabled tool leaves new sessions, the next turn of a live session, and plugin agents", async () => {
     const first = await h.post({ input: "hi" });
     expect(toolNames(h.llm.requests.at(-1)!)).toContain("bash");
 
-    const off = await admin("POST", "/tools/bash/disable");
+    const off = await h.admin("POST", "/tools/bash/disable");
     expect(off.status).toBe(200);
-    expect(await off.json()).toEqual({ name: "bash", enabled: false });
-    const list = (await (await admin("GET", "/tools")).json()) as { tools: { name: string; enabled: boolean }[] };
+    expect(off.json).toEqual({ name: "bash", enabled: false });
+    const list = (await h.admin("GET", "/tools")).json as { tools: { name: string; enabled: boolean }[] };
     expect(list.tools.find((t) => t.name === "bash")!.enabled).toBe(false);
 
     // 메모리에 있던 세션도 다음 턴에 새 설정으로 다시 열린다
@@ -59,14 +52,14 @@ describe("built-in tool switches", () => {
     // [parent, child, after]: 하위 agent도 bash를 받지 않는다
     expect(toolNames(h.llm.requests.at(-2)!)).toEqual(["read"]);
 
-    expect((await admin("POST", "/tools/bash/enable")).status).toBe(200);
+    expect((await h.admin("POST", "/tools/bash/enable")).status).toBe(200);
     await h.post({ input: "hi" });
     expect(toolNames(h.llm.requests.at(-1)!)).toContain("bash");
   });
 
   it("only built-in tools can be switched", async () => {
-    expect((await admin("POST", "/tools/nope/disable")).status).toBe(404);
-    expect((await admin("POST", "/tools/mcp__docs__search/disable")).status).toBe(404);
+    expect((await h.admin("POST", "/tools/nope/disable")).status).toBe(404);
+    expect((await h.admin("POST", "/tools/mcp__docs__search/disable")).status).toBe(404);
   });
 });
 
@@ -88,7 +81,7 @@ describe("tool stats", () => {
     );
     await h.post({ input: "use tools" });
 
-    const status = (await (await admin("GET", "/status")).json()) as { tools: { tool: string; calls: number; errors: number }[] };
+    const status = (await h.admin("GET", "/status")).json as { tools: { tool: string; calls: number; errors: number }[] };
     const stat = (tool: string) => status.tools.find((t) => t.tool === tool);
     expect(stat("demo/echo")).toMatchObject({ calls: 1, errors: 0 });
     expect(stat("demo/fail")).toMatchObject({ calls: 1, errors: 1 });
@@ -125,14 +118,14 @@ describe("search stats", () => {
     h.llm.enqueue({ toolCalls: [call("q8", "mcp__demo__echo")] }, { text: "done" });
     await h.post({ input: "call only" });
 
-    const status = (await (await admin("GET", "/status")).json()) as { searches: unknown[] };
+    const status = (await h.admin("GET", "/status")).json as { searches: unknown[] };
     expect(status.searches).toEqual([{ method: "bm25", searches: 4, called: 3, top1: 1, top2: 2, top3: 2 }]);
   });
 });
 
 describe("turn stats", () => {
   it("counts committed turns and those continued from an earlier response (edit or regenerate)", async () => {
-    const turns = async () => ((await (await admin("GET", "/status")).json()) as { turns: { turns: number; branched: number } }).turns;
+    const turns = async () => ((await h.admin("GET", "/status")).json as { turns: { turns: number; branched: number } }).turns;
     const before = await turns();
     const first = await h.post({ input: "a" });
     await h.post({ input: "b", previous_response_id: first.json.id });
@@ -147,7 +140,7 @@ describe("user token usage", () => {
   it("adds each LLM call's tokens to the user, cached tokens included in input", async () => {
     type Row = { user: string; llmCalls: number; inputTokens: number; cachedTokens: number; outputTokens: number };
     const alice = async () =>
-      ((await (await admin("GET", "/status")).json()) as { users: Row[] }).users.find((u) => u.user === "alice") ??
+      ((await h.admin("GET", "/status")).json as { users: Row[] }).users.find((u) => u.user === "alice") ??
       { llmCalls: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0 };
     const before = await alice();
     h.llm.enqueue({ text: "ok", usage: { prompt_tokens: 1000, completion_tokens: 50, cached_tokens: 400 } });
@@ -168,12 +161,12 @@ describe("active turns", () => {
     let active: Active[] = [];
     for (let i = 0; i < 40 && active.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 50));
-      active = ((await (await admin("GET", "/status")).json()) as { activeTurns: Active[] }).activeTurns;
+      active = ((await h.admin("GET", "/status")).json as { activeTurns: Active[] }).activeTurns;
     }
     expect(active).toHaveLength(1);
     expect(active[0]!.user).toBe("alice");
 
-    const stop = await admin("POST", `/chat/${active[0]!.responseId}/cancel?user=alice`);
+    const stop = await h.admin("POST", `/chat/${active[0]!.responseId}/cancel?user=alice`);
     expect(stop.status).toBe(200);
     const end = last((await streaming).events);
     expect((end.data.response as { incomplete_details: unknown }).incomplete_details).toEqual({ reason: "user_cancelled" });
@@ -181,36 +174,35 @@ describe("active turns", () => {
 });
 
 describe("tool call limit", () => {
-  const put = (value: unknown) =>
-    fetch(`${h.url}/admin/api/tool-call-limit`, {
-      method: "PUT",
-      headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ value }),
-    });
-  const limit = async () => ((await (await admin("GET", "/tools")).json()) as { maxToolCallsPerTurn: number }).maxToolCallsPerTurn;
+  const put = (value: unknown) => h.admin("PUT", "/tool-call-limit", { value });
+  const limit = async () => ((await h.admin("GET", "/tools")).json as { maxToolCallsPerTurn: number }).maxToolCallsPerTurn;
   const reads = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `r${from + i}`, name: "read", arguments: { path: "x.txt" } }));
 
-  it("is 200 until an admin sets it; the next turn and a subagent then stop at the new value", async () => {
+  it("is 200 until an admin sets it; the next turn, counted across its LLM calls, and a subagent then stop at the new value", async () => {
     expect(await limit()).toBe(200);
     for (const bad of [0, 10001, 2.5, "50", null]) {
       const refused = await put(bad);
       expect(refused.status).toBe(400);
-      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("invalid_tool_call_limit");
+      expect(refused.json.error.code).toBe("invalid_tool_call_limit");
     }
     expect(await limit()).toBe(200);
 
     const set = await put(3);
     expect(set.status).toBe(200);
-    expect(await set.json()).toEqual({ maxToolCallsPerTurn: 3 });
+    expect(set.json).toEqual({ maxToolCallsPerTurn: 3 });
     expect(await limit()).toBe(3);
     try {
-      // 3번까지는 그대로 끝나고, 4번째에서 멈춘다.
+      // 3번까지는 그대로 끝나고, 4번째에서 멈춘다. 상한은 한 턴의 모든 LLM 호출에 걸쳐 센다.
       h.llm.enqueue({ toolCalls: reads(3, 0) }, { text: "three is fine" });
       expect((await h.post({ input: "three" })).json.status).toBe("completed");
-      h.llm.enqueue({ toolCalls: reads(4, 10) });
+      h.llm.enqueue({ toolCalls: reads(2, 10) }, { toolCalls: reads(2, 12) });
       const stopped = await h.post({ input: "four" });
       expect(stopped.json.status).toBe("incomplete");
       expect(stopped.json.incomplete_details).toEqual({ reason: "max_tool_calls" });
+      // 멈춘 턴에서 이어갈 수 있다
+      const next = await h.post({ input: "go on", previous_response_id: stopped.json.id });
+      expect(next.status).toBe(200);
+      expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("four");
 
       // 하위 agent도 같은 값에서 멈추고, 부모는 그것을 Agent 도구의 오류로 본다.
       h.llm.enqueue(

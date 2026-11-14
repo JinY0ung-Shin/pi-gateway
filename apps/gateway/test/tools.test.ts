@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bombPng, tinyPng } from "./fixtures/images.js";
-import { type Harness, last, ofType, startHarness } from "./helpers.js";
+import { type Harness, last, ofType, startHarness, toolNames } from "./helpers.js";
 
 // 가짜 sandbox가 실행할 최소 ripgrep (실제 sandbox 이미지에는 진짜 rg가 있다)
 function installFakeRg(): () => void {
@@ -37,7 +37,6 @@ afterAll(async () => {
   }
 });
 
-const toolNames = (i: number) => (h.llm.requests[i]!.tools ?? []).map((t) => t.function.name).sort();
 
 describe("sandbox tools", () => {
   it("bash runs in the sandbox with no gateway env and streams tool events", async () => {
@@ -198,6 +197,6 @@ describe("offered tools", () => {
   it("declares the default tools to the model", async () => {
     const before = h.llm.requests.length;
     await h.post({ input: "tools?" });
-    expect(toolNames(before)).toEqual(["Agent", "AskUserQuestion", "SendMessage", "bash", "edit", "find", "grep", "ls", "present_file", "read", "request_admin", "write"]);
+    expect(toolNames(h.llm.requests[before]!)).toEqual(["Agent", "AskUserQuestion", "SendMessage", "bash", "edit", "find", "grep", "ls", "present_file", "read", "request_admin", "write"]);
   });
 });

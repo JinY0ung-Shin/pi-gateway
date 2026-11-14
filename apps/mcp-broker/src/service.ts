@@ -7,6 +7,7 @@ import {
   type McpServerView,
   Redactor,
   requiredHeaderNames,
+  requiredSecretNames,
   type TestServerResponse,
   type ToolSummary,
   type VisibleServer,
@@ -14,24 +15,11 @@ import {
 import type { Logger } from "pino";
 import type { BrokerConfig } from "./config.js";
 import { type Lease, PoolCapacityError, type UpstreamPool, UpstreamBackoffError } from "./pool.js";
-import {
-  ConfigError,
-  effectiveScope,
-  type Identity,
-  MissingSessionError,
-  type RenderResult,
-  renderTransport,
-  scopeKey,
-} from "./render.js";
+import { effectiveScope, type Identity, MissingSessionError, type RenderResult, renderTransport, scopeKey } from "./render.js";
 import type { BrokerStore, StoredServer } from "./store.js";
 import { connectUpstream } from "./upstream/connect.js";
 
-/** 서버가 없거나, 꺼져 있거나, 필요한 비밀키가 없다. 데이터 평면에서는 404로 답한다. */
-export class ServerUnavailableError extends Error {
-  override name = "ServerUnavailableError";
-}
-
-export interface CallOptions {
+interface CallOptions {
   signal?: AbortSignal;
   onProgress?: (progress: Progress) => void;
 }
@@ -74,21 +62,16 @@ export class BrokerService {
   #usable(serverId: string): StoredServer {
     const server = this.#store.getServer(serverId);
     if (!server || !server.config.enabled) {
-      throw new ServerUnavailableError(`MCP server '${serverId}' is not available`);
+      throw new Error(`MCP server '${serverId}' is not available`);
     }
     return server;
   }
 
   isUsable(serverId: string): boolean {
-    try {
-      this.#usable(serverId);
-      return true;
-    } catch {
-      return false;
-    }
+    return this.#store.getServer(serverId)?.config.enabled === true;
   }
 
-  visibleServers(_identity: Identity): VisibleServer[] {
+  visibleServers(): VisibleServer[] {
     const out: VisibleServer[] = [];
     for (const server of this.#store.listServers()) {
       if (!server.config.enabled) continue;
@@ -101,10 +84,13 @@ export class BrokerService {
   }
 
   serverView(server: StoredServer): McpServerView {
+    const secrets = this.#store.listSecretMeta(server.config.id).map(({ name, setAt, fingerprint }) => ({ name, setAt, fingerprint }));
+    const present = new Set(secrets.map((s) => s.name));
     const view: McpServerView = {
       config: server.config,
-      secrets: this.#store.listSecretMeta(server.config.id).map(({ name, setAt, fingerprint }) => ({ name, setAt, fingerprint })),
-      missingSecrets: this.#store.missingSecrets(server),
+      secrets,
+      // 설정이 참조하지만 저장되지 않은 비밀키 이름
+      missingSecrets: requiredSecretNames(server.config).filter((name) => !present.has(name)),
     };
     const last = this.#lastErrors.get(server.config.id);
     if (last) view.status = { lastError: last.message, lastErrorAt: last.at };
@@ -122,7 +108,7 @@ export class BrokerService {
     const { values, failed } = this.#store.resolveSecrets(server.config.id);
     if (failed.length > 0) {
       // KEK가 바뀌었거나 DB가 변조됐다. 값 없이 연결하면 안 된다.
-      throw new ConfigError(`secrets could not be decrypted: ${failed.join(", ")}`);
+      throw new Error(`secrets could not be decrypted: ${failed.join(", ")}`);
     }
     const rendered = renderTransport(server.config, identity, values);
     const redactor = new Redactor([...values.values(), ...rendered.headerCredentials]);
@@ -297,7 +283,7 @@ const RUN_TOKEN_NOTE =
   "서버에 닿았지만 요청 헤더({{ctx.header:*}})로 받는 인증이 없어 401로 답했습니다. 도구 목록은 실제 세션에서만 확인할 수 있습니다.";
 
 function summarize(tool: Tool): ToolSummary {
-  const out: ToolSummary = { name: tool.name, inputSchema: tool.inputSchema };
+  const out: ToolSummary = { name: tool.name };
   if (tool.description) out.description = tool.description;
   return out;
 }
@@ -310,7 +296,7 @@ function classify(error: unknown, signals: { deadline?: AbortSignal; caller?: Ab
   if (signals.deadline?.aborted) return "timeout";
   if (signals.caller?.aborted) return "cancelled";
   if (error instanceof PoolCapacityError) return "busy";
-  if (error instanceof UpstreamBackoffError || error instanceof ServerUnavailableError || error instanceof MissingSessionError) {
+  if (error instanceof UpstreamBackoffError || error instanceof MissingSessionError) {
     return "unavailable";
   }
   if (error instanceof SdkError) {

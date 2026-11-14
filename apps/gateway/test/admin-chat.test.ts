@@ -1,13 +1,11 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Harness, last, parseSse, startHarness } from "./helpers.js";
-
-const ADMIN_KEY = "admin-key-for-tests-0123456789";
+import { ADMIN_KEY, type Harness, last, parseSse, startHarness } from "./helpers.js";
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY } });
+  h = await startHarness();
 });
 afterAll(async () => {
   await h.close();

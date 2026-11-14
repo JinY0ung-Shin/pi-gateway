@@ -26,11 +26,6 @@ export interface InternalClaims {
   ctx?: RequestContext;
 }
 
-export interface VerifiedInternalClaims extends InternalClaims {
-  iat: number;
-  exp: number;
-}
-
 export async function signInternalToken(
   secret: Uint8Array,
   audience: string,
@@ -62,7 +57,7 @@ export async function verifyInternalToken(
   secret: Uint8Array,
   audience: string,
   token: string,
-): Promise<VerifiedInternalClaims> {
+): Promise<InternalClaims> {
   const { payload } = await jwtVerify(token, secret, {
     algorithms: ["HS256"],
     issuer: ISSUER,
@@ -82,7 +77,7 @@ export async function verifyInternalToken(
     if (headers) ctx.headers = headers;
     if (metadata) ctx.metadata = metadata;
   }
-  const result: VerifiedInternalClaims = { sub: payload.sub, iat: payload.iat ?? 0, exp: payload.exp ?? 0 };
+  const result: InternalClaims = { sub: payload.sub };
   if (typeof payload.sid === "string") result.sid = payload.sid;
   if (ctx) result.ctx = ctx;
   return result;

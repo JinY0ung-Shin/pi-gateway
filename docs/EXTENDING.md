@@ -1,6 +1,6 @@
 # 도구 확장 가이드
 
-agent가 쓸 수 있는 도구를 늘리는 방법이에요. 대부분은 코드를 고치지 않고 관리 화면이나 이미지 빌드 인자로 끝나요.
+agent가 쓸 수 있는 도구를 늘리는 방법이에요. 대부분은 코드를 고치지 않고 관리 화면이나 sandbox 파생 이미지로 끝나요.
 
 ## 먼저: 도구를 어디서 실행할지 정하는 규칙
 
@@ -218,8 +218,7 @@ apps/gateway/src/tools/
   registry.ts          provider 목록 → pi tools/customTools
   providers/
     sandbox.ts         read, write, edit, ls, find, bash, grep, present_file
-    ask-user.ts        AskUserQuestion
-    request-admin.ts   request_admin (관리자에게 요청 남기기)
+    gateway.ts         AskUserQuestion, request_admin (관리자에게 요청 남기기)
     mcp.ts             MCP 서버 (broker·sandbox)
 ```
 

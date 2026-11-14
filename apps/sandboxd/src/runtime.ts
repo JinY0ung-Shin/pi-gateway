@@ -38,6 +38,8 @@ export type GlobParams = z.output<typeof FsGlobRequest>;
 export type AttachParams = z.output<typeof AttachStart>;
 
 const KILL_GRACE_MS = 5000;
+/** fs 도우미 한 번의 최대 실행 시간 */
+const FS_TIMEOUT_SECONDS = 60;
 
 /** 계약: 상대 경로는 /workspace 기준 */
 function sandboxCwd(cwd: string): string {
@@ -46,7 +48,6 @@ function sandboxCwd(cwd: string): string {
 const MiB = 1024 * 1024;
 
 export interface RunningExec {
-  execId: string;
   /** 출력을 이벤트로 흘려보내고, exit(또는 error) 이벤트를 마지막으로 보낸 뒤 끝난다. */
   run(onEvent: (event: ExecEvent) => void, signal: AbortSignal): Promise<void>;
 }
@@ -57,7 +58,6 @@ export interface AttachIO {
 }
 
 export interface AttachProcess {
-  procId: string;
   write(chunk: Buffer): void;
   /** 클라이언트 쪽 출력이 밀릴 때 읽기를 멈추고 다시 시작한다 */
   pause(): void;
@@ -74,10 +74,10 @@ export interface SandboxRuntime {
   /** 컨테이너를 준비하고 exec를 시작한다. 여기서 던진 오류는 스트림을 열기 전에 JSON 오류로 나간다. */
   prepareExec(principal: string, params: ExecParams): Promise<RunningExec>;
   fsRead(principal: string, path: string, maxBytes: number): Promise<FsReadResponse>;
-  fsWrite(principal: string, path: string, content: Buffer, mkdirs: boolean): Promise<{ size: number }>;
+  fsWrite(principal: string, path: string, content: Buffer): Promise<void>;
   fsStat(principal: string, path: string): Promise<FsStatResponse>;
   fsList(principal: string, path: string): Promise<FsListResponse>;
-  fsMkdir(principal: string, path: string, recursive: boolean): Promise<void>;
+  fsMkdir(principal: string, path: string): Promise<void>;
   fsGlob(principal: string, params: GlobParams): Promise<FsGlobResponse>;
   attach(principal: string, params: AttachParams, io: AttachIO): Promise<AttachProcess>;
 }
@@ -123,7 +123,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
       key: lease.key,
       containerName: containerName(this.config, lease.key),
       state: "running",
-      created: lease.created,
       lastActiveAt: new Date().toISOString(),
     };
   }
@@ -167,9 +166,7 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     const log = this.log;
 
     return {
-      execId,
       async run(onEvent, signal) {
-        const startedAt = Date.now();
         let total = 0;
         let truncated = false;
         let timedOut = false;
@@ -178,7 +175,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
         const onAbort = () => killer.kill();
 
         try {
-          onEvent({ type: "started", execId });
           const demux = new Demuxer((stream, chunk) => {
             if (truncated) return;
             const room = params.maxOutputBytes - total;
@@ -221,7 +217,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
             signal: sig,
             timedOut,
             truncated,
-            durationMs: Date.now() - startedAt,
           });
         } catch (err) {
           log.error({ err: errorMessage(err), execId }, "exec failed");
@@ -242,13 +237,12 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     args: string[],
     opts: { stdin?: Buffer; maxBytes: number },
   ): Promise<{ header: Record<string, unknown>; rest: Buffer }> {
-    const argv = [TIMEOUT_BIN, "-k", "5", String(this.config.fsTimeoutSeconds), SBX_FS, ...args];
-    const collectOpts: Parameters<typeof execCollect>[2] = { maxBytes: opts.maxBytes, cwd: SANDBOX_WORKSPACE, env: HELPER_ENV };
-    if (opts.stdin !== undefined) collectOpts.stdin = opts.stdin;
+    const argv = [TIMEOUT_BIN, "-k", "5", String(FS_TIMEOUT_SECONDS), SBX_FS, ...args];
+    const collectOpts = { stdin: opts.stdin, maxBytes: opts.maxBytes, cwd: SANDBOX_WORKSPACE, env: HELPER_ENV };
     const { lease, result } = await this.withLease(principal, (container) => execCollect(container, argv, collectOpts));
     lease.release();
     if (result.exitCode === 124 || result.exitCode === 137) {
-      throw new SandboxError("timeout", `file operation timed out after ${this.config.fsTimeoutSeconds}s`);
+      throw new SandboxError("timeout", `file operation timed out after ${FS_TIMEOUT_SECONDS}s`);
     }
     if (result.overflow) throw new SandboxError("too_large", "file operation output is too large");
     const nl = result.stdout.indexOf(0x0a);
@@ -272,19 +266,11 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     const { header, rest } = await this.fsHelper(principal, ["read", path, String(maxBytes)], {
       maxBytes: maxBytes + 64 * 1024,
     });
-    return {
-      size: Number(header.size ?? rest.length),
-      content: rest.toString("base64"),
-      truncated: header.truncated === true,
-    };
+    return { content: rest.toString("base64"), truncated: header.truncated === true };
   }
 
-  async fsWrite(principal: string, path: string, content: Buffer, mkdirs: boolean): Promise<{ size: number }> {
-    const { header } = await this.fsHelper(principal, ["write", path, mkdirs ? "1" : "0"], {
-      stdin: content,
-      maxBytes: 64 * 1024,
-    });
-    return { size: Number(header.size ?? content.length) };
+  async fsWrite(principal: string, path: string, content: Buffer): Promise<void> {
+    await this.fsHelper(principal, ["write", path], { stdin: content, maxBytes: 64 * 1024 });
   }
 
   async fsStat(principal: string, path: string): Promise<FsStatResponse> {
@@ -293,7 +279,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     const res: FsStatResponse = { exists: true };
     if (typeof header.kind === "string") res.kind = header.kind as NonNullable<FsStatResponse["kind"]>;
     if (typeof header.size === "number") res.size = header.size;
-    if (typeof header.mtimeMs === "number") res.mtimeMs = header.mtimeMs;
     if (typeof header.targetIsDir === "boolean") res.targetIsDir = header.targetIsDir;
     return res;
   }
@@ -303,8 +288,8 @@ export class DockerSandboxRuntime implements SandboxRuntime {
     return { entries: (header.entries ?? []) as FsListResponse["entries"] };
   }
 
-  async fsMkdir(principal: string, path: string, recursive: boolean): Promise<void> {
-    await this.fsHelper(principal, ["mkdir", path, recursive ? "1" : "0"], { maxBytes: 64 * 1024 });
+  async fsMkdir(principal: string, path: string): Promise<void> {
+    await this.fsHelper(principal, ["mkdir", path], { maxBytes: 64 * 1024 });
   }
 
   async fsGlob(principal: string, params: GlobParams): Promise<FsGlobResponse> {
@@ -313,7 +298,7 @@ export class DockerSandboxRuntime implements SandboxRuntime {
       ["glob", params.cwd, String(params.limit), params.pattern, ...params.ignore],
       { maxBytes: 64 * MiB },
     );
-    return { paths: (header.paths ?? []) as string[], truncated: header.truncated === true };
+    return { paths: (header.paths ?? []) as string[] };
   }
 
   async attach(principal: string, params: AttachParams, io: AttachIO): Promise<AttachProcess> {
@@ -346,7 +331,6 @@ export class DockerSandboxRuntime implements SandboxRuntime {
       }
     })();
     return {
-      procId,
       write: (chunk) => {
         if (!socket.destroyed) socket.write(chunk);
       },

@@ -14,10 +14,10 @@ import { mimeTypeOf } from "../tools/present-file.js";
  * /workspace 밖의 경로, 심볼릭 링크를 거치는 경로, 디렉토리, 빈 파일, 받지 않는 형식은 거절한다 (호출하지 않는다).
  */
 
-export const FILE_ARG_KEYWORD = "x-workspace-file";
+const FILE_ARG_KEYWORD = "x-workspace-file";
 /** 한 번의 호출에 실을 수 있는 파일 수와 합계 크기 (broker의 요청 한도가 이 크기의 base64를 받는다) */
-export const MAX_FILE_ARGS = 10;
-export const MAX_FILE_ARG_BYTES = 28 * 1024 * 1024;
+const MAX_FILE_ARGS = 10;
+const MAX_FILE_ARG_BYTES = 28 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);

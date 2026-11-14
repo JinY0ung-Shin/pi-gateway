@@ -6,8 +6,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AttachedStdioTransport } from "../src/mcp-client/attached-transport.js";
-import { McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH, wholeSseEvents } from "../src/mcp-client/connections.js";
+import { attachedStdioTransport, McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH, wholeSseEvents } from "../src/mcp-client/connections.js";
 import { createMcpProxyTools, searchTerms } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
@@ -606,23 +605,62 @@ describe("MCP tool cache", () => {
   });
 });
 
-describe("AttachedStdioTransport", () => {
-  it("chunk 경계에서 잘린 UTF-8 글자를 깨뜨리지 않는다", async () => {
-    let push: (chunk: Buffer) => void = () => {};
-    const transport = new AttachedStdioTransport(async () => ({
-      write: () => {},
-      onStdout: (l) => (push = l),
-      onStderr: () => {},
-      onExit: () => {},
-      close: () => {},
-    }));
+describe("attachedStdioTransport", () => {
+  /** sandboxd attach 흉내. exit는 테스트가 직접 알린다. */
+  const fakeProcess = () => {
+    const p = {
+      push: (_chunk: Buffer) => {},
+      stderr: (_chunk: Buffer) => {},
+      exit: (_info: { exitCode: number | null; signal: string | null; error?: string }) => {},
+      closed: 0,
+      written: [] as string[],
+    };
+    const spawn = async () => ({
+      write: (data: Buffer | string) => void p.written.push(String(data)),
+      onStdout: (l: (chunk: Buffer) => void) => (p.push = l),
+      onStderr: (l: (chunk: Buffer) => void) => (p.stderr = l),
+      onExit: (l: typeof p.exit) => (p.exit = l),
+      close: () => void p.closed++,
+    });
+    return { p, spawn };
+  };
+
+  it("chunk 경계에서 잘린 UTF-8 글자를 깨뜨리지 않고, 메시지를 한 줄로 쓰고, stderr를 넘긴다", async () => {
+    const { p, spawn } = fakeProcess();
+    const stderr: string[] = [];
+    const transport = attachedStdioTransport(spawn, (text) => stderr.push(text));
     const got: unknown[] = [];
     transport.onMessage((m) => got.push(m));
     await transport.start();
     const bytes = Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", method: "n", params: { text: "한글" } })}\n`);
     const cut = bytes.indexOf(Buffer.from("한")) + 1; // 글자 중간
-    push(bytes.subarray(0, cut));
-    push(bytes.subarray(cut));
+    p.push(bytes.subarray(0, cut));
+    p.push(bytes.subarray(cut));
     expect(got).toEqual([{ jsonrpc: "2.0", method: "n", params: { text: "한글" } }]);
+    await transport.send({ jsonrpc: "2.0", method: "m" });
+    expect(p.written).toEqual(['{"jsonrpc":"2.0","method":"m"}\n']);
+    p.stderr(Buffer.from("warn"));
+    expect(stderr).toEqual(["warn"]);
+  });
+
+  it("오류로 끝나면 오류를 알린 뒤 닫히고, 닫을 때는 exit 알림을 기다리지 않는다", async () => {
+    const failed = fakeProcess();
+    const t1 = attachedStdioTransport(failed.spawn, () => {});
+    const events: string[] = [];
+    t1.onError((e) => events.push(`error ${e.message}`));
+    t1.onClose(() => events.push("close"));
+    await t1.start();
+    failed.p.exit({ exitCode: null, signal: null, error: "attach failed" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(events).toEqual(["error attach failed", "close"]);
+
+    const quiet = fakeProcess();
+    const t2 = attachedStdioTransport(quiet.spawn, () => {});
+    let closed = false;
+    t2.onClose(() => (closed = true));
+    await t2.start();
+    await t2.close();
+    expect(quiet.p.closed).toBeGreaterThan(0);
+    expect(closed).toBe(true);
   });
 });

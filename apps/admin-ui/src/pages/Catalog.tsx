@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText } from "../api";
-import { Badge, Modal, Notice, RunsInBadge, Section, Toggle, useAction } from "../components";
+import { Badge, EmptyRow, Modal, Notice, RunsInBadge, Section, Toggle, useAction, useLoad } from "../components";
 import type { AgentToolset, PluginView, ToolInfo } from "../types";
 
 // 도구·skill·agent 탭: 목록을 누르면 정의가 창으로 뜬다. 연 항목은 주소(#/<탭>/<이름>)에 남겨 plugin 탭에서 바로 연다.
@@ -22,7 +22,7 @@ function Explorer(props: {
   title: string;
   items: Item[] | null;
   error: string | null;
-  selected?: string | undefined;
+  selected?: string;
   empty: string;
   /** 표 위에 보일 안내·결과 */
   intro?: ComponentChildren;
@@ -44,13 +44,7 @@ function Explorer(props: {
           </tr>
         </thead>
         <tbody>
-          {props.items.length === 0 && (
-            <tr>
-              <td colSpan={3} class="muted">
-                {props.empty}
-              </td>
-            </tr>
-          )}
+          {props.items.length === 0 && <EmptyRow cols={3}>{props.empty}</EmptyRow>}
           {props.items.map((i) => (
             <tr key={i.name} class="clickable" onClick={() => (location.hash = `#/${props.page}/${enc(i.name)}`)}>
               <td>
@@ -71,18 +65,6 @@ function Explorer(props: {
   );
 }
 
-function usePlugins() {
-  const [plugins, setPlugins] = useState<PluginView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api<{ plugins: PluginView[] }>("GET", "/plugins").then(
-      (r) => setPlugins(r.plugins),
-      (e) => setError(errorText(e)),
-    );
-  }, []);
-  return { plugins, error };
-}
-
 function PluginLine(props: { plugin: PluginView }) {
   return (
     <p class="small-text muted">
@@ -91,7 +73,7 @@ function PluginLine(props: { plugin: PluginView }) {
   );
 }
 
-export function ToolsPage(props: { focus?: string | undefined }) {
+export function ToolsPage(props: { focus?: string }) {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   // 턴당 도구 호출 상한: 저장된 값과 입력 중인 글자
   const [limit, setLimit] = useState<number | null>(null);
@@ -211,9 +193,9 @@ export function ToolsPage(props: { focus?: string | undefined }) {
   );
 }
 
-export function SkillsPage(props: { focus?: string | undefined }) {
-  const { plugins, error } = usePlugins();
-  const skills = plugins?.flatMap((plugin) => plugin.components.skills.map((skill) => ({ plugin, skill }))) ?? null;
+export function SkillsPage(props: { focus?: string }) {
+  const { data, error } = useLoad<{ plugins: PluginView[] }>("/plugins");
+  const skills = data?.plugins.flatMap((plugin) => plugin.components.skills.map((skill) => ({ plugin, skill }))) ?? null;
   return (
     <Explorer
       page="skills"
@@ -233,36 +215,23 @@ export function SkillsPage(props: { focus?: string | undefined }) {
 
 function SkillDetail(props: { plugin: PluginView; skill: PluginView["components"]["skills"][number]; onClose: () => void }) {
   const { plugin, skill } = props;
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api<{ content: string }>("GET", `/plugins/${enc(plugin.id)}/skills/${enc(skill.name)}`).then(
-      (r) => setContent(r.content),
-      (e) => setError(errorText(e)),
-    );
-  }, []);
+  const { data, error } = useLoad<{ content: string }>(`/plugins/${enc(plugin.id)}/skills/${enc(skill.name)}`);
   return (
     <Modal title={<span class="mono">{skill.name}</span>} onClose={props.onClose}>
       <PluginLine plugin={plugin} />
       <p>{skill.description}</p>
-      {skill.disableModelInvocation && <Badge tone="gray">모델이 스스로 부르지 않음</Badge>}
+      {skill.disableModelInvocation && <Badge>모델이 스스로 부르지 않음</Badge>}
       <p class="small-text muted mono">{skill.filePath}</p>
       <h3>SKILL.md</h3>
-      {error ? <Notice tone="error">{error}</Notice> : content === null ? <p class="muted">불러오는 중…</p> : <pre class="code-block">{content}</pre>}
+      {error ? <Notice tone="error">{error}</Notice> : data === null ? <p class="muted">불러오는 중…</p> : <pre class="code-block">{data.content}</pre>}
     </Modal>
   );
 }
 
-export function AgentsPage(props: { focus?: string | undefined }) {
-  const { plugins, error } = usePlugins();
-  const [toolsets, setToolsets] = useState<AgentToolset[] | null>(null);
-  useEffect(() => {
-    api<{ agents: AgentToolset[] }>("GET", "/tools").then(
-      (r) => setToolsets(r.agents),
-      () => setToolsets([]),
-    );
-  }, []);
-  const agents = plugins?.flatMap((plugin) => plugin.components.agents.map((agent) => ({ plugin, agent }))) ?? null;
+export function AgentsPage(props: { focus?: string }) {
+  const { data, error } = useLoad<{ plugins: PluginView[] }>("/plugins");
+  const { data: tools, error: toolsError } = useLoad<{ agents: AgentToolset[] }>("/tools");
+  const agents = data?.plugins.flatMap((plugin) => plugin.components.agents.map((agent) => ({ plugin, agent }))) ?? null;
   return (
     <Explorer
       page="agents"
@@ -278,7 +247,7 @@ export function AgentsPage(props: { focus?: string | undefined }) {
           <Modal title={<span class="mono">{agent.name}</span>} onClose={close}>
             <PluginLine plugin={plugin} />
             <p>{agent.description}</p>
-            <AgentGets toolset={toolsets?.find((t) => t.name === name)} loading={toolsets === null} declared={agent.tools} />
+            <AgentGets toolset={tools?.agents.find((t) => t.name === name)} loading={tools === null} error={toolsError} declared={agent.tools} />
             {agent.notes.map((n) => (
               <div key={n} class="small-text warn-text">
                 {n}
@@ -295,7 +264,7 @@ export function AgentsPage(props: { focus?: string | undefined }) {
 }
 
 /** agent가 실행될 때 받는 것. 하위 세션에는 skill 목록을 넣지 않고 AskUserQuestion·present_file·request_admin·Agent·SendMessage도 주지 않는다. */
-function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean; declared: string[] | undefined }) {
+function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean; error: string | null; declared: string[] | undefined }) {
   const { toolset } = props;
   return (
     <table class="table compact">
@@ -303,7 +272,9 @@ function AgentGets(props: { toolset: AgentToolset | undefined; loading: boolean;
         <tr>
           <th>기본 도구</th>
           <td class="wrap">
-            {props.loading ? (
+            {props.error ? (
+              <span class="err-text">{props.error}</span>
+            ) : props.loading ? (
               <span class="muted">불러오는 중…</span>
             ) : !toolset ? (
               <span class="muted">plugin이 꺼져 있어 쓰이지 않습니다</span>

@@ -50,11 +50,8 @@ export const LlmModelConfig = z
   });
 export type LlmModelConfig = z.infer<typeof LlmModelConfig>;
 
-export const LlmServer = z.object({
-  /** pi provider id, `/v1/models`의 owned_by */
-  id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "server id must be 1-32 lowercase letters, digits, _ or -"),
-  /** openai-completions (/v1/chat/completions) | anthropic-messages (/v1/messages) */
-  api: z.enum(["openai-completions", "anthropic-messages"]),
+/** LLM 서버와 System One이 같이 쓰는 연결 설정 */
+const endpoint = {
   baseUrl: z
     .string()
     .url()
@@ -63,6 +60,14 @@ export const LlmServer = z.object({
   apiKey: z.string(),
   /** 요청마다 붙일 헤더 */
   headers: z.record(z.string(), z.string()).default({}),
+};
+
+export const LlmServer = z.object({
+  /** pi provider id, `/v1/models`의 owned_by */
+  id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "server id must be 1-32 lowercase letters, digits, _ or -"),
+  /** openai-completions (/v1/chat/completions) | anthropic-messages (/v1/messages) */
+  api: z.enum(["openai-completions", "anthropic-messages"]),
+  ...endpoint,
   /** pi 모델 compat 덮어쓰기. openai-completions면 vLLM용 기본값 위에 합친다. */
   compat: z.record(z.string(), z.unknown()).default({}),
   models: z.array(LlmModelConfig).min(1),
@@ -71,14 +76,7 @@ export type LlmServer = z.infer<typeof LlmServer>;
 
 /** System One: mcp_search가 쓰는 decision model. `{baseUrl}/systemone`으로 묻는다 (vLLM이면 base URL은 `/v1`까지). */
 export const SystemOneModel = z.object({
-  baseUrl: z
-    .string()
-    .url()
-    .transform((u) => u.replace(/\/+$/, "")),
-  /** 빈 값 = 키가 없는 엔드포인트 */
-  apiKey: z.string(),
-  /** 요청마다 붙일 헤더 */
-  headers: z.record(z.string(), z.string()).default({}),
+  ...endpoint,
   id: z.string().min(1),
   /** 정확도 비교용: 검색의 절반은 무작위로 System One에 묻지 않고 BM25로 찾는다 (상태 페이지의 MCP 검색 정확도). */
   compare: z.boolean().default(false),
@@ -92,7 +90,7 @@ export interface SystemOneRecord {
 
 /** 클라이언트가 모델 id 대신 부를 수 있는 이름. 큰 모델부터. */
 export const TIERS = ["eagle", "falcon", "swift"] as const;
-export type Tier = (typeof TIERS)[number];
+type Tier = (typeof TIERS)[number];
 
 export const LlmSettings = z
   .object({
@@ -119,7 +117,7 @@ export const LlmSettings = z
 export type LlmSettings = z.infer<typeof LlmSettings>;
 
 /** vLLM 같은 OpenAI 호환 서버에서 안전한 기본값. compat으로 덮어쓸 수 있다. */
-export const DEFAULT_OPENAI_COMPAT: Record<string, unknown> = {
+const DEFAULT_OPENAI_COMPAT: Record<string, unknown> = {
   supportsStore: false,
   supportsDeveloperRole: false,
   maxTokensField: "max_tokens",
@@ -132,7 +130,7 @@ export interface LlmSettingsRecord {
   updatedAt: string;
 }
 
-export type LlmModelEntry = LlmModelConfig & { server: string };
+type LlmModelEntry = LlmModelConfig & { server: string };
 
 export interface GatewayModels {
   runtime: ModelRuntime;
@@ -260,7 +258,7 @@ async function applySystemOne(runtime: ModelRuntime, next: SystemOneModel | null
 }
 
 /** System One 요청 하나의 기록 (관리 화면의 테스트 결과와 최근 요청) */
-export interface SystemOneCall {
+interface SystemOneCall {
   at: string;
   durationMs: number;
   /** `/systemone`으로 보낸 요청 본문 (보내기 전에 실패했으면 없다) */
@@ -419,7 +417,7 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
 
 // ── 관리 화면의 연결 확인 ─────────────────────────────────────────────
 
-export interface LlmProbeResult {
+interface LlmProbeResult {
   ok: boolean;
   durationMs: number;
   error?: string;
@@ -427,7 +425,7 @@ export interface LlmProbeResult {
   models?: { id: string; name?: string; contextWindow?: number }[];
 }
 
-export interface LlmTestResult {
+interface LlmTestResult {
   ok: boolean;
   durationMs: number;
   error?: string;

@@ -14,7 +14,7 @@ import { BatchSpanProcessor, type SpanExporter, TracerProvider } from "@opentele
 
 export type { Span } from "@opentelemetry/api";
 
-export const JAEGER_OTLP_PORT = 4318;
+const JAEGER_OTLP_PORT = 4318;
 export const JAEGER_QUERY_PORT = 16686;
 
 const tracer = () => trace.getTracer("pi-gateway");

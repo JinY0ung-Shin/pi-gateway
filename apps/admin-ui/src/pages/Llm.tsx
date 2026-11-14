@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, errorText, formatTime } from "../api";
-import { ApiKeyField, Badge, linesToRecord, Modal, Notice, recordToLines, Section, useAction, useLoad } from "../components";
+import { api, duration, errorText, formatTime } from "../api";
+import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, SaveBar, Section, useAction, useLoad } from "../components";
 
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
@@ -179,12 +179,7 @@ export function LlmPage() {
 
   const probe = async (s: ServerForm): Promise<ProbeResult> => {
     setProbes((p) => ({ ...p, [s.key]: "checking" }));
-    let result: ProbeResult;
-    try {
-      result = await api<ProbeResult>("POST", "/llm/probe", { server: connectionOf(s) });
-    } catch (error) {
-      result = { ok: false, durationMs: 0, error: errorText(error) };
-    }
+    const result = await api<ProbeResult>("POST", "/llm/probe", { server: connectionOf(s) }).catch((error) => ({ ok: false, durationMs: 0, error: errorText(error) }));
     setProbes((p) => ({ ...p, [s.key]: result }));
     return result;
   };
@@ -295,18 +290,7 @@ export function LlmPage() {
       <div class="section">
         <button onClick={addServer}>+ 서버 추가</button>
       </div>
-      <div class={dirty ? "save-bar dirty" : "save-bar"}>
-        {action.view}
-        <div class="row wrap">
-          <button class="primary" disabled={action.busy || !dirty} onClick={() => void save()}>
-            저장
-          </button>
-          <button disabled={action.busy || !dirty} onClick={() => show(view)}>
-            되돌리기
-          </button>
-          {dirty ? <span class="warn-text small-text">저장하지 않은 변경이 있습니다.</span> : <span class="muted small-text">바뀐 것이 없습니다.</span>}
-        </div>
-      </div>
+      <SaveBar dirty={dirty} action={action} onSave={() => void save()} onRevert={() => show(view)} />
     </>
   );
 }
@@ -498,13 +482,7 @@ function ServerCard(props: {
           </tr>
         </thead>
         <tbody>
-          {s.models.length === 0 && (
-            <tr>
-              <td colSpan={7} class="muted">
-                모델이 없습니다. '모델 가져오기'로 서버의 모델을 고르거나 직접 추가하세요.
-              </td>
-            </tr>
-          )}
+          {s.models.length === 0 && <EmptyRow cols={7}>모델이 없습니다. '모델 가져오기'로 서버의 모델을 고르거나 직접 추가하세요.</EmptyRow>}
           {s.models.map((m, i) => {
             const t = tests[m.id];
             return (
@@ -732,8 +710,6 @@ function ModelEditor(props: { model: ModelRow; onChange: (patch: Partial<ModelRo
     </Modal>
   );
 }
-
-const duration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}초`);
 
 function TestSummary(props: { model: string; result: TestResult }) {
   const { model, result: r } = props;

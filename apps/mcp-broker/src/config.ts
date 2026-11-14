@@ -1,4 +1,4 @@
-import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
+import { envInt, jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 
 /** mcp-broker 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원). */
 export interface BrokerConfig {
@@ -8,7 +8,6 @@ export interface BrokerConfig {
   adminHost: string;
   /** 관리 평면 */
   adminPort: number;
-  logLevel: string;
   /** broker.db 위치 */
   dataDir: string;
   /** gateway 내부 JWT 검증 키 (데이터 평면 AUD_BROKER, 관리 평면 AUD_BROKER_ADMIN) */
@@ -33,14 +32,6 @@ export interface BrokerConfig {
 
 const MiB = 1024 * 1024;
 
-function int(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 0): number {
-  const raw = env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < min) throw new Error(`${name} must be an integer >= ${min}`);
-  return n;
-}
-
 function parseKek(value: string): Buffer {
   const bytes = Buffer.from(value.trim(), "base64");
   if (bytes.length !== 32) throw new Error("BROKER_KEK must be 32 bytes encoded as base64 (openssl rand -base64 32)");
@@ -55,10 +46,9 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
 
   return {
     host: env.BROKER_HOST ?? "0.0.0.0",
-    port: int(env, "BROKER_PORT", 7080),
+    port: envInt(env, "BROKER_PORT", 7080),
     adminHost: env.BROKER_ADMIN_HOST ?? env.BROKER_HOST ?? "0.0.0.0",
-    adminPort: int(env, "BROKER_ADMIN_PORT", 7081),
-    logLevel: env.LOG_LEVEL ?? "info",
+    adminPort: envInt(env, "BROKER_ADMIN_PORT", 7081),
     dataDir: env.DATA_DIR ?? "/data",
     jwtSecret: jwtSecretBytes(jwtSecret),
     kek: parseKek(kek),

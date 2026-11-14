@@ -42,7 +42,10 @@ export function registerPluginRoutes(app: FastifyInstance, ctx: AdminContext): v
 
   app.post<IdParams>("/plugins/:id/disable", async (req) => plugins.setEnabled(req.params.id, false));
 
-  app.delete<IdParams>("/plugins/:id", async (req) => plugins.uninstall(req.params.id));
+  app.delete<IdParams>("/plugins/:id", async (req, reply) => {
+    await plugins.uninstall(req.params.id);
+    return reply.code(204).send();
+  });
 
   // ── plugin MCP 기본값 ──
   app.get("/plugin-settings", async () => plugins.getSettings());

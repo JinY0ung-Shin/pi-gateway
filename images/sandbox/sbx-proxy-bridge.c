@@ -31,13 +31,13 @@ static int write_all(int fd, const char *buf, size_t len) {
   return 0;
 }
 
-static void relay(int client, const char *path) {
+static void relay(int client) {
   int up = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (up < 0) return;
   struct sockaddr_un addr;
   memset(&addr, 0, sizeof addr);
   addr.sun_family = AF_UNIX;
-  if (up < 0 || strlen(path) >= sizeof addr.sun_path) return;
-  strcpy(addr.sun_path, path);
+  strcpy(addr.sun_path, SOCKET_PATH);
   if (connect(up, (struct sockaddr *)&addr, sizeof addr) < 0) return;
 
   int fds[2] = {client, up};
@@ -106,7 +106,7 @@ int main(void) {
     pid_t pid = fork();
     if (pid == 0) {
       close(lfd);
-      relay(c, SOCKET_PATH);
+      relay(c);
       _exit(0);
     }
     close(c);

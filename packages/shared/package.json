@@ -10,9 +10,6 @@
       "default": "./dist/index.js"
     }
   },
-  "scripts": {
-    "build": "tsc -b"
-  },
   "dependencies": {
     "@opentelemetry/api": "1.10.0",
     "@opentelemetry/context-async-hooks": "3.1.1",

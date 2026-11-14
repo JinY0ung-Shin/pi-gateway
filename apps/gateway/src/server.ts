@@ -4,9 +4,9 @@ import { registerFileRoutes } from "./api/files.js";
 import { type ResponsesDeps, registerResponsesRoutes } from "./api/responses.js";
 import { registerAdminRoutes } from "./admin/index.js";
 import type { AdminDeps } from "./contracts.js";
-import { ApiError, apiError, validationError } from "./errors.js";
+import { ApiError, apiError } from "./errors.js";
 
-export interface ServerDeps {
+interface ServerDeps {
   logger: Logger;
   responses: ResponsesDeps;
   admin: AdminDeps;
@@ -22,30 +22,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   app.setErrorHandler((error: FastifyError | ApiError, req, reply) => {
-    if (error instanceof ApiError) {
-      return reply.code(error.status).headers(error.headers).send(error.body);
-    }
-    if (error.code === "FST_ERR_CTP_INVALID_JSON_BODY" || error.code === "FST_ERR_CTP_EMPTY_JSON_BODY") {
-      const e = apiError(400, "Request body is not valid JSON");
-      return reply.code(e.status).send(e.body);
-    }
-    if (error.code === "FST_ERR_CTP_BODY_TOO_LARGE") {
-      return reply.code(413).send({ error: { message: "Request body is too large", type: "request_too_large", code: 413 } });
-    }
-    if (error.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
-      const e = apiError(415, "Content-Type must be application/json");
-      return reply.code(e.status).send(e.body);
-    }
-    if (error.validation) {
-      const e = validationError(error.validation);
-      return reply.code(e.status).send(e.body);
-    }
-    const status = typeof error.statusCode === "number" && error.statusCode >= 400 ? error.statusCode : 500;
-    if (status >= 500) {
-      req.log.error({ err: error }, "unhandled error");
-      return reply.code(500).send({ error: { message: "Internal server error", type: "api_error", code: "500" } });
-    }
-    return reply.code(status).send({ error: { message: error.message, type: "api_error", code: String(status) } });
+    const e = error instanceof ApiError ? error : toApiError(error, req.log);
+    return reply.code(e.status).headers(e.headers).send(e.body);
   });
 
   app.get("/healthz", async () => ({ status: "ok" }));
@@ -54,4 +32,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerFileRoutes(app, deps.responses);
   await registerAdminRoutes(app, deps.admin);
   return app;
+}
+
+function toApiError(error: FastifyError, log: FastifyBaseLogger): ApiError {
+  switch (error.code) {
+    case "FST_ERR_CTP_INVALID_JSON_BODY":
+    case "FST_ERR_CTP_EMPTY_JSON_BODY":
+      return apiError(400, "Request body is not valid JSON");
+    case "FST_ERR_CTP_BODY_TOO_LARGE":
+      return apiError(413, "Request body is too large", { type: "request_too_large" });
+    case "FST_ERR_CTP_INVALID_MEDIA_TYPE":
+      return apiError(415, "Content-Type must be application/json");
+  }
+  const status = typeof error.statusCode === "number" && error.statusCode >= 400 ? error.statusCode : 500;
+  if (status < 500) return apiError(status, error.message);
+  log.error({ err: error }, "unhandled error");
+  return apiError(500, "Internal server error");
 }

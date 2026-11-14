@@ -2,10 +2,9 @@ import { readFileSync } from "node:fs";
 import { SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Db, openDatabase } from "../src/db.js";
-import { type Harness, last, ofType, SERVICE_KEY, startHarness } from "./helpers.js";
+import { type Harness, last, ofType, SERVICE_KEY, sessionOf, startHarness } from "./helpers.js";
 
 const SECRET = "tok_Sup3r-S3cret+value/42";
-const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
 let h: Harness;
 let db: Db;

@@ -40,7 +40,7 @@ export interface AgentRecord {
   notes: string[];
 }
 
-export type UnsupportedKind =
+type UnsupportedKind =
   | "hooks"
   | "lsp"
   | "output-styles"
@@ -60,7 +60,7 @@ export interface UnsupportedComponent {
   detail: string;
 }
 
-export interface DiscoveredComponents {
+interface DiscoveredComponents {
   skills: SkillRecord[];
   commands: CommandRecord[];
   agents: AgentRecord[];
@@ -72,7 +72,7 @@ export interface DiscoveredComponents {
   textFiles: { path: string; skillDir?: string }[];
 }
 
-export interface DiscoverInput {
+interface DiscoverInput {
   stagingDir: string;
   finalDir: string;
   pluginName: string;
@@ -282,7 +282,7 @@ function toolList(value: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-export function substitutePluginVars(text: string, root: string, dataDir: string, skillDir?: string): string {
+function substitutePluginVars(text: string, root: string, dataDir: string, skillDir?: string): string {
   let out = text.split("${CLAUDE_PLUGIN_ROOT}").join(root).split("${CLAUDE_PLUGIN_DATA}").join(dataDir);
   if (skillDir) out = out.split("${CLAUDE_SKILL_DIR}").join(skillDir);
   return out;

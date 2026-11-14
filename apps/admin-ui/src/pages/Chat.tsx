@@ -28,7 +28,7 @@ export interface ToolCall {
 }
 
 /** present_file로 보여준 파일 (`type: "file"` 출력 항목) */
-export interface ChatFile {
+interface ChatFile {
   path: string;
   filename: string;
   mime_type: string;
@@ -236,7 +236,6 @@ export function ChatPage() {
       const res = await fetch("/admin/api/chat", {
         method: "POST",
         headers: { ...forwarded, "content-type": "application/json", accept: "text/event-stream", "x-admin-request": "1" },
-        credentials: "same-origin",
         signal: controller.signal,
         body: JSON.stringify(body),
       });
@@ -567,7 +566,7 @@ function FileView(props: { file: ChatFile }) {
   const isHtml = file.mime_type === "text/html";
   useEffect(() => {
     if (!isHtml) return;
-    fetch(file.url, { credentials: "same-origin" })
+    fetch(file.url)
       .then(async (res) => (res.ok ? setHtml(await res.text()) : setError(`HTTP ${res.status}`)))
       .catch((err: unknown) => setError(String(err)));
   }, [file.url]);

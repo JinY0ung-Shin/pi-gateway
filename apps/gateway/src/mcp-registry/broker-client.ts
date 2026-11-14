@@ -16,14 +16,11 @@ import type { z } from "zod";
 import { PlatformError } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 
-export type BrokerConfig = GatewayConfig["broker"];
+type BrokerConfig = GatewayConfig["broker"];
 
 const ADMIN_TIMEOUT_MS = 15_000;
 const TEST_TIMEOUT_MS = 60_000;
 const DATA_TIMEOUT_MS = 5_000;
-
-/** broker 호출 실패. 4xx는 broker가 거절한 것, 503은 연결 실패, 502는 broker 오류나 잘못된 응답이다. */
-export class BrokerError extends PlatformError {}
 
 /**
  * mcp-broker 클라이언트. 관리 평면과 데이터 평면을 함께 다룬다 (둘 다 같은 키의 내부 JWT, audience만 다르다).
@@ -48,7 +45,7 @@ export class BrokerClient {
     try {
       return this.#parse(McpServerView, await this.#admin("GET", BROKER_ADMIN_ROUTES.server(id)));
     } catch (error) {
-      if (error instanceof BrokerError && error.status === 404) return undefined;
+      if (error instanceof PlatformError && error.status === 404) return undefined;
       throw error;
     }
   }
@@ -62,10 +59,10 @@ export class BrokerClient {
   /** 없으면 false */
   async deleteServer(id: string): Promise<boolean> {
     try {
-      await this.#admin("DELETE", BROKER_ADMIN_ROUTES.server(id), );
+      await this.#admin("DELETE", BROKER_ADMIN_ROUTES.server(id));
       return true;
     } catch (error) {
-      if (error instanceof BrokerError && error.status === 404) return false;
+      if (error instanceof PlatformError && error.status === 404) return false;
       throw error;
     }
   }
@@ -76,7 +73,7 @@ export class BrokerClient {
   }
 
   async deleteSecret(id: string, name: string): Promise<void> {
-    await this.#admin("DELETE", BROKER_ADMIN_ROUTES.secret(id, name), );
+    await this.#admin("DELETE", BROKER_ADMIN_ROUTES.secret(id, name));
   }
 
   async test(id: string): Promise<z.infer<typeof TestServerResponse>> {
@@ -118,6 +115,7 @@ export class BrokerClient {
     });
   }
 
+  /** 실패하면 PlatformError: 4xx는 broker가 거절한 것, 503은 연결 실패, 502는 broker 오류나 잘못된 응답이다. */
   async #request(
     url: string,
     init: { method: string; headers: Record<string, string>; body?: string; timeoutMs: number },
@@ -132,7 +130,7 @@ export class BrokerClient {
       });
     } catch (error) {
       const reason = error instanceof Error && error.name === "TimeoutError" ? "timed out" : "unreachable";
-      throw new BrokerError(503, "broker_unavailable", `MCP broker is ${reason}; the change was not applied — try again when the broker is back`);
+      throw new PlatformError(503, "broker_unavailable", `MCP broker is ${reason}; the change was not applied — try again when the broker is back`);
     }
     const text = await response.text();
     let body: unknown = undefined;
@@ -149,14 +147,14 @@ export class BrokerClient {
       const message = typeof err?.message === "string" ? err.message : `MCP broker returned HTTP ${response.status}`;
       // 4xx는 broker의 판단을 그대로 전달하고, 5xx는 502로 바꾼다.
       const status = response.status >= 400 && response.status < 500 ? response.status : 502;
-      throw new BrokerError(status, code, message);
+      throw new PlatformError(status, code, message);
     }
     return body;
   }
 
   #parse<T>(schema: z.ZodType<T>, body: unknown): T {
     const result = schema.safeParse(body);
-    if (!result.success) throw new BrokerError(502, "broker_bad_response", "unexpected response from the MCP broker");
+    if (!result.success) throw new PlatformError(502, "broker_bad_response", "unexpected response from the MCP broker");
     return result.data;
   }
 }

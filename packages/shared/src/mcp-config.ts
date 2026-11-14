@@ -28,7 +28,7 @@ export type McpScope = z.infer<typeof McpScope>;
 
 const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 
-export const McpStdioTransport = z.object({
+const McpStdioTransport = z.object({
   type: z.literal("stdio"),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
@@ -37,22 +37,21 @@ export const McpStdioTransport = z.object({
 });
 
 /** Streamable HTTP. SSE 전용(구형) 서버는 지원하지 않는다. */
-export const McpHttpTransport = z.object({
+const McpHttpTransport = z.object({
   type: z.literal("http"),
   url: z.string().url(),
   headers: z.record(z.string(), z.string()).default({}),
 });
 
-export const McpTransportConfig = z.discriminatedUnion("type", [McpStdioTransport, McpHttpTransport]);
-export type McpTransportConfig = z.infer<typeof McpTransportConfig>;
+const McpTransportConfig = z.discriminatedUnion("type", [McpStdioTransport, McpHttpTransport]);
+type McpTransportConfig = z.infer<typeof McpTransportConfig>;
 
-export const McpServerSource = z.discriminatedUnion("kind", [
+const McpServerSource = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("manual") }),
   z.object({ kind: z.literal("plugin"), pluginId: z.string(), version: z.string() }),
 ]);
-export type McpServerSource = z.infer<typeof McpServerSource>;
 
-export const McpServerConfigBase = z.object({
+const McpServerConfigBase = z.object({
   id: z.string().regex(MCP_SERVER_ID_PATTERN),
   displayName: z.string().max(100).optional(),
   description: z.string().max(1000).optional(),
@@ -74,7 +73,7 @@ export type McpServerConfig = z.infer<typeof McpServerConfig>;
 
 // ── 템플릿 ──────────────────────────────────────────────────────────
 
-export type TemplateRef =
+type TemplateRef =
   | { kind: "secret"; name: string }
   | { kind: "header"; name: string }
   | { kind: "user" }
@@ -114,14 +113,14 @@ export function findTemplateRefs(value: string): { refs: TemplateRef[]; unknown:
 }
 
 /** transport 안의 모든 템플릿 대상 문자열 */
-export function transportStrings(transport: McpTransportConfig): string[] {
+function transportStrings(transport: McpTransportConfig): string[] {
   if (transport.type === "stdio") {
     return [transport.command, ...transport.args, ...Object.values(transport.env), ...(transport.cwd ? [transport.cwd] : [])];
   }
   return [transport.url, ...Object.values(transport.headers)];
 }
 
-export function collectTemplateRefs(config: Pick<McpServerConfig, "transport">): { refs: TemplateRef[]; unknown: string[] } {
+function collectTemplateRefs(config: Pick<McpServerConfig, "transport">): { refs: TemplateRef[]; unknown: string[] } {
   const refs: TemplateRef[] = [];
   const unknown: string[] = [];
   for (const s of transportStrings(config.transport)) {
@@ -193,7 +192,7 @@ export function transportTarget(config: Pick<McpServerConfig, "transport">): str
  * - stdio 서버는 env·args가 프로세스 시작 시 고정되므로,
  *   {{user}}/{{ctx.header}}를 쓰면 scope가 per-user 이상, {{session}}/{{metadata}}를 쓰면 per-session이어야 한다.
  */
-export function validateMcpServerConfig(config: z.infer<typeof McpServerConfigBase>): string[] {
+function validateMcpServerConfig(config: z.infer<typeof McpServerConfigBase>): string[] {
   const errors: string[] = [];
   const { refs, unknown } = collectTemplateRefs(config);
   for (const u of unknown) errors.push(`unknown template placeholder ${u}`);

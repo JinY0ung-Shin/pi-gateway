@@ -5,7 +5,7 @@ import type { GatewayConfig } from "../config.js";
 import { type Db, migrate } from "../db.js";
 import { PlatformError } from "./errors.js";
 
-export const ADMIN_COOKIE = "pi_gw_admin";
+const ADMIN_COOKIE = "pi_gw_admin";
 export const CSRF_HEADER = "x-admin-request";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 /** 주소별로 이만큼 실패하면 다음 실패에서 잠근다 */
@@ -24,12 +24,12 @@ const MIGRATIONS = [
    );`,
 ] as const;
 
-export type AdminVia = "cookie" | "bearer";
+type AdminVia = "cookie" | "bearer";
 
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest();
 
 /** 길이와 관계없이 일정한 시간에 비교한다 (양쪽을 해시한 뒤 비교). */
-export function safeEqual(a: string, b: string): boolean {
+function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(sha256(a), sha256(b));
 }
 

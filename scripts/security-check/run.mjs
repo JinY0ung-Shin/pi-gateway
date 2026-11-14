@@ -5,10 +5,8 @@
 // 결과를 Markdown 리포트로 낸다. 각 차단 항목에는 "격리가 없었다면 새는 것이 보였을 것"을 보여주는
 // 대조군을 함께 둔다 (대조군이 실패하면 그 점검은 무효로 본다).
 //
-// 의존성 없음 (Node 22 내장 모듈만). 운영 서버에서는 sandboxd 컨테이너 안에서 돌리는 것이 가장 쉽다:
+// 의존성 없음 (Node 22 내장 모듈만). sandboxd는 포트를 공개하지 않으므로 sandboxd 컨테이너 안에서 돌린다:
 //   docker compose exec -T sandboxd node --input-type=module - < scripts/security-check/run.mjs > security-report.md
-// 호스트에서 직접:
-//   node scripts/security-check/run.mjs --url http://127.0.0.1:7070 --secret-file /srv/pi-gateway/secrets/sandboxd/sandboxd_jwt_secret --out report.md
 //
 // 옵션
 //   --url URL              sandboxd 주소 (기본 http://127.0.0.1:7070)

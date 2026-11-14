@@ -15,21 +15,11 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
-export async function api<T = unknown>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
+export async function api<T = unknown>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (method !== "GET") headers["x-admin-request"] = "1";
-  let payload: string | undefined;
-  if (body !== undefined) {
-    headers["content-type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-  const res = await fetch(`/admin/api${path}`, {
-    method,
-    headers,
-    credentials: "same-origin",
-    ...(payload === undefined ? {} : { body: payload }),
-  });
-  if (res.status === 204) return undefined as T;
+  if (body !== undefined) headers["content-type"] = "application/json";
+  const res = await fetch(`/admin/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   let data: unknown;
   try {
@@ -73,3 +63,9 @@ export function formatBytes(n: number | undefined): string {
   }
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
+
+export const duration = (ms: number) =>
+  ms >= 3_600_000 ? `${(ms / 3_600_000).toFixed(1)}시간` : ms >= 60_000 ? `${(ms / 60_000).toFixed(1)}분` : ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`;
+
+/** 전체가 0이면 "-" */
+export const percent = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "-");

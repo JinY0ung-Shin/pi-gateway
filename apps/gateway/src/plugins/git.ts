@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PlatformError } from "../admin/errors.js";
 
-export interface GitFetchOptions {
+interface GitFetchOptions {
   url: string;
   ref?: string | undefined;
   sha?: string | undefined;
@@ -11,10 +11,11 @@ export interface GitFetchOptions {
   /** 작업용 임시 디렉토리의 부모 (askpass 스크립트, 빈 HOME) */
   tmpRoot: string;
   allowLocal: boolean;
-  timeoutMs?: number | undefined;
   token?: string | undefined;
 }
 
+/** git 명령 하나의 최대 시간 */
+const GIT_TIMEOUT_MS = 120_000;
 const SHA = /^[0-9a-f]{40}$/;
 const REF = /^(?!-)[A-Za-z0-9._/+-]{1,200}$/;
 const GITHUB_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -54,13 +55,13 @@ export function normalizeGitUrl(input: string, allowLocal: boolean): string {
   return url.toString();
 }
 
-export function validateRef(ref: string | undefined): string | undefined {
+function validateRef(ref: string | undefined): string | undefined {
   if (ref === undefined || ref === "") return undefined;
   if (!REF.test(ref) || ref.includes("..")) throw new PlatformError(400, "invalid_ref", "invalid git ref");
   return ref;
 }
 
-export function validateSha(sha: string | undefined): string | undefined {
+function validateSha(sha: string | undefined): string | undefined {
   if (sha === undefined || sha === "") return undefined;
   if (!SHA.test(sha)) throw new PlatformError(400, "invalid_sha", "sha must be a full 40-character lowercase commit id");
   return sha;
@@ -75,7 +76,7 @@ export async function gitFetch(options: GitFetchOptions): Promise<{ commit: stri
   const work = await mkdtemp(join(options.tmpRoot, "git-"));
   try {
     const ctx = await prepareEnv(work, options);
-    const run = (args: string[]) => runGit(args, ctx, options.timeoutMs ?? 120_000);
+    const run = (args: string[]) => runGit(args, ctx, GIT_TIMEOUT_MS);
     if (!sha) {
       await run(["clone", "--depth", "1", "--no-tags", "--single-branch", ...(ref ? ["--branch", ref] : []), "--", url, options.dest]);
     } else {

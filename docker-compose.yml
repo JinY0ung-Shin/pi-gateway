@@ -269,25 +269,25 @@ volumes:
 secrets:
   # gateway (uid 10001)
   gw_api_key:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/api_key
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/api_key
   gw_user_api_keys:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/user_api_keys
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/user_api_keys
   gw_admin_api_key:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/admin_api_key
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/admin_api_key
   gw_plugin_git_token:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/plugin_git_token
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/plugin_git_token
   gw_sandboxd_jwt_secret:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/sandboxd_jwt_secret
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/sandboxd_jwt_secret
   gw_broker_jwt_secret:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/gateway/broker_jwt_secret
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/broker_jwt_secret
   # sandboxd (uid 1000)
   sbx_sandboxd_jwt_secret:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/sandboxd/sandboxd_jwt_secret
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/sandboxd/sandboxd_jwt_secret
   # mcp-broker (root)
   broker_jwt_secret:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_jwt_secret
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/broker/broker_jwt_secret
   broker_kek:
-    file: ${PI_GATEWAY_SECRETS:-./secrets}/broker/broker_kek
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/broker/broker_kek
   # 사내 CA PEM (.env의 NODE_EXTRA_CA_CERTS). sandbox 이미지 빌드에서만 쓴다. 비우면 빈 파일
   extra_ca:
     file: ${NODE_EXTRA_CA_CERTS:-/dev/null}

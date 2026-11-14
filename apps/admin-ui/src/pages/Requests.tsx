@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { api, enc, formatTime } from "../api";
-import { Modal, Notice, Section, useAction, useLoad } from "../components";
+import { EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
 
 /** agent가 request_admin으로 남긴 요청. 처리하면 지운다. */
 
@@ -29,13 +29,7 @@ export function RequestsPage() {
           </tr>
         </thead>
         <tbody>
-          {data?.items.length === 0 && (
-            <tr>
-              <td colSpan={3} class="muted">
-                남은 요청이 없습니다.
-              </td>
-            </tr>
-          )}
+          {data?.items.length === 0 && <EmptyRow cols={3}>남은 요청이 없습니다.</EmptyRow>}
           {data?.items.map((r) => (
             <tr key={r.id} class="clickable" onClick={() => setOpen(r)}>
               <td>{formatTime(r.createdAt)}</td>

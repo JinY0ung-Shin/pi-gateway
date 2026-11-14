@@ -63,7 +63,9 @@ FROM manifests AS deps-broker
 RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/mcp-broker
 
 FROM base AS runtime
-ENV NODE_ENV=production
+ENV NODE_ENV=production HOME=/tmp
+# setuid/setgid 비트를 지운다 (gateway는 apt로 설치한 뒤 한 번 더)
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY package.json ./
 COPY packages/shared/package.json packages/shared/
 
@@ -83,7 +85,6 @@ COPY --from=build-gateway /app/packages/shared/dist packages/shared/dist
 COPY --from=build-gateway /app/apps/gateway/package.json apps/gateway/
 COPY --from=build-gateway /app/apps/gateway/dist apps/gateway/dist
 COPY --from=build-gateway /app/apps/gateway/public apps/gateway/public
-ENV HOME=/tmp
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
@@ -94,12 +95,10 @@ CMD ["node", "apps/gateway/dist/main.js"]
 # docker.sock을 가진 유일한 서비스. uid 1000(node)으로 돌고 compose에서 docker 그룹을 붙인다.
 # workspace 디렉토리를 sandbox와 같은 uid 1000 소유로 만든다.
 FROM runtime AS sandboxd
-RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=deps-sandboxd /app/node_modules node_modules
 COPY --from=build-sandboxd /app/packages/shared/dist packages/shared/dist
 COPY --from=build-sandboxd /app/apps/sandboxd/package.json apps/sandboxd/
 COPY --from=build-sandboxd /app/apps/sandboxd/dist apps/sandboxd/dist
-ENV HOME=/tmp
 USER 1000:1000
 EXPOSE 7070
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
@@ -109,14 +108,11 @@ CMD ["node", "apps/sandboxd/dist/main.js"]
 # ── mcp-broker ──────────────────────────────────────────────────────
 # MCP 비밀키를 가진 서비스. 원격 MCP 서버(streamable HTTP)에 비밀키를 붙여 프록시한다.
 FROM runtime AS mcp-broker
-RUN mkdir -p /data \
- && chmod 0700 /data \
- && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
+RUN mkdir -m 0700 /data
 COPY --from=deps-broker /app/node_modules node_modules
 COPY --from=build-broker /app/packages/shared/dist packages/shared/dist
 COPY --from=build-broker /app/apps/mcp-broker/package.json apps/mcp-broker/
 COPY --from=build-broker /app/apps/mcp-broker/dist apps/mcp-broker/dist
-ENV HOME=/tmp
 EXPOSE 7080 7081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.BROKER_PORT||7080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"

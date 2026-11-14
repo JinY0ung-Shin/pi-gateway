@@ -98,12 +98,6 @@ curl -fsS http://127.0.0.1:8080/healthz
 - **BM25와 비교**를 켜면 검색의 절반은 무작위로 System One에 묻지 않고 BM25로 찾는다. 두 방식의 정확도를 같은 기간에 비교할 때만 켠다.
 - 상태 페이지의 **MCP 검색 정확도**가 방식별(System One·BM25)로, 검색 뒤 모델이 처음 부른 MCP 도구가 검색 결과의 1·2·3번째 안에 있던 비율을 보여 준다.
 
-기동 순서는 다음과 같다.
-1. `sandbox-image` 빌드가 끝나고, `egress-proxy`가 healthy가 된다.
-2. `sandboxd`가 시작된다. 이때 남아 있던 sandbox를 채택한다.
-3. `mcp-broker`가 시작된다.
-4. `gateway`가 시작된다.
-
 ### 3.4 운영 배포 권장 설정
 
 | 설정 | 권장값 | 이유 |
@@ -170,9 +164,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 **`broker_kek` 주의**: 바꾸면 기존에 저장된 MCP 비밀키를 복호화할 수 없다. 바꾼 뒤 관리 화면에서 MCP 키를 다시 입력한다.
 
 **확인**
-- `./scripts/security-check/check-secret-files.sh`가 실행 중인 컨테이너에서 다음을 확인한다 ([§8](#8-보안-점검)).
-  - 각 서비스의 `/run/secrets/*` 소유자와 권한.
-  - sandbox 컨테이너에 `/run/secrets`가 없는지.
+- `./scripts/security-check/check-secret-files.sh`가 실행 중인 각 서비스의 `/run/secrets/*` 소유자와 권한을 확인한다 ([§8](#8-보안-점검)). sandbox에 비밀 파일이 없는지는 `run.mjs`가 본다.
 - 비밀값은 sandbox 컨테이너, gateway의 일반 환경변수, 로그에 들어가지 않는다. 예외는 클라이언트(BFF)가 요청마다 보내는 `sandbox_env`로, 그 턴의 `bash` 프로세스 env에만 들어가고 gateway 메모리 밖에 남지 않는다 (README `/v1/responses` 절).
 
 ## 5. sandbox에 도구 추가하기
@@ -198,7 +190,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 FROM pi-gateway/sandbox:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-core && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir --root-user-action=ignore python-docx \
+ && pip install --no-cache-dir --root-user-action=ignore scipy \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 USER 1000:1000
 ```
@@ -316,7 +308,6 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 ```
 
 - 각 서비스의 `/run/secrets/*`가 그 서비스 uid 소유의 0400인지 본다.
-- 실행 중인 sandbox 컨테이너에 `/run/secrets`가 없는지 본다.
 
 **점검 항목 (run.mjs)**
 
@@ -349,7 +340,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
   - 대조군이 실패하면 그 항목은 `INVALID`이고 실패로 센다. 검사 방법이 틀려서 통과하는 일을 막기 위해서다.
 - sandbox의 `/etc/resolv.conf`에는 Docker가 호스트의 nameserver·search domain을 그대로 넣는다. sandbox에는 네트워크가 없어 그 주소로 갈 수는 없지만 사내 DNS 주소는 보인다. 운영 서버에서 돌린 리포트의 "/etc 내용" 상세에서 무엇이 보이는지 확인한다.
 - `WARN`(허용 목록이 호스트 주소를 열어 둔 항목 등)도 실패로 센다.
-- 기타 옵션: `--internal 이름:포트`(내부 서비스 추가).
+- 기타 옵션: `--internal 이름:포트`(시험할 내부 서비스. 주면 기본 목록 대신 쓴다).
 
 ## 9. 운영 메모
 

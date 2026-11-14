@@ -10,7 +10,7 @@
  *   자리표시자가 없을 때 인자를 붙여 주는 동작 → 끝에 "ARGUMENTS: $ARGUMENTS"를 붙인다
  *   !`cmd`, ```! 블록, @file     pi에는 없다. 그대로 두고 notes에 남긴다.
  */
-export interface ConvertedCommand {
+interface ConvertedCommand {
   content: string;
   notes: string[];
 }

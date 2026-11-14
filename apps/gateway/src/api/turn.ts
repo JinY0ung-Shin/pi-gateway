@@ -1,7 +1,7 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { failSpan, withSpan } from "@pi-gateway/shared";
 import type { Logger } from "pino";
-import { limitToolCalls } from "../agent/tool-call-limit.js";
+import { promptWithLimit } from "../agent/tool-call-limit.js";
 import type { LiveSession } from "../sessions/hub.js";
 import type { PendingToolCall } from "../sessions/store.js";
 import type { ResponseEventMapper } from "./mapper.js";
@@ -11,15 +11,13 @@ import type { ResponseEventMapper } from "./mapper.js";
  * commit 여부는 호출하는 쪽이 결과를 보고 정한다.
  */
 
-export type TurnStatus = "completed" | "incomplete" | "requires_action" | "failed" | "aborted";
+type TurnStatus = "completed" | "incomplete" | "requires_action" | "failed" | "aborted";
 
 export interface TurnOutcome {
   status: TurnStatus;
   error?: { code: string; message: string };
   incompleteReason?: string;
   pending?: PendingToolCall;
-  /** 턴 시작 전 pi leaf (commit하지 않을 때 여기로 되돌린다) */
-  leafBefore: string | null;
 }
 
 /** upstream 오류 메시지 → oh-my-gateway 오류 코드 */
@@ -57,66 +55,57 @@ export function executeTurn(input: TurnInput): Promise<TurnOutcome> {
 
 async function runTurn(input: TurnInput): Promise<TurnOutcome> {
   const { live, mapper, signal, log } = input;
-  const session = live.agent.session;
-  const leafBefore = session.sessionManager.getLeafId();
-  const unsubscribe = session.subscribe((event) => {
-    // 리스너는 동기로 불린다. 여기서 던지면 실행이 깨질 수 있으므로 잡는다.
-    try {
-      mapper.handle(event);
-    } catch (err) {
-      log.error({ err, event: event.type }, "response event mapping failed");
-    }
-  });
-  const onAbort = () => {
-    void session.abort();
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
-  const stopLimit = limitToolCalls(session, input.maxToolCalls);
-  let thrown: unknown;
-  try {
-    if (signal.aborted) throw new Error("aborted");
-    await session.prompt(input.text, { expandPromptTemplates: input.expandTemplates, images: input.images });
-  } catch (err) {
-    thrown = err;
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    unsubscribe();
-  }
-  const limited = stopLimit();
+  const { limited, thrown } = await promptWithLimit(
+    live.session,
+    input.text,
+    { expandPromptTemplates: input.expandTemplates, images: input.images },
+    {
+      maxToolCalls: input.maxToolCalls,
+      signal,
+      // 리스너는 동기로 불린다. 여기서 던지면 실행이 깨질 수 있으므로 잡는다.
+      onEvent: (event) => {
+        try {
+          mapper.handle(event);
+        } catch (err) {
+          log.error({ err, event: event.type }, "response event mapping failed");
+        }
+      },
+    },
+  );
 
-  if (signal.aborted) return { status: "aborted", leafBefore };
+  if (signal.aborted) return { status: "aborted" };
   // 상한에 걸려 멈춘 턴은 취소처럼 그때까지의 내용을 남기고 incomplete로 끝낸다.
-  if (limited) return { status: "incomplete", incompleteReason: "max_tool_calls", leafBefore };
+  if (limited) return { status: "incomplete", incompleteReason: "max_tool_calls" };
   if (thrown) {
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     log.warn({ err: thrown }, "turn failed before completion");
-    return { status: "failed", error: { code: classifyError(message), message }, leafBefore };
+    return { status: "failed", error: { code: classifyError(message), message } };
   }
-  if (mapper.pending) return { status: "requires_action", pending: mapper.pending, leafBefore };
+  if (mapper.pending) return { status: "requires_action", pending: mapper.pending };
   const last = mapper.lastAssistant;
-  if (!last) return { status: "failed", error: { code: "empty_response", message: "No response generated" }, leafBefore };
+  if (!last) return { status: "failed", error: { code: "empty_response", message: "No response generated" } };
   switch (last.stopReason) {
     case "error": {
       const message = last.errorMessage ?? "upstream model error";
-      return { status: "failed", error: { code: classifyError(message), message }, leafBefore };
+      return { status: "failed", error: { code: classifyError(message), message } };
     }
     case "aborted":
-      return { status: "aborted", leafBefore };
+      return { status: "aborted" };
     case "length":
-      return { status: "incomplete", incompleteReason: "max_output_tokens", leafBefore };
+      return { status: "incomplete", incompleteReason: "max_output_tokens" };
     default:
       // 텍스트도 reasoning도 없는 응답은 성공으로 끝내지 않는다 (oh-my-gateway와 같다: empty_response, commit 안 함).
-      if (!mapper.hasOutput()) return { status: "failed", error: { code: "empty_response", message: "No response generated" }, leafBefore };
+      if (!mapper.hasOutput()) return { status: "failed", error: { code: "empty_response", message: "No response generated" } };
       if (live.record.outputFormat && !mapper.structuredOutput) {
-        return { status: "failed", error: { code: "structured_output_missing", message: "Model ended without calling StructuredOutput" }, leafBefore };
+        return { status: "failed", error: { code: "structured_output_missing", message: "Model ended without calling StructuredOutput" } };
       }
-      return { status: "completed", leafBefore };
+      return { status: "completed" };
   }
 }
 
 /** pi leaf를 옮긴다: 이어갈 turn의 끝으로, 또는 commit하지 않는 턴을 버리려고 턴 시작 전으로. */
 export function moveLeaf(live: LiveSession, leafId: string | null): void {
-  const session = live.agent.session;
+  const session = live.session;
   const sm = session.sessionManager;
   if (sm.getLeafId() === leafId) return;
   if (leafId === null) sm.resetLeaf();

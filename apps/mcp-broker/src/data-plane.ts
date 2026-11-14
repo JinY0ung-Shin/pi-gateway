@@ -13,7 +13,7 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, t
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
-import { sendWebResponse, toWebRequest } from "./http-bridge.js";
+import { errorBody, sendWebResponse, toWebRequest } from "./http-bridge.js";
 import type { Identity } from "./render.js";
 import type { BrokerService } from "./service.js";
 import { BROKER_CLIENT_INFO } from "./upstream/connect.js";
@@ -72,10 +72,6 @@ function buildProxyServer(service: BrokerService, extra: McpAuthExtra): Server {
   return server;
 }
 
-function errorBody(code: string, message: string) {
-  return { error: { code, message } };
-}
-
 /**
  * 데이터 평면 — gateway만 부른다 (control 네트워크).
  * 신원은 오직 검증된 내부 JWT(aud=AUD_BROKER)에서 온다.
@@ -132,8 +128,8 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
     }
   });
 
-  app.get("/mcp/servers", async (req): Promise<z.infer<typeof VisibleServersResponse>> => {
-    return { servers: service.visibleServers(identities.get(req)!) };
+  app.get("/mcp/servers", async (): Promise<z.infer<typeof VisibleServersResponse>> => {
+    return { servers: service.visibleServers() };
   });
 
   app.route({
@@ -149,7 +145,7 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
       reply.raw.on("close", () => {
         if (!reply.raw.writableFinished) controller.abort();
       });
-      const request = toWebRequest(req, controller.signal, ["authorization"]);
+      const request = toWebRequest(req, controller.signal);
       const response = await mcp.fetch(request, {
         authInfo: {
           token: "",

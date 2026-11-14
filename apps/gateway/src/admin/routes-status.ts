@@ -48,7 +48,7 @@ export function registerStatusRoutes(app: FastifyInstance, ctx: AdminContext): v
       stats: ctx.stats(),
       activeTurns: ctx.activeTurns(),
       services: { llm, broker, sandboxd },
-      sandboxes: { items, ...(sandboxd.error ? { error: sandboxd.error } : {}) },
+      sandboxes: { items },
       process: {
         rssBytes: memory.rss,
         heapUsedBytes: memory.heapUsed,

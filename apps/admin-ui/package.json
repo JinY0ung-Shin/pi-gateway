@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "vite build"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.2.7",

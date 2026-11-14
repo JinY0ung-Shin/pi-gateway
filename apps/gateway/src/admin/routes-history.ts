@@ -12,6 +12,16 @@ const MAX_RETENTION_DAYS = 3650;
 export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): void {
   const { sessions } = ctx;
   const summary = (r: SessionRecord) => ({ id: r.id, user: r.principal, model: r.model, turn: r.turn, createdAt: r.createdAt, lastActiveAt: r.lastActiveAt });
+  const session = (id: string) => {
+    const record = sessions.get(id);
+    if (!record) throw new PlatformError(404, "session_not_found", `session ${id} not found`);
+    return record;
+  };
+  const jaegerHost = () => {
+    const host = ctx.config.jaegerHost;
+    if (!host) throw new PlatformError(404, "tracing_disabled", "JAEGER_HOST is not set");
+    return host;
+  };
 
   app.get("/history/retention", async () => sessions.retention());
 
@@ -30,24 +40,16 @@ export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): 
   }));
 
   app.get<{ Params: { id: string } }>("/history/:id", async (req) => {
-    const record = sessions.get(req.params.id);
-    if (!record) throw new PlatformError(404, "session_not_found", `session ${req.params.id} not found`);
+    const record = session(req.params.id);
     return { ...summary(record), messages: readTranscript(record) };
   });
 
   /** 최근 턴들의 trace로 낸 시간 통계 (관리 화면의 "실행 시간") */
-  app.get("/traces/stats", async () => {
-    const host = ctx.config.jaegerHost;
-    if (!host) throw new PlatformError(404, "tracing_disabled", "JAEGER_HOST is not set");
-    return traceStats(host);
-  });
+  app.get("/traces/stats", async () => traceStats(jaegerHost()));
 
   /** 세션의 턴별 trace (최근 턴부터). Jaeger가 지운 뒤(7일)에는 비어 있다. */
   app.get<{ Params: { id: string } }>("/history/:id/traces", async (req) => {
-    const record = sessions.get(req.params.id);
-    if (!record) throw new PlatformError(404, "session_not_found", `session ${req.params.id} not found`);
-    const host = ctx.config.jaegerHost;
-    if (!host) throw new PlatformError(404, "tracing_disabled", "JAEGER_HOST is not set");
-    return { traces: await sessionTraces(host, record.id, new Date(Date.parse(record.createdAt) - 60_000)) };
+    const record = session(req.params.id);
+    return { traces: await sessionTraces(jaegerHost(), record.id, new Date(Date.parse(record.createdAt) - 60_000)) };
   });
 }

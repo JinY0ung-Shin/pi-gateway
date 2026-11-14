@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Harness, last, ofType, startHarness } from "./helpers.js";
+import { type Harness, last, ofType, sessionOf, startHarness } from "./helpers.js";
 
 const QUESTIONS = {
   questions: [
@@ -121,7 +121,7 @@ describe("AskUserQuestion", () => {
   it("survives an idle eviction while waiting (state is in the session record, not memory)", async () => {
     h.llm.enqueue({ toolCalls: [{ id: "call_ask_4", name: "AskUserQuestion", arguments: QUESTIONS }] });
     const res = await h.post({ input: "ask then wait" });
-    const sessionId = /^resp_(.+)_1$/.exec(res.json.id)![1]!;
+    const sessionId = sessionOf(res.json.id);
     await h.gateway.hub.evict(sessionId);
     expect(h.gateway.hub.get(sessionId)).toBeUndefined();
     h.llm.enqueue({ text: "resumed" });

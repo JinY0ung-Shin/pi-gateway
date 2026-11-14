@@ -17,3 +17,12 @@ export function jwtSecretBytes(value: string): Uint8Array {
   if (bytes.byteLength < 32) throw new Error("internal JWT secret must be at least 32 bytes");
   return bytes;
 }
+
+/** 정수 환경변수. 없거나 비어 있으면 fallback, min보다 작거나 정수가 아니면 시작을 멈춘다. */
+export function envInt(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 0): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) throw new Error(`${name} must be an integer >= ${min}`);
+  return n;
+}

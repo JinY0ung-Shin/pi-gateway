@@ -29,8 +29,6 @@ interface Entry {
 export interface Lease {
   key: string;
   container: Docker.Container;
-  /** 이번 acquire에서 컨테이너를 새로 만들었는지 */
-  created: boolean;
   release(): void;
   /** 컨테이너가 사라진 것 같을 때: 다음 acquire에서 다시 확인하게 한다 */
   invalidate(): void;
@@ -80,12 +78,11 @@ export class SandboxManager {
     e.inflight++;
     e.lastActive = this.now();
     try {
-      const { container, created } = await this.serialize(key, () => this.ensureLocked(e));
+      const container = await this.serialize(key, () => this.ensureLocked(e));
       let released = false;
       return {
         key,
         container,
-        created,
         release: () => {
           if (released) return;
           released = true;
@@ -102,8 +99,8 @@ export class SandboxManager {
     }
   }
 
-  private async ensureLocked(e: Entry): Promise<{ container: Docker.Container; created: boolean }> {
-    if (e.container && this.now() - e.verifiedAt < VERIFY_TTL_MS) return { container: e.container, created: false };
+  private async ensureLocked(e: Entry): Promise<Docker.Container> {
+    if (e.container && this.now() - e.verifiedAt < VERIFY_TTL_MS) return e.container;
     const name = containerName(this.config, e.key);
     const existing = this.docker.getContainer(name);
     let running = false;
@@ -119,7 +116,7 @@ export class SandboxManager {
     if (running) {
       e.container = existing;
       e.verifiedAt = this.now();
-      return { container: existing, created: false };
+      return existing;
     }
     if (exists) {
       // 멈춘 컨테이너와 예전 스펙의 컨테이너는 현재 스펙(이미지·제한·네트워크)으로 다시 만든다
@@ -148,7 +145,7 @@ export class SandboxManager {
     e.container = container;
     e.verifiedAt = this.now();
     this.log.info({ key: e.key }, "sandbox created");
-    return { container, created: true };
+    return container;
   }
 
   private async removeContainer(key: string): Promise<void> {

@@ -1,28 +1,16 @@
 import { existsSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { ALICE_KEY, BOB_KEY, type Harness, SERVICE_KEY, startHarness } from "./helpers.js";
+import { ALICE_KEY, BOB_KEY, type Harness, SERVICE_KEY, sessionOf, startHarness } from "./helpers.js";
 
-const ADMIN_KEY = "admin-key-for-tests-0123456789";
 const DAY = 86_400_000;
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY, JAEGER_HOST: "jaeger.test" } });
+  h = await startHarness({ env: { JAEGER_HOST: "jaeger.test" } });
 });
 afterAll(async () => {
   await h.close();
 });
-
-const admin = async (method: string, path: string, body?: unknown) => {
-  const res = await fetch(`${h.url}/admin/api${path}`, {
-    method,
-    headers: { authorization: `Bearer ${ADMIN_KEY}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  return { status: res.status, json: (await res.json()) as any };
-};
-
-const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
 /** `GET /v1/responses/{id}/traces` — 기본은 alice의 키 */
 const v1Traces = async (id: string, key?: string, query = "") => {
@@ -38,12 +26,12 @@ describe("admin history", () => {
     await h.post({ input: "second question", previous_response_id: first.json.id });
     const sid = sessionOf(first.json.id);
 
-    const list = await admin("GET", "/history?user=alice");
+    const list = await h.admin("GET", "/history?user=alice");
     expect(list.status).toBe(200);
     expect(list.json.items[0]).toMatchObject({ id: sid, user: "alice", turn: 2 });
-    expect((await admin("GET", "/history?user=nobody")).json.items).toEqual([]);
+    expect((await h.admin("GET", "/history?user=nobody")).json.items).toEqual([]);
 
-    const detail = await admin("GET", `/history/${sid}`);
+    const detail = await h.admin("GET", `/history/${sid}`);
     expect(detail.status).toBe(200);
     // 처음 system 메시지가 모델이 받은 시스템 프롬프트와 도구 선언이다
     const system = detail.json.messages[0];
@@ -54,7 +42,7 @@ describe("admin history", () => {
     expect(said.map(([role]: string[]) => role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(said[0][1]).toContain("first question");
     expect(said[3][1]).toContain("second answer");
-    expect((await admin("GET", "/history/nope")).status).toBe(404);
+    expect((await h.admin("GET", "/history/nope")).status).toBe(404);
   });
 
   it("shows the session's traces read from Jaeger, newest turn first", async () => {
@@ -108,7 +96,7 @@ describe("admin history", () => {
       return url.searchParams.get("query.attributes")?.includes(sid) ? new Response(body) : new Response("{}", { status: 404 });
     });
     try {
-      const res = await admin("GET", `/history/${sid}/traces`);
+      const res = await h.admin("GET", `/history/${sid}/traces`);
       expect(res.status).toBe(200);
       expect(asked?.port).toBe("16686");
       expect(asked?.searchParams.get("query.service_name")).toBe("gateway");
@@ -121,7 +109,7 @@ describe("admin history", () => {
         { id: "b", parentId: "a", service: "gateway", name: "execute_tool bash", startMs: 100, durationMs: 300, error: true, attributes: {} },
         { id: "c", parentId: "b", service: "sandboxd", name: "sandboxd /v1/exec", startMs: 150, durationMs: 200, error: false, attributes: {} },
       ]);
-      expect((await admin("GET", "/history/nope/traces")).status).toBe(404);
+      expect((await h.admin("GET", "/history/nope/traces")).status).toBe(404);
 
       // 세션의 사용자는 같은 내용을 /v1에서 읽는다. 사용자 키는 ?user=를 무시하고, 서비스 키는 ?user=가 있어야 한다
       const own = await v1Traces(respId);
@@ -144,7 +132,7 @@ describe("admin history", () => {
         const url = new URL(input instanceof Request ? input.url : input);
         return url.hostname === "jaeger.test" ? new Response(statsBody) : realFetch(input, init);
       });
-      const stats = (await admin("GET", "/traces/stats")).json;
+      const stats = (await h.admin("GET", "/traces/stats")).json;
       expect(stats).toMatchObject({
         turns: 2,
         failed: 1,
@@ -200,9 +188,9 @@ describe("admin history", () => {
   });
 
   it("deletes sessions past the retention period", async () => {
-    expect((await admin("GET", "/history/retention")).json.days).toBe(0);
-    expect((await admin("PUT", "/history/retention", { days: -1 })).status).toBe(400);
-    expect((await admin("PUT", "/history/retention", { days: 1.5 })).status).toBe(400);
+    expect((await h.admin("GET", "/history/retention")).json.days).toBe(0);
+    expect((await h.admin("PUT", "/history/retention", { days: -1 })).status).toBe(400);
+    expect((await h.admin("PUT", "/history/retention", { days: 1.5 })).status).toBe(400);
 
     h.llm.enqueue({ text: "bye" });
     const res = await h.post({ input: "old conversation" });
@@ -214,7 +202,7 @@ describe("admin history", () => {
     await h.gateway.hub.purgeExpired(Date.now() + 10 * DAY);
     expect(h.gateway.store.get(sid)).toBeDefined();
 
-    const put = await admin("PUT", "/history/retention", { days: 2 });
+    const put = await h.admin("PUT", "/history/retention", { days: 2 });
     expect(put.json).toMatchObject({ days: 2, updatedAt: expect.any(String) });
     await h.gateway.hub.purgeExpired(Date.now() + 1 * DAY);
     expect(h.gateway.store.get(sid)).toBeDefined();

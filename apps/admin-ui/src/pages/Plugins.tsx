@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
+import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpServerList, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
@@ -11,16 +11,10 @@ const MCP_STATUS_LABEL: Record<string, string> = {
 };
 
 const UNSUPPORTED_LABEL: Record<string, string> = {
-  hooks: "hooks",
   lsp: "LSP",
   "output-styles": "output styles",
-  workflows: "workflows",
-  monitors: "monitors",
-  themes: "themes",
   bin: "bin/",
   "user-config": "userConfig",
-  channels: "channels",
-  settings: "settings",
   dependencies: "plugin 의존성",
   "npm-dependencies": "npm 의존성",
   "mcp-bundle": "MCP bundle",
@@ -110,13 +104,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
           </tr>
         </thead>
         <tbody>
-          {props.marketplaces.length === 0 && (
-            <tr>
-              <td colSpan={6} class="muted">
-                추가된 marketplace가 없습니다.
-              </td>
-            </tr>
-          )}
+          {props.marketplaces.length === 0 && <EmptyRow cols={6}>추가된 marketplace가 없습니다.</EmptyRow>}
           {props.marketplaces.map((m) => (
             <tr key={m.name} class="clickable" title="눌러서 plugin을 설치합니다" onClick={() => props.onSelect(m.name)}>
               <td>
@@ -163,8 +151,8 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
         </tbody>
       </table>
       <form class="row wrap" onSubmit={add}>
-        <input class="grow mono" placeholder="https://github.com/org/marketplace.git 또는 org/repo" value={url} onInput={(e) => setUrl((e.currentTarget as HTMLInputElement).value)} required />
-        <input placeholder="branch·tag (선택)" value={ref} onInput={(e) => setRef((e.currentTarget as HTMLInputElement).value)} />
+        <input class="grow mono" placeholder="https://github.com/org/marketplace.git 또는 org/repo" value={url} onInput={(e) => setUrl(e.currentTarget.value)} required />
+        <input placeholder="branch·tag (선택)" value={ref} onInput={(e) => setRef(e.currentTarget.value)} />
         <button class="primary" type="submit" disabled={action.busy}>
           {action.busy ? "받는 중…" : "추가"}
         </button>
@@ -276,13 +264,7 @@ function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, s
           </tr>
         </thead>
         <tbody>
-          {props.plugins.length === 0 && (
-            <tr>
-              <td colSpan={4} class="muted">
-                설치된 plugin이 없습니다.
-              </td>
-            </tr>
-          )}
+          {props.plugins.length === 0 && <EmptyRow cols={4}>설치된 plugin이 없습니다.</EmptyRow>}
           {props.plugins.map((p) => {
             const c = p.components;
             const parts = [
@@ -474,7 +456,7 @@ function McpDefaults() {
       {action.view}
       <label class="field">
         <span>env (KEY=VALUE)</span>
-        <textarea rows={4} class="mono" value={env} onInput={(e) => setEnv((e.currentTarget as HTMLTextAreaElement).value)} />
+        <textarea rows={4} class="mono" value={env} onInput={(e) => setEnv(e.currentTarget.value)} />
       </label>
       <button class="primary" disabled={action.busy} onClick={() =>
           action.run(

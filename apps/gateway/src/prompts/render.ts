@@ -5,7 +5,7 @@ import type { PromptRenderInput } from "../contracts.js";
 export const PROMPT_VARIABLES = ["USER", "DATE", "DATETIME", "WORKSPACE", "MODEL", "LANGUAGE"] as const;
 
 export type PromptVariable = (typeof PROMPT_VARIABLES)[number];
-export type PromptVars = Record<PromptVariable, string>;
+type PromptVars = Record<PromptVariable, string>;
 
 const TOKEN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 const KNOWN = new Set<string>(PROMPT_VARIABLES);

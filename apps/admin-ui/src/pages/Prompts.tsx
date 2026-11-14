@@ -202,15 +202,15 @@ function NewPrompt(props: { variables: string[]; onCreated: (name: string) => Pr
       >
         <label class="field">
           <span>이름 (영문·숫자·_·-)</span>
-          <input value={name} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" required />
+          <input value={name} onInput={(e) => setName(e.currentTarget.value)} pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" required />
         </label>
         <label class="field">
           <span>설명</span>
-          <input value={description} onInput={(e) => setDescription((e.currentTarget as HTMLInputElement).value)} maxLength={500} />
+          <input value={description} onInput={(e) => setDescription(e.currentTarget.value)} maxLength={500} />
         </label>
         <label class="field">
           <span>내용</span>
-          <textarea rows={18} class="mono" value={content} onInput={(e) => setContent((e.currentTarget as HTMLTextAreaElement).value)} required />
+          <textarea rows={18} class="mono" value={content} onInput={(e) => setContent(e.currentTarget.value)} required />
           <small class="muted">변수: {variablesText(props.variables)}</small>
         </label>
         <button class="primary" type="submit" disabled={action.busy}>
@@ -230,6 +230,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
   const [shown, setShown] = useState<number | null>(null);
   const action = useAction();
   const live = props.list.live;
+  const isRollback = (version: number) => live.name === props.name && live.version !== null && version < live.version;
 
   const load = async () => {
     const d = await api<PromptDetail>("GET", `/prompts/${enc(props.name)}`);
@@ -259,8 +260,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
     }, "새 버전을 저장했습니다");
 
   const deploy = (version: number) => {
-    const rollback = live.name === props.name && live.version !== null && version < live.version;
-    if (!confirm(`${props.name} v${version}을 ${rollback ? "롤백 배포" : "배포"}할까요? 새 세션부터 적용됩니다.`)) return;
+    if (!confirm(`${props.name} v${version}을 ${isRollback(version) ? "롤백 배포" : "배포"}할까요? 새 세션부터 적용됩니다.`)) return;
     void action.run(async () => {
       await api("POST", `/prompts/${enc(props.name)}/deploy`, { version });
       await props.onChanged();
@@ -289,7 +289,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
         </div>
         {view === "edit" && (
           <div class="form">
-            <textarea rows={20} class="mono" value={draft} onInput={(e) => setDraft((e.currentTarget as HTMLTextAreaElement).value)} />
+            <textarea rows={20} class="mono" value={draft} onInput={(e) => setDraft(e.currentTarget.value)} />
             <span class="muted small-text">변수: {variablesText(props.list.variables)}</span>
             <div class="row">
               <input
@@ -297,7 +297,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
                 placeholder="변경 내용 (선택)"
                 value={message}
                 maxLength={200}
-                onInput={(e) => setMessage((e.currentTarget as HTMLInputElement).value)}
+                onInput={(e) => setMessage(e.currentTarget.value)}
               />
               <button class="primary" disabled={action.busy || draft === latest.content} onClick={saveVersion}>
                 v{latest.version + 1}로 저장
@@ -336,7 +336,7 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
                     보기
                   </button>
                   <button class="small" disabled={detail.liveVersion === v.version || action.busy} onClick={() => deploy(v.version)}>
-                    {live.name === props.name && live.version !== null && v.version < live.version ? "롤백" : "배포"}
+                    {isRollback(v.version) ? "롤백" : "배포"}
                   </button>
                 </td>
               </tr>

@@ -2,7 +2,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { subagentTools } from "../src/agent/subagents.js";
 import type { ChatRequest } from "./fixtures/fake-llm.js";
-import { type Harness, ofType, startHarness } from "./helpers.js";
+import { type Harness, ofType, startHarness, toolNames } from "./helpers.js";
 
 let h: Harness;
 beforeAll(async () => {
@@ -14,7 +14,6 @@ afterAll(async () => {
   await h.close();
 });
 
-const toolNames = (r: ChatRequest) => (r.tools ?? []).map((t) => t.function.name).sort();
 const system = (r: ChatRequest) => r.messages.find((m) => m.role === "system")?.content;
 const toolResult = (r: ChatRequest) => JSON.stringify(r.messages.filter((m) => m.role === "tool").at(-1)?.content);
 

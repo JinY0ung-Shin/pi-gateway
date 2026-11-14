@@ -8,8 +8,6 @@ export default defineConfig({
   build: {
     outDir: "../gateway/public/admin",
     emptyOutDir: true,
-    assetsDir: "assets",
-    sourcemap: false,
   },
   server: {
     proxy: { "/admin/api": "http://localhost:8080" },

@@ -1,6 +1,6 @@
 import { parse as parseYaml } from "yaml";
 
-export interface ParsedMarkdown {
+interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
   body: string;
   /** YAML 파싱에 실패해 줄 단위 대체 파서를 썼는지 */

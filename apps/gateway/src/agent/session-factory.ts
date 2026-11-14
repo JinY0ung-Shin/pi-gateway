@@ -18,9 +18,9 @@ import { SANDBOX_WORKSPACE, userKey } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
 import type { PluginResources } from "../contracts.js";
-import type { SandboxClient, SandboxHandle } from "../sandbox/client.js";
+import type { SandboxClient } from "../sandbox/client.js";
 import type { SessionRecord } from "../sessions/store.js";
-import { INTERACTIVE_TOOLS, installTurnEndGuard } from "../tools/ask-user.js";
+import { ASK_USER_TOOL, installTurnEndGuard } from "../tools/ask-user.js";
 import type { ToolSessionContext } from "../tools/provider.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { redactSandboxEnv } from "../tools/sandbox-env.js";
@@ -42,7 +42,7 @@ import { chatSpans, tracedTool } from "./tracing.js";
 
 /** 세션 메타는 있는데 JSONL이 없어진 경우 (지워졌거나 볼륨이 바뀜). 만료된 세션으로 다룬다. */
 export class SessionTranscriptMissingError extends Error {
-  constructor(readonly sessionId: string) {
+  constructor(sessionId: string) {
     super(`session transcript for ${sessionId} is missing`);
     this.name = "SessionTranscriptMissingError";
   }
@@ -59,11 +59,6 @@ export interface AgentFactoryDeps {
   log: Logger;
   /** 테스트용 pi settings 덮어쓰기 (예: retry 끄기) */
   settingsOverrides?: Record<string, unknown>;
-}
-
-export interface BuiltAgent {
-  session: AgentSession;
-  sandbox: SandboxHandle;
 }
 
 function resourceLoader(input: { systemPrompt: string; appendPrompt: string; skills: Skill[]; prompts: PromptTemplate[] }): ResourceLoader {
@@ -83,7 +78,7 @@ function resourceLoader(input: { systemPrompt: string; appendPrompt: string; ski
   };
 }
 
-export function sessionDirFor(config: GatewayConfig, principal: string): string {
+function sessionDirFor(config: GatewayConfig, principal: string): string {
   return join(config.dataDir, "sessions", userKey(principal));
 }
 
@@ -98,16 +93,16 @@ export async function buildAgentSession(
   /** 현재 턴 요청의 값들. 턴마다 바뀌어 함수로 준다. */
   turn: Pick<ToolSessionContext, "requestContext" | "sandboxEnv">,
   signal: AbortSignal,
-): Promise<BuiltAgent> {
+): Promise<AgentSession> {
   const model = deps.models.get(record.model);
   const modelConfig = deps.models.config(record.model);
   if (!model || !modelConfig) throw new Error(`model ${record.model} is not configured`);
   const thinkingLevel = thinkingLevelIn(modelConfig, record.thinkingLevel);
-  if (record.sessionFile && record.turn > 0 && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
+  if (record.sessionFile && !existsSync(record.sessionFile)) throw new SessionTranscriptMissingError(record.id);
   const sandbox = deps.sandboxClient.for(record.principal, record.id);
 
   // 관리 화면에서 끈 기본 도구와, interactive: false 세션의 사용자에게 묻는 도구는 이 세션과 하위 agent 모두에서 뺀다.
-  const disabled = new Set([...deps.toolSettings.disabled(), ...(record.interactive ? [] : INTERACTIVE_TOOLS)]);
+  const disabled = new Set([...deps.toolSettings.disabled(), ...(record.interactive ? [] : [ASK_USER_TOOL])]);
   const enabled = (t: ToolDefinition) => !disabled.has(t.name);
   const redacted = redactSandboxEnv(turn.sandboxEnv);
   const created = await deps.tools.createSessionTools({
@@ -132,13 +127,10 @@ export async function buildAgentSession(
 
   const sessionDir = sessionDirFor(deps.config, record.principal);
   mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
-  let sessionManager: SessionManager;
-  if (record.sessionFile && existsSync(record.sessionFile)) {
-    // leaf는 요청마다 이어갈 turn의 끝으로 옮긴다 (responses.ts).
-    sessionManager = SessionManager.open(record.sessionFile, sessionDir, SANDBOX_WORKSPACE);
-  } else {
-    sessionManager = SessionManager.create(SANDBOX_WORKSPACE, sessionDir, { id: record.id });
-  }
+  // leaf는 요청마다 이어갈 turn의 끝으로 옮긴다 (responses.ts).
+  const sessionManager = record.sessionFile
+    ? SessionManager.open(record.sessionFile, sessionDir, SANDBOX_WORKSPACE)
+    : SessionManager.create(SANDBOX_WORKSPACE, sessionDir, { id: record.id });
 
   const countStats = deps.toolStats.listener(record.principal, skills);
   const subagentTools = createSubagentTools({
@@ -170,7 +162,7 @@ export async function buildAgentSession(
     countStats,
   });
   installTurnEndGuard(session);
-  return { session, sandbox };
+  return session;
 }
 
 /**

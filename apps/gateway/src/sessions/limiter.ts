@@ -26,6 +26,9 @@ export class KeyedMutex {
   }
 }
 
+/** 기다릴 수 있는 턴 수. 넘으면 바로 503이다. */
+const MAX_WAITERS = 256;
+
 interface Waiter {
   principal: string;
   resolve: (release: () => void) => void;
@@ -46,7 +49,6 @@ export class TurnLimiter {
   constructor(
     private readonly maxGlobal: number,
     private readonly maxPerUser: number,
-    private readonly maxWaiters: number,
     private readonly timeoutMs: number,
   ) {}
 
@@ -91,7 +93,7 @@ export class TurnLimiter {
   async acquire(principal: string, signal?: AbortSignal): Promise<() => void> {
     if (this.closedError) throw this.closedError;
     if (this.queue.length === 0 && this.canRun(principal)) return this.take(principal);
-    if (this.queue.length >= this.maxWaiters || this.timeoutMs <= 0) {
+    if (this.queue.length >= MAX_WAITERS || this.timeoutMs <= 0) {
       // 대기열이 있어도 이 사용자는 바로 돌 수 있으면 돌린다 (앞의 대기자가 자기 사용자 한도에 걸린 경우).
       if (this.canRun(principal) && this.queue.every((w) => !this.canRun(w.principal))) return this.take(principal);
       throw capacityError();

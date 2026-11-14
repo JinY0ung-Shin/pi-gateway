@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, readdir, readFile, readlink, realpath, s
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PlatformError } from "../admin/errors.js";
 
-export interface CopyLimits {
+interface CopyLimits {
   maxFiles: number;
   maxTotalBytes: number;
   maxFileBytes: number;
@@ -11,14 +11,14 @@ export interface CopyLimits {
 }
 
 const MiB = 1024 * 1024;
-export const DEFAULT_COPY_LIMITS: CopyLimits = {
+const DEFAULT_COPY_LIMITS: CopyLimits = {
   maxFiles: 5000,
   maxTotalBytes: 200 * MiB,
   maxFileBytes: 50 * MiB,
   maxDepth: 32,
 };
 
-export interface CopyResult {
+interface CopyResult {
   files: number;
   bytes: number;
   skipped: { path: string; reason: string }[];
@@ -32,7 +32,7 @@ export function isInside(root: string, target: string): boolean {
 
 const SKIP_NAMES = new Set([".git"]);
 
-export const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 
 /**
  * 저장소(또는 staging) 안의 파일을 읽는다. 신뢰할 수 없는 내용이라고 가정한다.

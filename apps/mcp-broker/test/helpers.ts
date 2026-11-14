@@ -15,7 +15,6 @@ export function testConfig(overrides: Partial<BrokerConfig> = {}): BrokerConfig 
     port: 0,
     adminHost: "127.0.0.1",
     adminPort: 0,
-    logLevel: "silent",
     dataDir: join(root, "data"),
     jwtSecret: new TextEncoder().encode(randomBytes(32).toString("hex")),
     kek: randomBytes(32),

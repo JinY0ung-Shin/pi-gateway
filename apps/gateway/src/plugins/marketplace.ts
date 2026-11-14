@@ -5,7 +5,7 @@ import { isObject, type JsonObject, parseJson, readPluginManifest, safeName, str
 import { isInside, readContainedFile } from "./safe-copy.js";
 
 /** 설치에 쓸 수 있는 source. npm·archive·command는 v1에서 지원하지 않는다. */
-export type PluginSource =
+type PluginSource =
   | { type: "relative"; path: string }
   | { type: "github"; repo: string; ref?: string; sha?: string }
   | { type: "url"; url: string; ref?: string; sha?: string }
@@ -46,7 +46,7 @@ export async function readMarketplaceManifest(root: string): Promise<Marketplace
   return manifest;
 }
 
-export function parseMarketplaceManifest(json: unknown): MarketplaceManifest {
+function parseMarketplaceManifest(json: unknown): MarketplaceManifest {
   if (!isObject(json)) throw badRequest("marketplace.json must be a JSON object");
   const name = safeName(json.name, "marketplace name");
   const metadata = isObject(json.metadata) ? json.metadata : {};
@@ -86,7 +86,7 @@ function parseEntry(raw: unknown): MarketplaceEntry {
   };
 }
 
-export function parseSource(value: unknown): PluginSource {
+function parseSource(value: unknown): PluginSource {
   if (typeof value === "string") return { type: "relative", path: value };
   if (!isObject(value)) throw new Error("plugin source must be a path string or an object");
   const kind = str(value, "source");

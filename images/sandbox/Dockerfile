@@ -71,7 +71,6 @@ RUN printf '#!/usr/local/bin/python3 -IS\nimport sys\nsys.path.insert(0, "/usr/l
  && printf 'root:x:0:0:root:/root:/usr/sbin/nologin\nagent:x:1000:1000:agent:/workspace/.home:/bin/bash\n' > /etc/passwd \
  && printf 'root:x:0:\nagent:x:1000:\n' > /etc/group \
  && rm -f /etc/shadow /etc/gshadow /etc/shadow- /etc/gshadow- /etc/passwd- /etc/group- /etc/subuid /etc/subgid \
- && echo sandbox > /etc/hostname \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
  && rm -rf /root/.cache /root/.npm /tmp/* /var/tmp/*
 
@@ -85,9 +84,7 @@ ENV HOME=/workspace/.home \
     NPM_CONFIG_CACHE=/workspace/.home/.npm \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NODE_PATH=/usr/local/lib/node_modules \
-    MATPLOTLIBRC=/etc/matplotlibrc \
-    TMPDIR=/tmp \
-    LANG=C.UTF-8
+    MATPLOTLIBRC=/etc/matplotlibrc
 
 USER 1000:1000
 WORKDIR /workspace

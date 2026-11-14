@@ -12,8 +12,6 @@ import { MAX_READ_BYTES, resolveSandboxPath, toFsError } from "./remote-fs.js";
  */
 
 export const PRESENT_FILE_TOOL = "present_file";
-/** `GET /v1/files/content`가 한 번에 내려주는 크기 */
-export const MAX_PRESENT_BYTES = MAX_READ_BYTES;
 
 export interface PresentedFile {
   path: string;
@@ -82,7 +80,8 @@ export function createPresentFileTool(sandbox: SandboxHandle): ToolDefinition<ty
       if (!st.exists) throw new Error(`File not found: ${path}`);
       if (st.kind !== "file") throw new Error(`Not a regular file: ${path}`);
       const size = st.size ?? 0;
-      if (size > MAX_PRESENT_BYTES) throw new Error(`File is too large to present (${size} bytes, max ${MAX_PRESENT_BYTES}): ${path}`);
+      // `GET /v1/files/content`가 한 번에 내려주는 크기
+      if (size > MAX_READ_BYTES) throw new Error(`File is too large to present (${size} bytes, max ${MAX_READ_BYTES}): ${path}`);
       const file: PresentedFile = { path, filename: posix.basename(path), mime_type: mimeTypeOf(path), size };
       return {
         content: [{ type: "text", text: `Presented ${path} to the user (${file.mime_type}, ${file.size} bytes).` }],

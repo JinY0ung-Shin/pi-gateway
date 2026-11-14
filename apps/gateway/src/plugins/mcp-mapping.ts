@@ -63,7 +63,6 @@ export interface MappedMcpServer {
   /** plugin 안에서의 서버 이름 */
   name: string;
   config?: McpServerConfig;
-  requiredSecrets: string[];
   unsupported?: string;
   warnings: string[];
 }
@@ -99,7 +98,7 @@ function stringRecord(value: unknown): Record<string, string> {
 /** plugin의 `.mcp.json`(또는 plugin.json mcpServers) 항목 하나를 gateway MCP 서버 설정으로 바꾼다. */
 export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpContext): MappedMcpServer {
   const warnings: string[] = [];
-  const unsupported = (reason: string): MappedMcpServer => ({ name, requiredSecrets: [], unsupported: reason, warnings });
+  const unsupported = (reason: string): MappedMcpServer => ({ name, unsupported: reason, warnings });
   if (!isObject(raw)) return unsupported("server config is not an object");
   const cfg: JsonObject = raw;
   const declared = typeof cfg.type === "string" ? cfg.type : undefined;
@@ -143,7 +142,7 @@ export function mapPluginMcpServer(name: string, raw: unknown, ctx: PluginMcpCon
   if (!parsed.success) return unsupported(parsed.error.issues.map((i) => i.message).join("; "));
   // 사용자별 헤더 값은 plugin이 고른 곳으로 보내지 않는다. 필요하면 관리자가 MCP 탭에서 넣는다.
   if (requiredHeaderNames(parsed.data).length > 0) return unsupported("plugin servers must not use {{ctx.header:...}}; set it in the MCP tab");
-  return { name, config: parsed.data, requiredSecrets: requiredSecretNames(parsed.data), warnings };
+  return { name, config: parsed.data, warnings };
 }
 
 /** `.mcp.json` 내용(`{mcpServers:{…}}` 또는 바로 이름→설정 맵)에서 서버 맵을 꺼낸다. */

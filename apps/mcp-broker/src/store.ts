@@ -1,4 +1,4 @@
-import { McpServerConfig, requiredSecretNames, transportTarget } from "@pi-gateway/shared";
+import { McpServerConfig, transportTarget } from "@pi-gateway/shared";
 import { SecretCipher } from "./crypto.js";
 import { type Db, migrate } from "./db.js";
 
@@ -48,7 +48,7 @@ export interface StoredServer {
   revision: number;
 }
 
-export interface SecretMeta {
+interface SecretMeta {
   name: string;
   version: number;
   setAt: string;
@@ -195,12 +195,6 @@ export class BrokerStore {
       }
     }
     return { values, failed };
-  }
-
-  /** 설정이 참조하지만 저장되지 않은 비밀키 이름 */
-  missingSecrets(server: StoredServer): string[] {
-    const present = new Set(this.listSecretMeta(server.config.id).map((s) => s.name));
-    return requiredSecretNames(server.config).filter((name) => !present.has(name));
   }
 }
 

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { AUD_BROKER, bearerToken, type VerifiedInternalClaims, verifyInternalToken } from "@pi-gateway/shared";
+import { AUD_BROKER, bearerToken, type InternalClaims, verifyInternalToken } from "@pi-gateway/shared";
 
 /**
  * 테스트용 가짜 mcp-broker 데이터 평면.
@@ -16,14 +16,14 @@ export interface FakeBrokerTool {
   /** content를 주면 text 대신 그대로 돌려준다 (이미지 블록 등) */
   handler: (
     args: Record<string, unknown>,
-    claims: VerifiedInternalClaims,
+    claims: InternalClaims,
   ) => { text?: string; isError?: boolean; content?: unknown[]; rpcError?: { code: number; message: string } };
 }
 
 export interface FakeBrokerRecord {
   serverId: string;
   method: string;
-  claims: VerifiedInternalClaims;
+  claims: InternalClaims;
   traceparent?: string;
 }
 
@@ -41,7 +41,7 @@ export async function startFakeBroker(secret: Uint8Array, servers: Record<string
   const authFailures: string[] = [];
   const executions: Record<string, number> = {};
 
-  const auth = async (req: IncomingMessage): Promise<VerifiedInternalClaims | null> => {
+  const auth = async (req: IncomingMessage): Promise<InternalClaims | null> => {
     const token = bearerToken(req.headers.authorization);
     if (!token) {
       authFailures.push("missing token");

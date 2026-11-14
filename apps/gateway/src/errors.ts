@@ -3,7 +3,7 @@
  * 기본: `{"error": {"message", "type": "api_error", "code": "<status>"}}`
  */
 
-export interface ErrorBody {
+interface ErrorBody {
   error: {
     message: string;
     type: string;
@@ -49,7 +49,7 @@ export const badRequest = (message: string, code?: string) =>
 export const notFound = (message: string) => apiError(404, message);
 export const conflict = (message: string) => apiError(409, message);
 
-export const RETRY_AFTER_SECONDS = 30;
+const RETRY_AFTER_SECONDS = 30;
 
 export function capacityError(): ApiError {
   return apiError(

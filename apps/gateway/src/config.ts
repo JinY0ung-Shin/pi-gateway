@@ -1,4 +1,4 @@
-import { jwtSecretBytes, readSecret } from "@pi-gateway/shared";
+import { envInt, jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 import { z } from "zod";
 
 /** gateway 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원). */
@@ -37,7 +37,6 @@ export interface GatewayConfig {
     maxConcurrentTurns: number;
     maxConcurrentTurnsPerUser: number;
     queueTimeoutSeconds: number;
-    maxQueuedTurns: number;
     /** 비스트리밍 요청의 최대 실행 시간 */
     nonStreamTimeoutSeconds: number;
   };
@@ -70,14 +69,6 @@ function parseTrustProxy(raw: string | undefined): false | string[] {
   // 잘못된 IP/CIDR은 Fastify(proxy-addr)가 서버를 만들 때 거부한다.
   return list(value);
 }
-
-const int = (name: string, fallback: number, env: NodeJS.ProcessEnv): number => {
-  const raw = env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer`);
-  return n;
-};
 
 const list = (raw: string | undefined): string[] =>
   (raw ?? "")
@@ -122,7 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
 
   return {
     host: env.HOST || "0.0.0.0",
-    port: int("PORT", 8080, env),
+    port: envInt(env, "PORT", 8080),
     logLevel: env.LOG_LEVEL || "info",
     dataDir: env.DATA_DIR || "/data",
     pluginsDir: env.PLUGINS_DIR || "/opt/plugins",
@@ -138,18 +129,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       jwtSecret: jwtSecretBytes(brokerSecret),
     },
     sessions: {
-      idleSeconds: int("SESSION_IDLE_SECONDS", 300, env),
-      maxConcurrentTurns: int("MAX_CONCURRENT_TURNS", 16, env),
-      maxConcurrentTurnsPerUser: int("MAX_CONCURRENT_TURNS_PER_USER", 3, env),
-      queueTimeoutSeconds: int("TURN_QUEUE_TIMEOUT_SECONDS", 120, env),
-      maxQueuedTurns: 256,
-      nonStreamTimeoutSeconds: int("NON_STREAM_TIMEOUT_SECONDS", 600, env),
+      idleSeconds: envInt(env, "SESSION_IDLE_SECONDS", 300),
+      maxConcurrentTurns: envInt(env, "MAX_CONCURRENT_TURNS", 16),
+      maxConcurrentTurnsPerUser: envInt(env, "MAX_CONCURRENT_TURNS_PER_USER", 3),
+      queueTimeoutSeconds: envInt(env, "TURN_QUEUE_TIMEOUT_SECONDS", 120),
+      nonStreamTimeoutSeconds: envInt(env, "NON_STREAM_TIMEOUT_SECONDS", 600),
     },
     mcp: {
       metadataKeys: list(env.MCP_METADATA_KEYS),
     },
     prompts: { language: env.PROMPT_LANGUAGE || "Korean" },
-    sse: { keepaliveSeconds: int("SSE_KEEPALIVE_SECONDS", 15, env) },
+    sse: { keepaliveSeconds: envInt(env, "SSE_KEEPALIVE_SECONDS", 15) },
     trustProxy,
     jaegerHost: env.JAEGER_HOST || undefined,
   };

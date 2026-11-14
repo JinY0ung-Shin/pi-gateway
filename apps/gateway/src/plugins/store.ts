@@ -65,15 +65,13 @@ export interface McpRecord {
   runIn?: McpRunIn;
   status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
-  requiredSecrets: string[];
   /** broker 서버: plugin MCP 기본값으로 채운 비밀키 이름 → 그때의 fingerprint (다르면 관리자가 바꾼 값) */
   defaultSecrets?: Record<string, string>;
-  warnings: string[];
   /** 이번 설치 때의 매핑 결과 (관리자 수정 전). 다음 업데이트에서 관리자가 바꾼 값을 가려내는 기준이다. */
   baseline?: McpServerConfig;
 }
 
-export interface StoredComponents {
+interface StoredComponents {
   skills: SkillRecord[];
   commands: CommandRecord[];
   agents: AgentRecord[];
@@ -89,7 +87,6 @@ export interface MarketplaceRecord {
   commitSha: string;
   localPath: string;
   manifest: MarketplaceManifest;
-  addedAt: string;
   refreshedAt: string;
 }
 
@@ -104,7 +101,6 @@ export interface PluginRecord {
   manifest: JsonObject | null;
   components: StoredComponents;
   mcp: McpRecord[];
-  installedAt: string;
   updatedAt: string;
 }
 
@@ -115,7 +111,6 @@ interface MarketplaceRow {
   commit_sha: string;
   local_path: string;
   manifest_json: string;
-  added_at: string;
   refreshed_at: string;
 }
 
@@ -130,7 +125,6 @@ interface PluginRow {
   manifest_json: string | null;
   components_json: string;
   mcp_json: string;
-  installed_at: string;
   updated_at: string;
 }
 
@@ -155,7 +149,7 @@ export class PluginStore {
     return row ? toMarketplace(row) : undefined;
   }
 
-  upsertMarketplace(record: Omit<MarketplaceRecord, "addedAt" | "refreshedAt">): void {
+  upsertMarketplace(record: Omit<MarketplaceRecord, "refreshedAt">): void {
     const at = now();
     this.#db
       .prepare(
@@ -190,7 +184,7 @@ export class PluginStore {
     return row ? toPlugin(row) : undefined;
   }
 
-  upsertPlugin(record: Omit<PluginRecord, "installedAt" | "updatedAt">): void {
+  upsertPlugin(record: Omit<PluginRecord, "updatedAt">): void {
     const at = now();
     this.#db
       .prepare(
@@ -262,7 +256,6 @@ function toMarketplace(row: MarketplaceRow): MarketplaceRecord {
     commitSha: row.commit_sha,
     localPath: row.local_path,
     manifest: JSON.parse(row.manifest_json) as MarketplaceManifest,
-    addedAt: row.added_at,
     refreshedAt: row.refreshed_at,
   };
 }
@@ -279,7 +272,6 @@ function toPlugin(row: PluginRow): PluginRecord {
     manifest: row.manifest_json === null ? null : (JSON.parse(row.manifest_json) as JsonObject),
     components: JSON.parse(row.components_json) as StoredComponents,
     mcp: JSON.parse(row.mcp_json) as McpRecord[],
-    installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
 }

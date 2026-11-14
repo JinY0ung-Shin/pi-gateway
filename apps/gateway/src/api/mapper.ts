@@ -14,28 +14,28 @@ import { STRUCTURED_OUTPUT_TOOL } from "../tools/structured-output.js";
  * emit이 null이면 이벤트를 내보내지 않고 항목만 모은다 (비스트리밍).
  */
 
-export type EmitFn = (type: string, payload: Record<string, unknown>) => void;
+type EmitFn = (type: string, payload: Record<string, unknown>) => void;
 
-export interface OutputTextPart {
+interface OutputTextPart {
   type: "output_text";
   text: string;
   annotations: unknown[];
 }
-export interface MessageItem {
+interface MessageItem {
   id: string;
   type: "message";
   role: "assistant";
   status: "in_progress" | "completed" | "incomplete";
   content: OutputTextPart[];
 }
-export interface ReasoningItem {
+interface ReasoningItem {
   id: string;
   type: "reasoning";
   status: "in_progress" | "completed" | "incomplete";
   summary: { type: "summary_text"; text: string }[];
   content?: { type: "reasoning_text"; text: string }[];
 }
-export interface FunctionCallItem {
+interface FunctionCallItem {
   id: string;
   type: "function_call";
   call_id: string;
@@ -44,11 +44,11 @@ export interface FunctionCallItem {
   status: "completed";
 }
 /** present_file로 보여준 workspace 파일. 내용은 `GET /v1/files/content?path=`로 받는다. */
-export interface FileItem extends PresentedFile {
+interface FileItem extends PresentedFile {
   id: string;
   type: "file";
 }
-export type OutputItem = MessageItem | ReasoningItem | FunctionCallItem | FileItem;
+type OutputItem = MessageItem | ReasoningItem | FunctionCallItem | FileItem;
 
 export interface ResponseUsage {
   input_tokens: number;
@@ -60,8 +60,8 @@ export interface ResponseUsage {
 }
 
 const hex = () => randomBytes(12).toString("hex");
-export const newMessageId = () => `msg_${hex()}`;
-export const newReasoningId = () => `rs_${hex()}`;
+const newMessageId = () => `msg_${hex()}`;
+const newReasoningId = () => `rs_${hex()}`;
 const newFileId = () => `file_${hex()}`;
 
 export function emptyUsage(): ResponseUsage {
@@ -69,7 +69,7 @@ export function emptyUsage(): ResponseUsage {
 }
 
 /** context의 token 추정치 (pi와 같이 글자 수로 센다): 요약해도 그대로인 시스템 프롬프트와, 요약으로 줄어드는 대화 */
-export interface ContextEstimate {
+interface ContextEstimate {
   system: number;
   conversation: number;
 }
@@ -402,7 +402,6 @@ export class ResponseEventMapper {
     event: Extract<AgentSessionEvent, { type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end" }>,
     parent?: string,
   ): void {
-    if (event.parentToolCallId) return;
     switch (event.type) {
       case "tool_execution_start":
         this.running.set(event.toolCallId, { name: event.toolName, startedAt: Date.now(), ...(parent ? { parent } : {}) });

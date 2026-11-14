@@ -13,10 +13,10 @@ import {
   FsReadRequest,
   FsStatRequest,
   FsWriteRequest,
+  type InternalClaims,
   isValidUserId,
   remoteParent,
   SANDBOXD_ROUTES,
-  type VerifiedInternalClaims,
   verifyInternalToken,
   withSpan,
 } from "@pi-gateway/shared";
@@ -29,11 +29,11 @@ import type { AttachProcess, SandboxRuntime } from "./runtime.js";
 
 declare module "fastify" {
   interface FastifyRequest {
-    claims: VerifiedInternalClaims | null;
+    claims: InternalClaims | null;
   }
 }
 
-export interface ServerOptions {
+interface ServerOptions {
   jwtSecret: Uint8Array;
   runtime: SandboxRuntime;
   logger: Logger;
@@ -143,6 +143,8 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     });
+    // 출력 없이 오래 도는 명령에도 응답 헤더를 바로 보낸다 (클라이언트의 헤더 대기 시간 제한에 걸리지 않게)
+    res.flushHeaders();
     const abort = new AbortController();
     res.on("close", () => {
       if (!res.writableFinished) abort.abort();
@@ -175,7 +177,8 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
     if (content.toString("base64").replace(/=+$/, "") !== body.content.replace(/=+$/, "")) {
       throw new SandboxError("invalid_request", "content must be base64");
     }
-    return runtime.fsWrite(body.user, body.path, content, body.mkdirs);
+    await runtime.fsWrite(body.user, body.path, content);
+    return {};
   }));
 
   app.post(SANDBOXD_ROUTES.fsStat, traced(async (req) => {
@@ -193,7 +196,7 @@ export async function buildServer(opts: ServerOptions): Promise<FastifyInstance>
   app.post(SANDBOXD_ROUTES.fsMkdir, traced(async (req) => {
     const body = parse(FsMkdirRequest, req.body);
     assertPrincipal(req, body.user);
-    await runtime.fsMkdir(body.user, body.path, body.recursive);
+    await runtime.fsMkdir(body.user, body.path);
     return {};
   }));
 
@@ -284,7 +287,7 @@ function handleAttach(socket: WebSocket, req: FastifyRequest, runtime: SandboxRu
           p.terminate();
           return;
         }
-        sendJson({ type: "started", procId: p.procId });
+        sendJson({ type: "started" });
         for (const chunk of queued.splice(0)) p.write(chunk);
         void p.done.then(({ exitCode, signal }) => {
           sendJson({ type: "exit", exitCode, signal });

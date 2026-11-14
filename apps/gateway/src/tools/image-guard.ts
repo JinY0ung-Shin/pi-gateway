@@ -7,19 +7,19 @@
  * 형식을 알 수 없거나 헤더가 깨진 이미지도 디코딩하지 않는다.
  */
 
-export const MAX_IMAGE_PIXELS = 25_000_000;
+const MAX_IMAGE_PIXELS = 25_000_000;
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp";
+type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp";
 
-export interface ImageInfo {
+interface ImageInfo {
   format: ImageFormat;
   mimeType: string;
   width: number;
   height: number;
 }
 
-export type ImageVerdict = { ok: true; info: ImageInfo } | { ok: false; reason: string };
+type ImageVerdict = { ok: true; info: ImageInfo } | { ok: false; reason: string };
 
 const MIME: Record<ImageFormat, string> = {
   png: "image/png",

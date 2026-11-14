@@ -5,14 +5,15 @@ import type { SandboxdConfig } from "./config.js";
 export const LABEL_SANDBOX = "pi-gateway.sandbox";
 export const LABEL_USER_KEY = "pi-gateway.user-key";
 export const LABEL_INSTANCE = "pi-gateway.instance";
-/** 컨테이너 스펙 버전. 보안 옵션 등 스펙을 바꾸면 올린다. 다른 버전의 컨테이너는 실행 중이어도 다시 만든다. */
+/** 컨테이너 스펙 버전. 보안 옵션이나 sbx-fs 인자 등 스펙을 바꾸면 올린다. 다른 버전의 컨테이너는 실행 중이어도 다시 만든다. */
 export const LABEL_SPEC = "pi-gateway.spec";
-export const SPEC_VERSION = "2";
+export const SPEC_VERSION = "3";
 
 /** sandbox 안에서 egress 프록시로 가는 유일한 출구 (sbx-proxy-bridge) */
-export const PROXY_SOCKET_DIR = "/run/pi-proxy";
-export const PROXY_URL = "http://127.0.0.1:3128";
+const PROXY_SOCKET_DIR = "/run/pi-proxy";
+const PROXY_URL = "http://127.0.0.1:3128";
 const NO_PROXY = "localhost,127.0.0.1,::1";
+const SHM_SIZE_BYTES = 64 * 1024 * 1024;
 
 export const USER_KEY_PATTERN = /^u-[0-9a-f]{24}$/;
 
@@ -68,7 +69,7 @@ export function buildContainerSpec(config: SandboxdConfig, key: string): Docker.
     MemorySwap: config.memoryBytes,
     NanoCpus: config.nanoCpus,
     PidsLimit: config.pidsLimit,
-    ShmSize: config.shmSizeBytes,
+    ShmSize: SHM_SIZE_BYTES,
     IpcMode: "private",
     PidMode: "",
     UsernsMode: "",

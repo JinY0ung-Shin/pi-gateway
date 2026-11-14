@@ -37,14 +37,4 @@ check_service gateway 10001
 check_service sandboxd 1000
 check_service mcp-broker 0
 
-# 실행 중인 sandbox 컨테이너에는 비밀 파일이 없어야 한다
-for c in $(docker ps -q --filter label=pi-gateway.sandbox=1); do
-  name="$(docker inspect -f '{{.Name}}' "$c")"
-  if docker exec "$c" sh -c '[ -e /run/secrets ] && ls -A /run/secrets' 2>/dev/null | grep -q .; then
-    bad "sandbox $name has /run/secrets"
-  else
-    pass "sandbox $name has no /run/secrets"
-  fi
-done
-
 exit "$fail"

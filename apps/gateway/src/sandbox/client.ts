@@ -23,12 +23,10 @@ import WebSocket from "ws";
 
 export class SandboxError extends Error {
   readonly code: string;
-  readonly status: number;
-  constructor(code: string, message: string, status = 0) {
+  constructor(code: string, message: string) {
     super(message);
     this.name = "SandboxError";
     this.code = code;
-    this.status = status;
   }
 }
 
@@ -68,7 +66,7 @@ export class SandboxClient {
   readonly jwtSecret: Uint8Array;
 
   constructor(options: SandboxClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = options.baseUrl;
     this.jwtSecret = options.jwtSecret;
   }
 
@@ -92,9 +90,9 @@ async function toSandboxError(res: Response): Promise<SandboxError> {
   const text = await res.text().catch(() => "");
   try {
     const parsed = ApiErrorBody.parse(JSON.parse(text));
-    return new SandboxError(parsed.error.code, parsed.error.message, res.status);
+    return new SandboxError(parsed.error.code, parsed.error.message);
   } catch {
-    return new SandboxError(res.status >= 500 ? "sandbox_unavailable" : "invalid_request", text || res.statusText, res.status);
+    return new SandboxError(res.status >= 500 ? "sandbox_unavailable" : "invalid_request", text || res.statusText);
   }
 }
 
@@ -211,7 +209,7 @@ export class SandboxHandle {
 
   async writeFile(path: string, content: Buffer | string, signal?: AbortSignal): Promise<void> {
     const data = typeof content === "string" ? Buffer.from(content, "utf8") : content;
-    await this.post(SANDBOXD_ROUTES.fsWrite, { path, content: data.toString("base64"), mkdirs: true }, signal);
+    await this.post(SANDBOXD_ROUTES.fsWrite, { path, content: data.toString("base64") }, signal);
   }
 
   async stat(path: string, signal?: AbortSignal): Promise<FsStatResponse> {
@@ -224,7 +222,7 @@ export class SandboxHandle {
   }
 
   async mkdir(path: string): Promise<void> {
-    await this.post(SANDBOXD_ROUTES.fsMkdir, { path, recursive: true });
+    await this.post(SANDBOXD_ROUTES.fsMkdir, { path });
   }
 
   async glob(input: { cwd: string; pattern: string; ignore?: string[]; limit?: number }): Promise<FsGlobResponse> {
@@ -318,7 +316,7 @@ export class SandboxHandle {
         }
       });
       ws.on("unexpected-response", (_req, res) => {
-        fail(new SandboxError(res.statusCode && res.statusCode >= 500 ? "sandbox_unavailable" : "unauthorized", `attach rejected: HTTP ${res.statusCode}`, res.statusCode ?? 0));
+        fail(new SandboxError(res.statusCode && res.statusCode >= 500 ? "sandbox_unavailable" : "unauthorized", `attach rejected: HTTP ${res.statusCode}`));
       });
       ws.on("error", (err) => fail(new SandboxError("sandbox_unavailable", `attach failed: ${err.message}`)));
       ws.on("close", () => {

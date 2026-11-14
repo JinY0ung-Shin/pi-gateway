@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { enc, formatTime } from "../api";
+import { duration, enc, formatTime, percent } from "../api";
 import { Badge, Notice, Section, useLoad } from "../components";
 import { Ranked, Stat } from "./Status";
 
@@ -38,10 +38,6 @@ interface Step {
   totalMs: number;
   ms: Percentiles;
 }
-
-const duration = (ms: number) =>
-  ms >= 3_600_000 ? `${(ms / 3_600_000).toFixed(1)}시간` : ms >= 60_000 ? `${(ms / 60_000).toFixed(1)}분` : ms >= 1000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.round(ms)}ms`;
-const percent = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "-");
 
 /** 막대의 색: LLM 호출, 도구 실행, 둘 다 아닌 것 */
 type Kind = "llm" | "tool" | "other";

@@ -6,7 +6,6 @@ export interface LivePrompt {
   revision: string;
   deployedAt: string;
   isDefault: boolean;
-  content: string;
 }
 
 export interface PromptSummary {
@@ -24,7 +23,6 @@ export interface PromptVersion {
 }
 
 export interface PromptDetail {
-  name: string;
   description: string;
   liveVersion: number | null;
   versions: PromptVersion[];
@@ -116,27 +114,20 @@ export interface CatalogEntry {
 export interface McpRecord {
   name: string;
   id?: string;
-  runIn?: "broker" | "sandbox";
   status: "registered" | "unsupported" | "error" | "broker_unavailable";
   reason?: string;
-  requiredSecrets: string[];
-  warnings: string[];
 }
 
 export interface PluginView {
   id: string;
-  name: string;
-  marketplace: string;
   version: string;
   enabled: boolean;
-  installPath: string;
   description?: string;
-  source: { type: string; display: string; commit?: string };
-  installedAt: string;
+  source: { display: string };
   updatedAt: string;
   components: {
     skills: { name: string; description: string; filePath: string; disableModelInvocation: boolean }[];
-    commands: { name: string; description: string; argumentHint?: string; notes: string[] }[];
+    commands: { name: string; notes: string[] }[];
     agents: { name: string; description: string; tools?: string[]; prompt: string; filePath: string; notes: string[] }[];
     unsupported: { kind: string; detail: string }[];
     warnings: string[];
@@ -163,7 +154,7 @@ export interface StatusView {
     broker: ServiceCheck;
     sandboxd: ServiceCheck;
   };
-  sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string }[]; error?: string };
+  sandboxes: { items: { key: string; containerName: string; state: string; lastActiveAt?: string }[] };
   process: { rssBytes: number; heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number; nodeVersion: string };
   plugins: { installed: number; enabled: number };
   prompt: { name: string | null; version: number | null; isDefault: boolean };

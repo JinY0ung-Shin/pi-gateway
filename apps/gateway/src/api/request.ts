@@ -128,7 +128,7 @@ export function sandboxEnvOf(body: ResponseCreateRequest, auth: AuthResult): Rec
 }
 
 /** input_file로 받은 문서. 턴을 시작하기 전에 사용자의 workspace에 쓴다. */
-export interface InputFile {
+interface InputFile {
   path: string;
   content: Buffer;
 }

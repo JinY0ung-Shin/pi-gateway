@@ -4,7 +4,7 @@ import { join } from "node:path";
 import fastifyStatic from "@fastify/static";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
-export const ADMIN_UI_CSP = [
+const ADMIN_UI_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",

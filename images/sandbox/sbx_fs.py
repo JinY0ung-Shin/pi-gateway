@@ -6,11 +6,11 @@
 인자는 셸 해석 없이 그대로 전달된다. 상대 경로는 /workspace 기준이다.
 
   sbx-fs read  <path> <maxBytes>        stdout: JSON 헤더 한 줄 + 원본 바이트
-  sbx-fs write <path> <mkdirs:0|1>      stdin: 원본 바이트       stdout: JSON 한 줄
+  sbx-fs write <path>                   stdin: 원본 바이트 (상위 디렉토리를 만든다)   stdout: JSON 한 줄
   sbx-fs stat  <path>                   stdout: JSON 한 줄 (lstat)
   sbx-fs list  <path>                   stdout: JSON 한 줄 (이름순)
-  sbx-fs mkdir <path> <recursive:0|1>   stdout: JSON 한 줄
-  sbx-fs glob  <cwd> <limit> <pattern> [ignore...]   stdout: JSON 한 줄 (fd, 절대 경로)
+  sbx-fs mkdir <path>                   stdout: JSON 한 줄 (상위 디렉토리도 만든다)
+  sbx-fs glob  <cwd> <limit> <pattern> [ignore...]   stdout: JSON 한 줄 (fd, 절대 경로, 최대 limit개)
 
 실패하면 {"ok": false, "code": <SandboxErrorCode>, "message": ...} 한 줄을 쓰고 0으로 끝낸다.
 """
@@ -78,10 +78,6 @@ def kind_of(mode):
     return "other"
 
 
-def flag(value):
-    return value == "1"
-
-
 def cmd_read(path, max_bytes):
     p = resolve(path)
     limit = int(max_bytes)
@@ -95,23 +91,18 @@ def cmd_read(path, max_bytes):
     truncated = len(data) > limit
     if truncated:
         data = data[:limit]
-    emit({"ok": True, "size": st.st_size, "truncated": truncated})
+    emit({"ok": True, "truncated": truncated})
     sys.stdout.buffer.write(data)
     sys.stdout.buffer.flush()
 
 
-def cmd_write(path, mkdirs):
+def cmd_write(path):
     p = resolve(path)
     data = sys.stdin.buffer.read()
-    if flag(mkdirs):
-        parent = os.path.dirname(p)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-    if os.path.isdir(p):
-        raise Fail("is_directory", "%s is a directory" % p)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:
         f.write(data)
-    emit({"ok": True, "size": len(data)})
+    emit({"ok": True})
 
 
 def cmd_stat(path):
@@ -132,7 +123,6 @@ def cmd_stat(path):
             "exists": True,
             "kind": kind,
             "size": st.st_size,
-            "mtimeMs": st.st_mtime_ns // 1_000_000,
             "targetIsDir": target_is_dir,
         }
     )
@@ -152,12 +142,8 @@ def cmd_list(path):
     emit({"ok": True, "entries": entries})
 
 
-def cmd_mkdir(path, recursive):
-    p = resolve(path)
-    if flag(recursive):
-        os.makedirs(p, exist_ok=True)
-    else:
-        os.mkdir(p)
+def cmd_mkdir(path):
+    os.makedirs(resolve(path), exist_ok=True)
     emit({"ok": True})
 
 
@@ -190,33 +176,30 @@ def cmd_glob(cwd, limit, pattern, *ignore):
     for pat in ignore:
         m = dir_ignore.fullmatch(pat)
         args += ["--exclude", m.group(1) if m else pat]
-    args += ["--max-results", str(max_results + 1)]
+    args += ["--max-results", str(max_results)]
     effective = pattern
     if "/" in pattern:
         args.append("--full-path")
         if not pattern.startswith("/") and not pattern.startswith("**/") and pattern != "**":
             effective = "**/" + pattern
     args += ["--", effective, base]
-    try:
-        proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=55, env=HELPER_ENV)
-    except subprocess.TimeoutExpired:
-        raise Fail("timeout", "glob timed out")
+    # 시간 제한은 sandboxd가 건다 (timeout으로 감싸 process group째 끝낸다)
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=HELPER_ENV)
     out = proc.stdout.decode("utf-8", "surrogateescape")
     paths = [line for line in out.split("\n") if line]
     if proc.returncode != 0 and not paths:
         message = proc.stderr.decode("utf-8", "replace").strip() or ("fd exited with %d" % proc.returncode)
         raise Fail("invalid_request", message)
     paths.sort()
-    truncated = len(paths) > max_results
-    emit({"ok": True, "paths": paths[:max_results], "truncated": truncated})
+    emit({"ok": True, "paths": paths})
 
 
 COMMANDS = {
     "read": (cmd_read, 2),
-    "write": (cmd_write, 2),
+    "write": (cmd_write, 1),
     "stat": (cmd_stat, 1),
     "list": (cmd_list, 1),
-    "mkdir": (cmd_mkdir, 2),
+    "mkdir": (cmd_mkdir, 1),
     "glob": (cmd_glob, None),
 }
 

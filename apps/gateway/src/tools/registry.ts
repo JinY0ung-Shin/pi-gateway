@@ -1,12 +1,8 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Logger } from "pino";
-import type { GatewayConfig } from "../config.js";
-import type { Choose, McpRegistry } from "../contracts.js";
-import type { McpToolCache } from "../mcp-client/connections.js";
 import type { ToolProvider, ToolSessionContext } from "./provider.js";
-import { createAskUserToolProvider } from "./providers/ask-user.js";
-import { createMcpToolProvider } from "./providers/mcp.js";
-import { createRequestAdminToolProvider } from "./providers/request-admin.js";
+import { createGatewayToolProvider } from "./providers/gateway.js";
+import { createMcpToolProvider, type McpProviderDeps } from "./providers/mcp.js";
 import { createSandboxToolProvider } from "./providers/sandbox.js";
 import type { AdminRequests } from "./request-admin.js";
 
@@ -16,23 +12,9 @@ import type { AdminRequests } from "./request-admin.js";
  * 새 provider는 아래 createDefaultToolProviders 한 곳에만 추가한다.
  */
 
-export interface DefaultProviderDeps {
-  mcpRegistry: McpRegistry;
-  broker: GatewayConfig["broker"];
-  mcpCache: McpToolCache;
-  /** mcp_search가 System One에 묻는 함수 */
-  choose: Choose;
-  adminRequests: AdminRequests;
-}
-
 /** 등록된 provider 목록 (순서 = 도구 순서). 도구 이름은 provider끼리 겹치지 않는다 (MCP 도구는 mcp__ 접두사). */
-export function createDefaultToolProviders(deps: DefaultProviderDeps): ToolProvider[] {
-  return [
-    createSandboxToolProvider(),
-    createAskUserToolProvider(),
-    createRequestAdminToolProvider(deps.adminRequests),
-    createMcpToolProvider({ registry: deps.mcpRegistry, broker: deps.broker, cache: deps.mcpCache, choose: deps.choose }),
-  ];
+export function createDefaultToolProviders(deps: McpProviderDeps & { adminRequests: Pick<AdminRequests, "add"> }): ToolProvider[] {
+  return [createSandboxToolProvider(), createGatewayToolProvider(deps.adminRequests), createMcpToolProvider(deps)];
 }
 
 export class ToolRegistry {

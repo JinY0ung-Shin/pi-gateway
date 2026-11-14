@@ -80,8 +80,6 @@ secret() {
     fi
   done
 }
-gen48() { rand 48; }
-gen32() { rand 32; }
 # 입력을 화면에 보이지 않게 받는다. 비우면(또는 입력이 없으면) 빈 값
 ask_git_token() {
   local token=""
@@ -91,11 +89,11 @@ ask_git_token() {
 }
 
 G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
-secret sandboxd_jwt_secret gen48 "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
-secret broker_jwt_secret   gen48 "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
-secret broker_kek          gen32 "$B/broker_kek:0"
-secret admin_api_key       gen32 "$G/admin_api_key:$GW_UID"
-secret api_key             gen32 "$G/api_key:$GW_UID"
+secret sandboxd_jwt_secret "rand 48" "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
+secret broker_jwt_secret   "rand 48" "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
+secret broker_kek          "rand 32" "$B/broker_kek:0"
+secret admin_api_key       "rand 32" "$G/admin_api_key:$GW_UID"
+secret api_key             "rand 32" "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)
 secret user_api_keys       empty "$G/user_api_keys:$GW_UID"
 # 비공개 plugin marketplace 저장소의 git token: 파일이 없을 때만 묻는다 (빈 파일 = 쓰지 않음)

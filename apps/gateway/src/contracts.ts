@@ -87,14 +87,14 @@ export interface McpRegistry {
 
 // ── 관리 화면 (구현: src/admin) ────────────────────────────────────
 
-export interface SessionStats {
+interface SessionStats {
   liveSessions: number;
   activeTurns: number;
   queuedTurns: number;
 }
 
 /** 실행 중인 턴 (관리 화면에서 멈출 수 있다) */
-export interface ActiveTurn {
+interface ActiveTurn {
   user: string;
   responseId: string;
   startedAt: string;

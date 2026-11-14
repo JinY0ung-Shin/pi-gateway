@@ -13,7 +13,7 @@ import type { SandboxHandle } from "../sandbox/client.js";
  * uri와 내용은 로그·오류 메시지에 넣지 않는다.
  */
 
-export const ARTIFACTS_DIR = `${SANDBOX_WORKSPACE}/artifacts`;
+const ARTIFACTS_DIR = `${SANDBOX_WORKSPACE}/artifacts`;
 
 export interface SavedArtifacts {
   content: ContentBlock[];

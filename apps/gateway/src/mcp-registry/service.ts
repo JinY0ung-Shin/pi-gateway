@@ -16,14 +16,14 @@ import {
 } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { z } from "zod";
-import { badRequest, notFound, PlatformError } from "../admin/errors.js";
+import { badRequest, describe, issueList, notFound } from "../admin/errors.js";
 import type { GatewayConfig } from "../config.js";
 import type { McpRegistry } from "../contracts.js";
 import type { Db } from "../db.js";
 import { BrokerClient } from "./broker-client.js";
 import { SandboxServerStore } from "./store.js";
 
-export type McpStore = "sandbox" | "broker";
+type McpStore = "sandbox" | "broker";
 
 /** 관리 화면에 보여주는 서버 한 개. 비밀값은 들어 있지 않다. */
 export interface McpServerEntry {
@@ -45,15 +45,16 @@ export interface McpServerList {
 const SANDBOX_CREDENTIAL_HINT =
   "sandbox 서버의 env는 agent에게 보이므로 자격증명을 넣을 수 없습니다. 자격증명이 필요한 서버는 HTTP로 띄워 runIn=broker로 등록하고 {{secret:NAME}}을 쓰세요";
 
-function issueList(error: z.ZodError): string[] {
-  return error.issues.map((i) => `${i.path.join(".") || "config"}: ${i.message}`);
-}
-
 /** 스키마 밖의 규칙. upsert와 validate가 같은 규칙을 쓴다. */
-export function policyProblems(config: McpServerConfig): string[] {
+function policyProblems(config: McpServerConfig): string[] {
   const problems = findLiteralCredentials(config).map((p) => (config.runIn === "sandbox" ? `${p} — ${SANDBOX_CREDENTIAL_HINT}` : p));
   if (config.runIn === "broker" && config.id === "servers") problems.push("id 'servers' is reserved by the broker");
   return problems;
+}
+
+/** plugin이 등록한 서버인지 */
+export function ownedByPlugin(config: Pick<McpServerConfig, "source">, pluginId: string): boolean {
+  return config.source.kind === "plugin" && config.source.pluginId === pluginId;
 }
 
 function toEntry(view: McpServerView): McpServerEntry {
@@ -147,7 +148,7 @@ export class McpRegistryService implements McpRegistry {
   async validate(input: unknown): Promise<{ ok: boolean; errors: string[]; requiredSecrets: string[]; clearsSecrets: string[] }> {
     const result = McpServerConfig.safeParse(input);
     if (!result.success) {
-      return { ok: false, errors: issueList(result.error), requiredSecrets: [], clearsSecrets: [] };
+      return { ok: false, errors: issueList(result.error, "config"), requiredSecrets: [], clearsSecrets: [] };
     }
     const config = result.data;
     const errors = policyProblems(config);
@@ -160,23 +161,11 @@ export class McpRegistryService implements McpRegistry {
 
   /** 만들거나 바꾼다. runIn이 바뀌면 다른 저장소로 옮긴다. */
   async upsert(input: unknown): Promise<McpServerEntry> {
-    const parsed = McpServerConfig.safeParse(input);
-    if (!parsed.success) throw badRequest(issueList(parsed.error).join("; "), parsed.error.issues);
-    const config = parsed.data;
-    const problems = policyProblems(config);
-    if (problems.length > 0) throw badRequest(problems.join("; "), problems);
-    if (config.runIn === "sandbox") {
-      // 새 id면 broker에 같은 id가 있는지 본다 (있으면 옮기는 것이라 broker 쪽을 지운다). 이미 sandbox 서버면 묻지 않는다
-      // (id는 한 저장소에만 둔다). broker가 안 되면 503이다.
-      const remote = this.store.get(config.id) ? undefined : await this.#brokerEntry(config.id);
-      this.store.upsert(config);
-      if (remote) await this.#deleteBrokerServer(config.id);
-      return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
-    }
-    const view = await this.#broker.putServer(config);
-    this.#forwardHeaders = undefined;
-    this.store.delete(config.id);
-    return toEntry(view);
+    const config = validated(input);
+    // sandbox로 저장하는 새 id면 broker에 같은 id가 있는지 본다 (있으면 옮기는 것이라 broker 쪽을 지운다).
+    // 이미 sandbox 서버면 묻지 않는다 (id는 한 저장소에만 둔다). broker가 안 되면 503이다.
+    const inBroker = config.runIn === "sandbox" && !this.store.get(config.id) && (await this.#brokerEntry(config.id)) !== undefined;
+    return this.#save(config, inBroker);
   }
 
   async remove(id: string): Promise<void> {
@@ -215,20 +204,14 @@ export class McpRegistryService implements McpRegistry {
   }
 
   /**
-   * plugin이 등록하는 서버. 같은 plugin이 이미 등록한 서버가 있으면, 지난번 매핑(baseline)과 비교해
-   * 관리자가 실제로 바꾼 값만 유지한다 (mergeWithBaseline).
+   * plugin이 등록하는 서버. current는 그 id의 현재 설정이다 (부른 쪽이 currentConfig로 읽었고, 같은 plugin의 서버다).
+   * 있으면 지난번 매핑(baseline)과 비교해 관리자가 실제로 바꾼 값만 유지한다 (mergeWithBaseline).
    */
-  async upsertPluginServer(mapped: McpServerConfig, baseline: McpServerConfig | null): Promise<McpServerEntry> {
-    const existing = await this.currentConfig(mapped.id);
-    let next = mapped;
-    if (existing) {
-      const sameOwner =
-        existing.source.kind === "plugin" && mapped.source.kind === "plugin" && existing.source.pluginId === mapped.source.pluginId;
-      if (!sameOwner) throw new PlatformError(409, "mcp_id_taken", `MCP server id '${mapped.id}' is already used by another server`);
-      // 지난 매핑이 없으면 관리자가 바꾼 값을 알 수 없으므로 새 매핑을 쓴다
-      if (baseline) next = mergeWithBaseline(baseline, existing, mapped);
-    }
-    return this.upsert(next);
+  async upsertPluginServer(mapped: McpServerConfig, baseline: McpServerConfig | null, current: McpServerConfig | undefined): Promise<McpServerEntry> {
+    // 지난 매핑이 없으면 관리자가 바꾼 값을 알 수 없으므로 새 매핑을 쓴다
+    const config = validated(current && baseline ? mergeWithBaseline(baseline, current, mapped) : mapped);
+    // broker에 저장된 설정은 runIn이 broker다 (sandbox 설정은 gateway DB에만 있다).
+    return this.#save(config, current?.runIn === "broker");
   }
 
   /**
@@ -236,13 +219,12 @@ export class McpRegistryService implements McpRegistry {
    * broker에 물어야 하는데 안 되면 503.
    */
   async pluginServers(pluginId: string, options: { broker?: boolean } = {}): Promise<McpServerEntry[]> {
-    const owned = (c: McpServerConfig) => c.source.kind === "plugin" && c.source.pluginId === pluginId;
     const local: McpServerEntry[] = this.store.listByPlugin(pluginId).map((config) => ({
       store: "sandbox",
       config,
       requiredSecrets: requiredSecretNames(config),
     }));
-    const remote = options.broker !== false ? (await this.#broker.listServers()).filter((v) => owned(v.config)).map(toEntry) : [];
+    const remote = options.broker !== false ? (await this.#broker.listServers()).filter((v) => ownedByPlugin(v.config, pluginId)).map(toEntry) : [];
     return [...local, ...remote];
   }
 
@@ -257,24 +239,26 @@ export class McpRegistryService implements McpRegistry {
    * plugin이 등록한 서버를 모두 지운다. broker 쪽을 먼저 지우고, 안 되면 아무것도 지우지 않고 503.
    * broker: false면 broker에 묻지 않는다 (plugin 기록상 broker 서버가 없을 때).
    */
-  async removePluginServers(pluginId: string, options: { broker?: boolean } = {}): Promise<string[]> {
-    const removed: string[] = [];
-    if (options.broker !== false) {
-      for (const view of await this.#broker.listServers()) {
-        if (view.config.source.kind === "plugin" && view.config.source.pluginId === pluginId) {
-          await this.#deleteBrokerServer(view.config.id);
-          removed.push(view.config.id);
-        }
-      }
-    }
-    for (const config of this.store.listByPlugin(pluginId)) {
-      this.store.delete(config.id);
-      removed.push(config.id);
-    }
-    return removed;
+  async removePluginServers(pluginId: string, options: { broker?: boolean } = {}): Promise<void> {
+    const entries = await this.pluginServers(pluginId, options);
+    for (const e of entries) if (e.store === "broker") await this.#deleteBrokerServer(e.config.id);
+    for (const e of entries) if (e.store === "sandbox") this.store.delete(e.config.id);
   }
 
   // ── 내부 ───────────────────────────────────────────────────────
+
+  /** 검사를 마친 설정을 저장한다. inBroker: 같은 id의 broker 서버가 있다 (sandbox로 옮기면 지운다). */
+  async #save(config: McpServerConfig, inBroker: boolean): Promise<McpServerEntry> {
+    if (config.runIn === "sandbox") {
+      this.store.upsert(config);
+      if (inBroker) await this.#deleteBrokerServer(config.id);
+      return { store: "sandbox", config, requiredSecrets: requiredSecretNames(config) };
+    }
+    const view = await this.#broker.putServer(config);
+    this.#forwardHeaders = undefined;
+    this.store.delete(config.id);
+    return toEntry(view);
+  }
 
   async #deleteBrokerServer(id: string): Promise<boolean> {
     const deleted = await this.#broker.deleteServer(id);
@@ -289,7 +273,7 @@ export class McpRegistryService implements McpRegistry {
   }
 
   /** sandbox 서버는 세션에서 처음 쓸 때 시작되므로, 여기서는 설정과 plugin 파일만 확인한다. */
-  #staticCheck(config: McpServerConfig): z.infer<typeof TestServerResponse> & { note: string } {
+  #staticCheck(config: McpServerConfig): TestServerResponse {
     const started = Date.now();
     const note = "sandbox 서버는 세션에서 처음 사용할 때 사용자 sandbox 안에서 시작됩니다. 여기서는 설정과 파일만 확인했습니다.";
     if (config.transport.type === "stdio") {
@@ -314,6 +298,15 @@ function originOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** 스키마와 정책(policyProblems) 검사를 거친 설정. 맞지 않으면 400. */
+function validated(input: unknown): McpServerConfig {
+  const parsed = McpServerConfig.safeParse(input);
+  if (!parsed.success) throw badRequest(issueList(parsed.error, "config").join("; "));
+  const problems = policyProblems(parsed.data);
+  if (problems.length > 0) throw badRequest(problems.join("; "));
+  return parsed.data;
 }
 
 /** 세 값 병합: 현재 값이 baseline과 같으면(관리자가 안 바꿨으면) 새 매핑을, 다르면 현재 값을 쓴다. */
@@ -378,7 +371,3 @@ export function mergeWithBaseline(base: McpServerConfig, current: McpServerConfi
   return merged;
 }
 
-function describe(error: unknown): string {
-  if (error instanceof PlatformError) return `${error.code}: ${error.message}`;
-  return error instanceof Error ? error.message : String(error);
-}

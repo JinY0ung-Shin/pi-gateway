@@ -42,7 +42,7 @@ export async function readPluginManifest(pluginDir: string): Promise<JsonObject 
 }
 
 /** marketplace 이름·plugin 이름 (디렉토리 이름으로도 쓴다) */
-export const COMPONENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const COMPONENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export function safeName(value: unknown, what: string): string {
   if (typeof value !== "string" || !COMPONENT_NAME.test(value) || value === "." || value === "..") {

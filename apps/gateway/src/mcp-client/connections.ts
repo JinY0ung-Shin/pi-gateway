@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DEFAULT_MAX_BYTES, formatSize, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { McpClient, StreamableHttpTransport, type Tool, toLlmContent } from "@earendil-works/pi-mcp";
+import { McpClient, normalizeMcpInputSchema, PipeTransport, StreamableHttpTransport, type Tool, toLlmContent } from "@earendil-works/pi-mcp";
 import {
   AUD_BROKER,
   isToolAllowed,
@@ -8,17 +8,17 @@ import {
   mcpToolName,
   type RequestContext,
   renderTemplate,
+  SANDBOX_HOME,
   SANDBOX_WORKSPACE,
   signInternalToken,
   traceHeaders,
 } from "@pi-gateway/shared";
 import type { Logger } from "pino";
 import type { GatewayConfig } from "../config.js";
-import type { SandboxHandle } from "../sandbox/client.js";
+import type { AttachedProcess, SandboxHandle } from "../sandbox/client.js";
 import { guardImageBlocks } from "../tools/image-guard.js";
 import { hasArtifacts, type SavedArtifacts, saveArtifacts } from "./artifacts.js";
 import { fillFileArgs, modelSchema } from "./file-args.js";
-import { AttachedStdioTransport } from "./attached-transport.js";
 
 /**
  * 한 세션이 MCP 서버들에 맺는 연결.
@@ -44,7 +44,7 @@ const requestTimeoutMs = (server: McpServerHandle) =>
 export const SANDBOX_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /** sandbox MCP 서버 기본 env. 서버 설정의 env가 같은 이름을 주면 그 값이 이긴다 (관리자 설정). */
-export const SANDBOX_MCP_BASE_ENV: Readonly<Record<string, string>> = {
+const SANDBOX_MCP_BASE_ENV: Readonly<Record<string, string>> = {
   PATH: SANDBOX_SYSTEM_PATH,
   // python이 workspace의 user site-packages(~/.local)를 import하지 않게 한다 (sitecustomize 심기 방지).
   PYTHONNOUSERSITE: "1",
@@ -66,8 +66,8 @@ export async function resolveSandboxCommand(sandbox: Pick<SandboxHandle, "stat">
   throw new Error(`MCP server command '${command}' was not found in the sandbox system PATH (${SANDBOX_SYSTEM_PATH})`);
 }
 
-/** plugin 설치 때 `${CLAUDE_PLUGIN_DATA}`가 이 아래 경로로 바뀐다 (plugin별 영구 데이터 디렉토리). */
-const PLUGIN_DATA_DIR = /\/workspace\/\.home\/\.plugin-data\/[A-Za-z0-9._-]+/g;
+/** plugin 설치 때 `${CLAUDE_PLUGIN_DATA}`가 이 아래 경로로 바뀐다 (plugin별 영구 데이터 디렉토리, plugins/service.ts pluginDataDir). */
+const PLUGIN_DATA_DIR = new RegExp(`${SANDBOX_HOME.replace(/[.]/g, "\\.")}/\\.plugin-data/[A-Za-z0-9._-]+`, "g");
 
 /** 문자열들이 참조하는 plugin 데이터 디렉토리 */
 export function pluginDataDirs(values: readonly string[]): string[] {
@@ -108,7 +108,7 @@ export class McpToolCache {
   }
 }
 
-export interface McpConnectionDeps {
+interface McpConnectionDeps {
   broker: GatewayConfig["broker"];
   sandbox: SandboxHandle;
   principal: string;
@@ -124,10 +124,6 @@ export interface McpConnectionDeps {
 /** tool_execution_update의 details. SSE `response.tool_progress`(source=mcp)로 바뀐다. */
 export interface McpProgressDetails {
   mcpProgress: { progress: number; total?: number; message?: string };
-}
-
-function toParameters(schema: Record<string, unknown>): Record<string, unknown> {
-  return { ...schema, type: schema.type ?? "object", ...(schema.properties === undefined ? { properties: {} } : {}) };
 }
 
 function configHash(config: McpServerConfig): string {
@@ -227,6 +223,38 @@ export function wholeSseEvents(response: Response): Response {
     }),
   );
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+/** 한 줄 JSON-RPC 메시지의 최대 크기 (MCP stdio 관례와 같은 10MB) */
+const MAX_STDIO_MESSAGE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * sandbox 안의 stdio MCP 서버(sandboxd `/v1/attach`)에 붙는 transport. 줄 단위 JSON-RPC는 pi-mcp PipeTransport가 읽는다.
+ * attach에는 stdin만 닫는 방법이 없어 닫을 때는 연결을 닫는다 (sandboxd가 프로세스를 끝낸다: SIGTERM, 5초 뒤 SIGKILL).
+ * 그때 끝났다고 보고 exit 알림을 기다리지 않는다.
+ */
+export function attachedStdioTransport(spawn: () => Promise<AttachedProcess>, onStderr: (text: string) => void): PipeTransport {
+  return new PipeTransport({
+    maxMessageBytes: MAX_STDIO_MESSAGE_BYTES,
+    // 남겨 둔 stderr 끝부분은 읽지 않는다 (로그에는 onStderr가 쓴다).
+    maxStderrBytes: 2000,
+    onStderr,
+    open: async (handlers) => {
+      const proc = await spawn();
+      proc.onStdout(handlers.onStdout);
+      proc.onStderr(handlers.onStderr);
+      let settle!: (error?: Error) => void;
+      const exited = new Promise<void>((resolve, reject) => {
+        settle = (error) => (error ? reject(error) : resolve());
+      });
+      proc.onExit((info) => settle(info.error ? new Error(info.error) : undefined));
+      const close = () => {
+        proc.close();
+        settle();
+      };
+      return { write: (data) => proc.write(typeof data === "string" ? data : Buffer.from(data)), closeStdin: close, close, exited };
+    },
+  });
 }
 
 /** promise를 signal과 경쟁시킨다 (promise 자체는 취소되지 않는다). */
@@ -405,7 +433,7 @@ export class McpConnectionSet {
       const cwd = stdio.cwd ? render(stdio.cwd) : SANDBOX_WORKSPACE;
       // plugin 데이터 디렉토리는 서버가 처음 뜨기 전에 만들어 둔다 (Claude Code도 hook·MCP 실행 전에 만든다).
       for (const dir of pluginDataDirs([...argv, ...Object.values(env), cwd])) await this.deps.sandbox.mkdir(dir);
-      const transport = new AttachedStdioTransport(
+      const transport = attachedStdioTransport(
         () => this.deps.sandbox.attach({ argv, cwd, env }, this.lifetime.signal),
         (text) => this.deps.log.debug({ server: server.id, stderr: text.slice(0, 2000) }, "sandbox MCP stderr"),
       );
@@ -431,7 +459,7 @@ export class McpConnectionSet {
       name,
       label,
       description: tool.description?.trim() || tool.title || `MCP tool ${tool.name} from server ${server.displayName ?? server.id}`,
-      parameters: toParameters(shown) as never,
+      parameters: normalizeMcpInputSchema(shown) as never,
       execute: async (toolCallId, params, signal, onUpdate) => {
         let args = (params ?? {}) as Record<string, unknown>;
         if (takesFiles && this.deps.readOnly) throw new Error("This session is read-only: files of the workspace cannot be sent.");

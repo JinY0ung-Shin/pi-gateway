@@ -2,14 +2,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createModelRuntime } from "../src/agent/runtime.js";
 import { openDatabase } from "../src/db.js";
 import { startFakeLlm } from "./fixtures/fake-llm.js";
-import { ALICE_KEY, type Harness, startHarness } from "./helpers.js";
+import { ADMIN_KEY, ALICE_KEY, type Harness, startHarness } from "./helpers.js";
 
-const ADMIN_KEY = "admin-key-for-tests-0123456789";
 const admin = { authorization: `Bearer ${ADMIN_KEY}` };
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { ADMIN_API_KEY: ADMIN_KEY } });
+  h = await startHarness();
 });
 afterAll(async () => {
   await h.close();

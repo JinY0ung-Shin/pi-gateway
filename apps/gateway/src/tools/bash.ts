@@ -42,15 +42,12 @@ export function createSandboxBashTool(sandbox: SandboxHandle, sandboxEnv: () => 
         onUpdate?.({ content: [{ type: "text", text: t.content }], details: t.truncated ? { truncation: t } : undefined });
       };
       const onData = (chunk: Buffer) => {
-        if (captured + chunk.length > MAX_CAPTURE_BYTES) {
+        chunks.push(chunk);
+        captured += chunk.length;
+        if (captured > MAX_CAPTURE_BYTES) {
           dropped = true;
           // 끝부분을 유지한다 (오류는 보통 끝에 있다).
-          chunks.push(chunk);
-          captured += chunk.length;
           while (captured > MAX_CAPTURE_BYTES && chunks.length > 1) captured -= chunks.shift()!.length;
-        } else {
-          chunks.push(chunk);
-          captured += chunk.length;
         }
         if (!onUpdate || updateTimer) return;
         const delay = UPDATE_THROTTLE_MS - (Date.now() - lastUpdate);

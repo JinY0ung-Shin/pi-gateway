@@ -1,22 +1,24 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PromptTemplate, Skill } from "@earendil-works/pi-coding-agent";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import { jwtSecretBytes, type McpServerConfig, type VisibleServer } from "@pi-gateway/shared";
 import pino from "pino";
-import { LlmServer, LlmSettings } from "../src/agent/runtime.js";
 import type { z } from "zod";
+import { LlmServer, LlmSettings } from "../src/agent/runtime.js";
+import { parseResponseId } from "../src/api/request.js";
 import { createGateway, type Gateway, type GatewayOverrides } from "../src/app.js";
 import { type GatewayConfig, loadConfig } from "../src/config.js";
 import type { McpRegistry, PluginResources, PromptService, SubagentDefinition } from "../src/contracts.js";
 import { openDatabase } from "../src/db.js";
 import { type FakeBroker, type FakeBrokerTool, startFakeBroker } from "./fixtures/fake-broker.js";
-import { type FakeLlm, startFakeLlm } from "./fixtures/fake-llm.js";
+import { type ChatRequest, type FakeLlm, startFakeLlm } from "./fixtures/fake-llm.js";
 import { type FakeSandboxd, startFakeSandboxd } from "./fixtures/fake-sandboxd.js";
 
 export const ALICE_KEY = "alice-key-0123456789abcdef";
 export const BOB_KEY = "bob-key-0123456789abcdefgh";
 export const SERVICE_KEY = "service-key-0123456789abcdef";
+export const ADMIN_KEY = "admin-key-for-tests-0123456789";
 const SANDBOXD_SECRET = "sandboxd-secret-".padEnd(40, "x");
 const BROKER_SECRET = "broker-secret-".padEnd(40, "y");
 
@@ -38,7 +40,6 @@ export interface HarnessOptions {
   brokerServers?: Record<string, FakeBrokerTool[]>;
   sandboxServers?: McpServerConfig[];
   skills?: Skill[];
-  promptTemplates?: PromptTemplate[];
   agents?: SubagentDefinition[];
   overrides?: Partial<GatewayOverrides>;
 }
@@ -54,6 +55,8 @@ export interface Harness {
   prompt: { text: string };
   post(body: unknown, opts?: { key?: string | null; headers?: Record<string, string> }): Promise<{ status: number; headers: Headers; json: any }>;
   stream(body: unknown, opts?: { key?: string | null; headers?: Record<string, string> }): Promise<{ status: number; events: SseEvent[]; raw: string; json?: any }>;
+  /** 관리 API (`/admin/api{path}`)를 ADMIN_KEY로 부른다 */
+  admin(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }>;
   close(): Promise<void>;
 }
 
@@ -81,6 +84,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   const env: Record<string, string> = {
     USER_API_KEYS: JSON.stringify({ alice: ALICE_KEY, bob: BOB_KEY }),
     API_KEY: SERVICE_KEY,
+    ADMIN_API_KEY: ADMIN_KEY,
     SANDBOXD_URL: options.sandboxd?.url ?? sandbox.url,
     SANDBOXD_JWT_SECRET: options.sandboxd?.secret ?? SANDBOXD_SECRET,
     DATA_DIR: dataDir,
@@ -100,7 +104,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   };
   const plugins: PluginResources = {
     skills: () => options.skills ?? [],
-    promptTemplates: () => options.promptTemplates ?? [],
+    promptTemplates: () => [],
     agents: () => options.agents ?? [],
   };
   const mcpRegistry: McpRegistry = {
@@ -178,6 +182,14 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       }
       return { status: res.status, events: parseSse(raw), raw };
     },
+    async admin(method, path, body) {
+      const res = await fetch(`${url}/admin/api${path}`, {
+        method,
+        headers: { authorization: `Bearer ${ADMIN_KEY}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      return { status: res.status, json: (await res.json()) as any };
+    },
     async close() {
       try {
         await gateway.close();
@@ -194,3 +206,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
 /** SSE 이벤트 중 특정 타입 */
 export const ofType = (events: SseEvent[], type: string) => events.filter((e) => e.type === type);
 export const last = (events: SseEvent[]) => events[events.length - 1]!;
+/** 응답 id의 세션 id */
+export const sessionOf = (responseId: string) => parseResponseId(responseId)!.sessionId;
+/** LLM 요청에 선언된 도구 이름 (정렬) */
+export const toolNames = (request: ChatRequest) => (request.tools ?? []).map((t) => t.function.name).sort();

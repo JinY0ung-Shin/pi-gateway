@@ -54,7 +54,7 @@ export interface ToolStat {
   avgMs: number;
 }
 
-export interface TurnStat {
+interface TurnStat {
   turns: number;
   /** 예전 응답에서 갈라진 턴 (메시지 수정·재생성) */
   branched: number;

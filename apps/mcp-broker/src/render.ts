@@ -28,10 +28,6 @@ export interface RenderResult {
   headerCredentials: string[];
 }
 
-export class ConfigError extends Error {
-  override name = "ConfigError";
-}
-
 export class MissingSessionError extends Error {
   override name = "MissingSessionError";
   constructor() {
@@ -69,7 +65,7 @@ export function renderTransport(config: McpServerConfig, identity: Identity, sec
   const render = (input: string): string => renderTemplate(input, values);
 
   const t = config.transport;
-  if (t.type !== "http") throw new ConfigError("broker servers must use the http transport");
+  if (t.type !== "http") throw new Error("broker servers must use the http transport");
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(t.headers)) headers[k] = render(v);
   return { transport: { url: render(t.url), headers }, headerCredentials };

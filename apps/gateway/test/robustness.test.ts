@@ -8,13 +8,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { SandboxClient, SandboxError } from "../src/sandbox/client.js";
 import { TurnLimiter } from "../src/sessions/limiter.js";
-import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
+import { BOB_KEY, type Harness, last, ofType, sessionOf, startHarness } from "./helpers.js";
 
 /** core 리뷰에서 나온 버그들의 회귀 테스트 */
 
 const stdioServer = fileURLToPath(new URL("./fixtures/stdio-mcp-server.mjs", import.meta.url));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
 describe("1. a stalled sandbox attach cannot hang a turn", () => {
   it("SandboxClient.attach gives up when the process never starts", async () => {
@@ -104,7 +103,7 @@ describe("2. MCP tools/call is never retried", () => {
 
 describe("3. the turn limiter has no head-of-line blocking", () => {
   it("a user waiting on its own cap does not block other users while global slots are free", async () => {
-    const lim = new TurnLimiter(4, 1, 100, 1500);
+    const lim = new TurnLimiter(4, 1, 1500);
     const releaseA1 = await lim.acquire("alice");
     const a2 = lim.acquire("alice");
     const t0 = Date.now();
@@ -118,7 +117,7 @@ describe("3. the turn limiter has no head-of-line blocking", () => {
   });
 
   it("close() rejects waiters and later acquires", async () => {
-    const lim = new TurnLimiter(1, 1, 10, 5000);
+    const lim = new TurnLimiter(1, 1, 5000);
     const r1 = await lim.acquire("a");
     const waiting = lim.acquire("b");
     lim.close(new Error("shutting down"));
@@ -220,6 +219,7 @@ describe("6-8. empty replies, merged questions, cache isolation", () => {
     const ev = last(empty.events);
     expect(ev.type).toBe("response.failed");
     expect((ev.data.response as any).error).toEqual({ code: "empty_response", message: "No response generated" });
+    expect(ofType(empty.events, "response.output_item.added")).toHaveLength(0);
     expect(h.gateway.store.get(sessionOf(first.json.id))!.turn).toBe(1);
     h.llm.enqueue({ text: "" });
     const nonStream = await h.post({ input: "again", previous_response_id: first.json.id });

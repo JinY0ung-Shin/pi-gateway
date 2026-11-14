@@ -37,12 +37,10 @@ export function testConfig(overrides: Partial<SandboxdConfig> = {}): SandboxdCon
     nanoCpus: 1_000_000_000,
     pidsLimit: 128,
     tmpSize: "64m",
-    shmSizeBytes: 64 * 1024 * 1024,
     idleSeconds: 900,
     reapIntervalMs: 60_000,
     containerPrefix: "pi-sbx-test-",
     instance: "unit",
-    fsTimeoutSeconds: 60,
     ...overrides,
   };
 }

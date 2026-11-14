@@ -65,9 +65,9 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   const sandboxClient = new SandboxClient({ baseUrl: config.sandboxd.url, jwtSecret: config.sandboxd.jwtSecret });
   const adminRequests = new AdminRequests(db);
   const providers = createDefaultToolProviders({
-    mcpRegistry,
+    registry: mcpRegistry,
     broker: config.broker,
-    mcpCache: new McpToolCache(),
+    cache: new McpToolCache(),
     choose: models.choose,
     adminRequests,
   });
@@ -94,7 +94,6 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
   const limiter = new TurnLimiter(
     config.sessions.maxConcurrentTurns,
     config.sessions.maxConcurrentTurnsPerUser,
-    config.sessions.maxQueuedTurns,
     config.sessions.queueTimeoutSeconds * 1000,
   );
 

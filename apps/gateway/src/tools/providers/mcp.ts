@@ -18,6 +18,7 @@ export interface McpProviderDeps {
   registry: McpRegistry;
   broker: GatewayConfig["broker"];
   cache: McpToolCache;
+  /** mcp_search가 System One에 묻는 함수 */
   choose: Choose;
 }
 

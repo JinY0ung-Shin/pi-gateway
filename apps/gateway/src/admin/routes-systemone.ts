@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 import { probeLlmServer, SystemOneModel, type SystemOneRecord, testSystemOne } from "../agent/runtime.js";
 import type { AdminContext } from "./context.js";
-import { PlatformError } from "./errors.js";
+import { PlatformError, parseBody } from "./errors.js";
+import { hideKey, withStoredKey } from "./routes-llm.js";
 
 /**
  * System One 설정 (mcp_search가 쓰는 decision model 서버: 주소, 키, 헤더, 모델 id). 저장하면 바로 적용된다.
@@ -14,20 +15,11 @@ export function registerSystemOneRoutes(app: FastifyInstance, ctx: AdminContext)
 
   const view = (record: SystemOneRecord | null) => {
     if (!record) return { model: null, updatedAt: null };
-    const { apiKey, ...model } = record.model;
-    return { model: { ...model, apiKeySet: apiKey !== "" }, updatedAt: record.updatedAt };
+    return { model: hideKey(record.model), updatedAt: record.updatedAt };
   };
 
-  const parse = <T>(schema: z.ZodType<T>, input: unknown): T => {
-    const withKey =
-      typeof input === "object" && input !== null && !Array.isArray(input) && (input as { apiKey?: unknown }).apiKey === undefined
-        ? { ...input, apiKey: llm.systemOne()?.model.apiKey ?? "" }
-        : input;
-    const parsed = schema.safeParse(withKey);
-    if (parsed.success) return parsed.data;
-    const issues = parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message }));
-    throw new PlatformError(400, "invalid_systemone_model", issues.map((i) => `${i.path || "model"}: ${i.message}`).join("; "), issues);
-  };
+  const parse = <T>(schema: z.ZodType<T>, input: unknown): T =>
+    parseBody(schema, withStoredKey(input, () => llm.systemOne()?.model.apiKey), { code: "invalid_systemone_model", root: "model" });
 
   app.get("/systemone", async () => view(llm.systemOne()));
 

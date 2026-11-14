@@ -67,14 +67,12 @@ describe("BrokerStore secrets", () => {
     transport: { type: "http" as const, url: "https://example.com/mcp", headers: { Authorization: "Bearer {{secret:TOKEN}}" } },
   };
 
-  it("DB에는 평문이 남지 않고, 버전이 오르며, missingSecrets를 계산한다", () => {
+  it("DB에는 평문이 남지 않고, 버전이 오른다", () => {
     const { db, store } = makeStore();
     store.upsertServer(config);
-    expect(store.missingSecrets(store.getServer("svc")!)).toEqual(["TOKEN"]);
     const first = store.putSecret("svc", "TOKEN", "plain-text-secret-1")!;
     const second = store.putSecret("svc", "TOKEN", "plain-text-secret-2")!;
     expect(second.version).toBe(first.version + 1);
-    expect(store.missingSecrets(store.getServer("svc")!)).toEqual([]);
     const dump = JSON.stringify(db.prepare("SELECT * FROM secrets").all());
     expect(dump).not.toContain("plain-text-secret");
     expect(store.resolveSecrets("svc").values.get("TOKEN")).toBe("plain-text-secret-2");

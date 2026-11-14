@@ -4,9 +4,8 @@ import { userKey } from "@pi-gateway/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compactionTokens } from "../src/agent/session-factory.js";
 import { contextTokensAfterCompaction, estimateContext, type ResponseUsage } from "../src/api/mapper.js";
-import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, parseSse, startHarness } from "./helpers.js";
+import { ALICE_KEY, BOB_KEY, type Harness, last, ofType, parseSse, sessionOf, startHarness } from "./helpers.js";
 
-const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
 
 describe("session lifecycle", () => {
   let h: Harness;
@@ -194,7 +193,7 @@ describe("compaction events", () => {
     const { usage } = done.data.response as { usage: ResponseUsage };
     expect(usage.context_window).toBe(32000);
     // 요약 전 usage(입력 30000 + 출력 20)에서 대화 몫이, 대화 추정치(글자 수 / 4)가 준 비율만큼 준다. pi의 추정치 그대로가 아니다
-    const after = estimateContext(h.gateway.hub.get(sessionOf(first.json.id))!.agent.session);
+    const after = estimateContext(h.gateway.hub.get(sessionOf(first.json.id))!.session);
     const before = { system: after.system, conversation: texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0) };
     expect(after.conversation).toBeLessThan(before.conversation);
     expect(usage.input_tokens_details.context_tokens).toBe(contextTokensAfterCompaction(30020, before, after));
@@ -277,7 +276,7 @@ describe("POST /v1/responses/{id}/compact", () => {
     expect(res.done.status).toBe("completed");
     expect(res.done.tokens_before).toBe(5005);
     // 시스템 프롬프트 몫은 그대로 두고, 나머지(대화)가 대화 추정치가 준 비율만큼 준다
-    const after = estimateContext(h.gateway.hub.get(sessionOf(second.json.id))!.agent.session);
+    const after = estimateContext(h.gateway.hub.get(sessionOf(second.json.id))!.session);
     const before = { system: after.system, conversation: texts.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0) };
     expect(after.conversation).toBeLessThan(before.conversation);
     expect(res.done.tokens_after).toBe(contextTokensAfterCompaction(5005, before, after));
