@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -15,6 +15,8 @@ import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js"
 const stdioServer = fileURLToPath(new URL("./fixtures/stdio-mcp-server.mjs", import.meta.url));
 
 const FILE_BYTES = Buffer.from([0, 1, 2, 3, 250, 251, 252, 253, 254, 255]);
+/** What the `stage` tool of the demo server received, call by call. */
+const staged: Record<string, unknown>[] = [];
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
 let h: Harness;
@@ -35,6 +37,32 @@ beforeAll(async () => {
           handler: (args) => ({
             content: [{ type: "image", data: (args.bomb ? bombPng() : tinyPng()).toString("base64"), mimeType: "image/png" }],
           }),
+        },
+        {
+          name: "stage",
+          description: "stage files",
+          inputSchema: {
+            type: "object",
+            properties: {
+              note: { type: "string" },
+              files: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    field: { type: "string" },
+                    file: { type: "object", "x-workspace-file": true, description: "The file to stage." },
+                  },
+                  required: ["file"],
+                },
+              },
+            },
+            required: ["files"],
+          },
+          handler: (args) => {
+            staged.push(args);
+            return { text: `staged ${(args.files as unknown[]).length}` };
+          },
         },
         {
           name: "file",
@@ -318,6 +346,95 @@ describe("MCP file results", () => {
     const { result, sessionId } = await callFile("f7", {}, { read_only: true });
     expect(String(result.content)).toContain("[binary resource");
     expect(filesOf(sessionId)).toEqual([]);
+  });
+});
+
+describe("MCP file arguments", () => {
+  const ws = () => h.sandbox.workspaceOf("alice");
+  const put = (rel: string, content: Buffer | string) => {
+    mkdirSync(join(ws(), rel, ".."), { recursive: true });
+    writeFileSync(join(ws(), rel), content);
+  };
+  const stage = async (id: string, files: unknown[], body: Record<string, unknown> = {}) => {
+    h.llm.enqueue({ toolCalls: [{ id, name: "mcp_call", arguments: { name: "mcp__demo__stage", arguments: { note: "n", files } } }] }, { text: "ok" });
+    const before = h.llm.requests.length;
+    const res = await h.stream({ input: "stage", ...body });
+    return { result: ofType(res.events, "response.tool_result")[0]!.data, llm: JSON.stringify(h.llm.requests.slice(before)) };
+  };
+
+  it("shows a file argument to the model as a workspace path, not as the server's object", async () => {
+    h.llm.enqueue({ toolCalls: [{ id: "fa0", name: "mcp_search", arguments: { query: "stage files" } }] }, { text: "ok" });
+    const res = await h.stream({ input: "find" });
+    const found = String(ofType(res.events, "response.tool_result")[0]!.data.content);
+    expect(found).toContain("## mcp__demo__stage");
+    expect(found).toContain('"file":{"type":"string","description":"The file to stage. Absolute path of a file under /workspace (pdf, docx,');
+    expect(found).not.toContain("x-workspace-file");
+    // A tool without a file argument keeps its schema as the server gave it.
+    h.llm.enqueue({ toolCalls: [{ id: "fa0b", name: "mcp_search", arguments: { query: "echo back" } }] }, { text: "ok" });
+    const echo = String(ofType((await h.stream({ input: "find" })).events, "response.tool_result")[0]!.data.content);
+    expect(echo).toContain('Parameters: {"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}');
+  });
+
+  it("sends the files of the paths the model named: name, type, size, checksum and the bytes — and the model never sees the bytes", async () => {
+    const png = tinyPng();
+    put("out/capture.png", png);
+    put("out/map 1.csv", "a,b\n1,2\n");
+    staged.length = 0;
+    const { result, llm } = await stage("fa1", [
+      { field: "capture", file: "/workspace/out/capture.png" },
+      { field: "maps", file: "out/map 1.csv" },
+    ]);
+    expect(result).toMatchObject({ is_error: false, content: "staged 2" });
+    expect(staged).toHaveLength(1);
+    const [capture, map] = (staged[0]!.files as { field: string; file: Record<string, unknown> }[]).map((f) => ({ field: f.field, ...f.file }));
+    expect(capture).toEqual({ field: "capture", filename: "capture.png", mimeType: "image/png", size: png.length, sha256: sha256(png), data: png.toString("base64") });
+    expect(map).toMatchObject({ field: "maps", filename: "map 1.csv", mimeType: "text/csv", size: 8, sha256: sha256(Buffer.from("a,b\n1,2\n")) });
+    // Arguments nobody marked are passed as they are.
+    expect(staged[0]!.note).toBe("n");
+    // What the model wrote and reads back is the path.
+    expect(llm).toContain("/workspace/out/capture.png");
+    expect(llm).not.toContain(png.toString("base64").slice(0, 40));
+  });
+
+  it("refuses a path that is not a regular, non-empty, allowed file of the workspace, and makes no call", async () => {
+    put("out/empty.png", "");
+    put("out/run.exe", "MZ");
+    mkdirSync(join(ws(), "out", "dir.png"), { recursive: true });
+    symlinkSync("/etc/hostname", join(ws(), "out", "link.txt"));
+    symlinkSync("/etc", join(ws(), "out", "etc"));
+    put("out/ok.txt", "ok");
+    const cases: [unknown, RegExp][] = [
+      ["/etc/hostname.txt", /is outside \/workspace/],
+      ["out/../../etc/hostname.txt", /is outside \/workspace/],
+      ["/tmp/x.txt", /is outside \/workspace/],
+      ["out/missing.png", /does not exist/],
+      ["out/empty.png", /is empty/],
+      ["out/run.exe", /cannot be sent: only \.pdf/],
+      ["out/dir.png", /is not a regular file/],
+      ["out/link.txt", /goes through a symbolic link \(\/workspace\/out\/link\.txt\)/],
+      ["out/etc/hostname.txt", /goes through a symbolic link \(\/workspace\/out\/etc\)/],
+      // The model's schema says "a path": an object (file content typed by hand) fails validation before anything is read.
+      [{ data: "AAAA" }, /Validation failed for tool/],
+    ];
+    staged.length = 0;
+    for (const [file, message] of cases) {
+      // One good file next to the bad one: nothing of the call goes out.
+      const { result } = await stage("fa2", [{ field: "a", file: "out/ok.txt" }, { field: "b", file }]);
+      expect(result.is_error).toBe(true);
+      expect(String(result.content)).toMatch(message);
+    }
+    const { result } = await stage("fa3", Array.from({ length: 11 }, () => ({ file: "out/ok.txt" })));
+    expect(String(result.content)).toContain("At most 10 files can be sent in one call.");
+    expect(staged).toEqual([]);
+  });
+
+  it("does not send workspace files from a read_only session", async () => {
+    put("out/ok.txt", "ok");
+    staged.length = 0;
+    const { result } = await stage("fa4", [{ file: "out/ok.txt" }], { read_only: true });
+    expect(result.is_error).toBe(true);
+    expect(String(result.content)).toContain("This session is read-only: files of the workspace cannot be sent.");
+    expect(staged).toEqual([]);
   });
 });
 

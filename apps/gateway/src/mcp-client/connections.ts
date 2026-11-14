@@ -17,6 +17,7 @@ import type { GatewayConfig } from "../config.js";
 import type { SandboxHandle } from "../sandbox/client.js";
 import { guardImageBlocks } from "../tools/image-guard.js";
 import { hasArtifacts, type SavedArtifacts, saveArtifacts } from "./artifacts.js";
+import { fillFileArgs, modelSchema } from "./file-args.js";
 import { AttachedStdioTransport } from "./attached-transport.js";
 
 /**
@@ -26,6 +27,7 @@ import { AttachedStdioTransport } from "./attached-transport.js";
  * - sandbox 서버: sandboxd attach로 사용자 컨테이너 안에 stdio 프로세스를 띄운다.
  *   비밀키가 없는 서버만 여기서 돈다 (shared mcp-config 검증 규칙).
  * 결과의 파일(바이너리 resource 블록)은 sandbox에 저장한다 (artifacts.ts). read_only 세션에서는 저장하지 않는다.
+ * 도구가 파일로 표시한 인자는 workspace 파일로 채워 보낸다 (file-args.ts). read_only 세션에서는 보내지 않는다.
  * sandbox 서버의 도구 목록은 프로세스 전역 캐시를 쓰고(목록을 보려고 프로세스를 띄우지 않게), 연결은 처음 필요할 때 만든다.
  * broker 서버의 도구 목록은 broker가 캐시한다 (설정이 바뀌면 broker가 바로 버린다).
  */
@@ -190,7 +192,7 @@ class Slots {
 
 const brokerListSlots = new Slots(BROKER_LIST_CONCURRENCY);
 
-/** 동시에 저장하는 결과 수 (gateway 전체). 파일은 통째로 메모리에 올라오므로 한꺼번에 몰리지 않게 한다. */
+/** 파일을 받거나 보내는 호출의 동시 수 (gateway 전체). 파일은 통째로 메모리에 올라오므로 한꺼번에 몰리지 않게 한다. */
 const artifactSlots = new Slots(4);
 
 /** broker가 주는 결과의 최대 크기: 텍스트·이미지 4MiB와 파일 28MiB의 base64 (broker의 maxResultBytes·maxFileBytes), 그리고 여유. */
@@ -422,45 +424,78 @@ export class McpConnectionSet {
 
   private toolDefinition(server: McpServerHandle, tool: Tool, name: string): ToolDefinition {
     const label = `${server.id}/${tool.name}`;
+    // 파일로 표시된 인자가 있으면 모델에게는 경로로 보여 주고, 호출할 때 파일로 채운다.
+    const shown = modelSchema(tool.inputSchema);
+    const takesFiles = shown !== tool.inputSchema;
     return {
       name,
       label,
       description: tool.description?.trim() || tool.title || `MCP tool ${tool.name} from server ${server.displayName ?? server.id}`,
-      parameters: toParameters(tool.inputSchema) as never,
+      parameters: toParameters(shown) as never,
       execute: async (toolCallId, params, signal, onUpdate) => {
-        const args = (params ?? {}) as Record<string, unknown>;
-        let client = await this.client(server, signal);
-        // 이미 끊긴 연결이면 보내기 전에 새로 연결한다 (아직 아무것도 보내지 않았으므로 안전하다).
-        // 보낸 요청은 다시 보내지 않는다 (부작용이 두 번 일어날 수 있다).
-        if (client.connectionState !== "connected") {
-          this.drop(server);
-          client = await this.client(server, signal);
+        let args = (params ?? {}) as Record<string, unknown>;
+        if (takesFiles && this.deps.readOnly) throw new Error("This session is read-only: files of the workspace cannot be sent.");
+        // 파일은 호출이 끝날 때까지 메모리에 있다. 결과를 저장하는 자리(saveFiles)는 따로 잡으므로 그 전에 놓는다.
+        const release = takesFiles ? await artifactSlots.take(signal ?? this.lifetime.signal) : undefined;
+        let result: Awaited<ReturnType<McpClient["callTool"]>>;
+        try {
+          if (takesFiles) args = await fillFileArgs(tool.inputSchema, args, this.deps.sandbox, signal);
+          result = await this.call(server, tool.name, args, signal, onUpdate);
+        } finally {
+          release?.();
         }
-        const result = await client.callTool(tool.name, args, {
-          ...(signal ? { signal } : {}),
-          timeoutMs: requestTimeoutMs(server),
-          onProgress: (p) => {
-            const details: McpProgressDetails = {
-              mcpProgress: {
-                progress: p.progress,
-                ...(p.total !== undefined ? { total: p.total } : {}),
-                ...(p.message ? { message: p.message } : {}),
-              },
-            };
-            const text = p.message ?? `Progress ${p.progress}${p.total === undefined ? "" : `/${p.total}`}`;
-            onUpdate?.({ content: [{ type: "text", text }], details });
-          },
-        });
-        const files = await this.saveFiles(result, toolCallId, signal);
-        // MCP 서버가 준 이미지는 pi가 gateway에서 디코딩한다. 그 전에 크기를 확인한다.
-        const shown = guardImageBlocks(toLlmContent(files ? { ...result, content: files.content } : result), `${server.id}/${tool.name}`);
-        const content = await this.spillLongText(shown, toolCallId, signal);
-        return {
-          content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
-          details: { server: server.id, tool: tool.name },
-          ...(result.isError || files?.failed ? { isError: true } : {}),
-        };
+        return this.toolResult(server, tool.name, result, toolCallId, signal);
       },
+    };
+  }
+
+  /** 도구를 한 번 호출한다. 보낸 요청은 다시 보내지 않는다 (부작용이 두 번 일어날 수 있다). */
+  private async call(
+    server: McpServerHandle,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onUpdate: Parameters<ToolDefinition["execute"]>[3],
+  ) {
+    let client = await this.client(server, signal);
+    // 이미 끊긴 연결이면 보내기 전에 새로 연결한다 (아직 아무것도 보내지 않았으므로 안전하다).
+    if (client.connectionState !== "connected") {
+      this.drop(server);
+      client = await this.client(server, signal);
+    }
+    return client.callTool(toolName, args, {
+      ...(signal ? { signal } : {}),
+      timeoutMs: requestTimeoutMs(server),
+      onProgress: (p) => {
+        const details: McpProgressDetails = {
+          mcpProgress: {
+            progress: p.progress,
+            ...(p.total !== undefined ? { total: p.total } : {}),
+            ...(p.message ? { message: p.message } : {}),
+          },
+        };
+        const text = p.message ?? `Progress ${p.progress}${p.total === undefined ? "" : `/${p.total}`}`;
+        onUpdate?.({ content: [{ type: "text", text }], details });
+      },
+    });
+  }
+
+  /** MCP 결과를 pi의 도구 결과로 바꾼다: 파일은 저장하고, 이미지는 확인하고, 긴 글은 앞부분만 남긴다. */
+  private async toolResult(
+    server: McpServerHandle,
+    toolName: string,
+    result: Awaited<ReturnType<McpClient["callTool"]>>,
+    toolCallId: string,
+    signal: AbortSignal | undefined,
+  ) {
+    const files = await this.saveFiles(result, toolCallId, signal);
+    // MCP 서버가 준 이미지는 pi가 gateway에서 디코딩한다. 그 전에 크기를 확인한다.
+    const shown = guardImageBlocks(toLlmContent(files ? { ...result, content: files.content } : result), `${server.id}/${toolName}`);
+    const content = await this.spillLongText(shown, toolCallId, signal);
+    return {
+      content: content.length > 0 ? content : [{ type: "text" as const, text: "(no output)" }],
+      details: { server: server.id, tool: toolName },
+      ...(result.isError || files?.failed ? { isError: true } : {}),
     };
   }
 

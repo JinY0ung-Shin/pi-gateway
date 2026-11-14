@@ -69,7 +69,8 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
       connectTimeoutSeconds: 30,
       maxResultBytes: 4 * MiB,
       maxFileBytes: 28 * MiB,
-      maxRequestBodyBytes: 4 * MiB,
+      // 파일 인자(gateway가 채우는 base64)가 든 호출을 받는다: 파일 28MiB의 base64와 나머지 인자.
+      maxRequestBodyBytes: 48 * MiB,
       toolsCacheSeconds: 60,
     },
   };

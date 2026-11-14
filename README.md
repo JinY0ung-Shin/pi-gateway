@@ -55,6 +55,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 사용자 workspace의 `/workspace/uploads/<filename>`에 쓰고 모델에는 그 경로를 알린다. 내용은 에이전트가 도구로 읽는다. 같은 이름은 덮어쓴다.
   - `filename`은 경로가 아닌 파일 이름이어야 하고, 확장자는 문서 `pdf`·`docx`·`xlsx`·`pptx`·`csv`·`txt`·`md`·`json`과 이미지 `png`·`jpg`·`jpeg`·`gif`·`webp`·`bmp`만 받는다 (대소문자 무시). `read_only` 세션에서는 400이다 (workspace를 바꾸므로).
 - **MCP 결과의 파일:** MCP 도구가 바이너리 `resource` 블록을 돌려주면 사용자 workspace의 `/workspace/artifacts/<세션 id>/`에 저장하고 모델에는 경로·크기·sha256을 알린다. `read_only` 세션에서는 저장하지 않는다. 형식과 한도는 [EXTENDING.md](docs/EXTENDING.md#파일을-돌려주는-도구)에 있다.
+- **MCP 도구에 보내는 파일:** MCP 도구가 인자에 `"x-workspace-file": true`를 붙이면 모델은 `/workspace` 아래 파일의 경로만 쓰고, gateway가 그 파일을 읽어 이름·크기·sha256과 함께 채워 보낸다. `read_only` 세션에서는 보내지 않는다. 형식과 한도는 [EXTENDING.md](docs/EXTENDING.md#파일을-받는-도구)에 있다.
 - **SSE 이벤트:**
   - 텍스트: `response.created` → `output_item.added` / `output_text.delta`… → `response.completed` | `failed` | `incomplete`
   - 도구: `response.tool_use_started` / `tool_use` / `tool_progress` / `tool_result`

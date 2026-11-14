@@ -151,6 +151,32 @@ Saved to the workspace: {"saved_path":"/workspace/artifacts/<세션 id>/report-3
 - `read_only` 세션에서는 저장하지 않아요.
 - 도구 인자로 경로나 URL을 받아 그대로 가져오지 마세요. 서버가 발급한 id만 받으세요.
 
+### 파일을 받는 도구
+
+반대로 도구가 사용자 sandbox의 파일을 받으려면, 그 인자의 schema에 `"x-workspace-file": true`를 붙여요. 모델은 그 인자에 파일 경로만 쓰고, gateway가 그 파일을 읽어 채워서 보내요. 모델이 파일 내용을 base64로 받아 적지 않아요.
+
+```json
+{"type": "object",
+ "properties": {
+   "files": {"type": "array", "items": {"type": "object", "properties": {
+     "field": {"type": "string"},
+     "file": {"type": "object", "x-workspace-file": true, "description": "올릴 파일"}}}}}}
+```
+
+모델이 보는 `file`은 문자열(`/workspace` 아래 파일의 경로)이고, 서버가 받는 `file`은 이 객체예요.
+
+```json
+{"filename": "capture.png", "mimeType": "image/png", "size": 12345, "sha256": "<hex>", "data": "<base64>"}
+```
+
+- `size`와 `sha256`은 gateway가 읽은 바이트로 계산해요. 서버는 `data`를 풀어 둘 다 맞는지 확인하고, 다르면 거절하세요.
+- `/workspace` 안의 진짜 파일만 보내요. 밖의 경로, 심볼릭 링크를 거치는 경로, 디렉토리, 빈 파일은 거절하고 도구를 부르지 않아요.
+- 형식은 문서 입력(`input_file`)과 같아요: `pdf`·`docx`·`xlsx`·`pptx`·`csv`·`txt`·`md`·`json`과 이미지.
+- 한 번의 호출에 10개, 합쳐서 28MiB까지예요.
+- 표시는 `properties`와 `items`를 따라 들어간 자리에서만 봐요 (`oneOf`·`$ref` 안은 보지 않아요).
+- `read_only` 세션에서는 파일을 보내지 않아요.
+- 이 표시는 pi-gateway의 약속이고 MCP 표준이 아니에요. 표시를 모르는 host에서는 모델이 그 객체를 직접 채워야 해요.
+
 ---
 
 ## 2. plugin skill 추가 (코드 수정 없음)
