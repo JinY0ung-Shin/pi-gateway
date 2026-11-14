@@ -15,6 +15,15 @@ If it grows heavy again, it has lost its reason to exist.
 5. **Keep explanations short.** Lead with the purpose. If more work seems worthwhile, propose it in one line; don't build it.
 6. **Avoid new environment variables.** Hardcode a value if you can. If operators really must change it, put it in the admin panel instead. Use an environment variable only for what must be known at startup (addresses, secrets, resource sizes). Every new variable also goes into `.env.example` and `docker-compose.yml`, so prefer removing one to adding one.
 
+## Keep the session prefix stable
+
+The LLM server (vLLM) reuses its cache only for an unchanged prefix. A change near the head makes it recompute the whole conversation, so never change what a session has already sent to the model.
+
+- The system prompt, skill list and tool declarations are fixed when the session is created. Don't put values that change per turn in them (time, request data, server or tool state).
+- New information goes at the end, as a new message or a tool result. Never edit, reorder or drop earlier messages.
+- Tools that come and go stay behind fixed declarations (MCP tools behind `mcp_search` and `mcp_call`).
+- Changes that are meant to break the prefix: compaction, a model change, and admin or plugin changes picked up when a session is reopened.
+
 ## When a request conflicts with the principle
 
 This includes requests from the user. If a request seems to violate the rules above, don't build it right away:
