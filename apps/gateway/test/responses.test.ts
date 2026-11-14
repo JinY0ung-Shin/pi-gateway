@@ -359,6 +359,19 @@ describe("POST /v1/responses/{id}/cancel", () => {
   });
 });
 
+describe("GET /v1/responses/{id}/traces", () => {
+  // trace를 읽는 경우는 admin-history.test.ts에 있다 (JAEGER_HOST가 있는 gateway)
+  it("404 tracing_disabled without JAEGER_HOST, after the owner check", async () => {
+    const first = await h.post({ input: "hi" });
+    const traces = async (key: string) => {
+      const res = await fetch(`${h.url}/v1/responses/${first.json.id}/traces`, { headers: { authorization: `Bearer ${key}` } });
+      return [res.status, ((await res.json()) as any).error.code];
+    };
+    expect(await traces(ALICE_KEY)).toEqual([404, "tracing_disabled"]);
+    expect(await traces(BOB_KEY)).toEqual([404, "404"]);
+  });
+});
+
 describe("POST /v1/responses/{id}/input", () => {
   const input = (id: string, body: unknown, key = ALICE_KEY, query = "") =>
     fetch(`${h.url}/v1/responses/${id}/input${query}`, {

@@ -3,6 +3,8 @@ import type { IncomingHttpHeaders } from "node:http";
 import { isValidUserId, type RequestContext } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
+import { PlatformError } from "../admin/errors.js";
+import { sessionTraces } from "../admin/traces.js";
 import type { GatewayModels, LlmModelConfig } from "../agent/runtime.js";
 import { SessionTranscriptMissingError } from "../agent/session-factory.js";
 import { type SandboxClient, SandboxError } from "../sandbox/client.js";
@@ -131,6 +133,27 @@ export function registerResponsesRoutes(app: FastifyInstance, deps: ResponsesDep
   app.post("/v1/responses/:id/cancel", async (req) => cancelResponse(deps, req, deps.auth.authenticate(req.headers.authorization)));
   app.post("/v1/responses/:id/input", async (req) => queueResponseInput(deps, req, deps.auth.authenticate(req.headers.authorization)));
   app.post("/v1/responses/:id/compact", async (req, reply) => compactResponse(deps, req, reply, deps.auth.authenticate(req.headers.authorization)));
+  app.get("/v1/responses/:id/traces", async (req) => responseTraces(deps, req, deps.auth.authenticate(req.headers.authorization)));
+}
+
+/**
+ * 그 응답이 속한 세션의 턴별 trace (`GET …/{id}/traces?user=`, 최근 턴부터). 관리 API의 `history/:id/traces`와 같은 모양이다.
+ * 턴이 끝나야 그 턴의 trace가 나온다.
+ */
+export async function responseTraces(deps: ResponsesDeps, req: FastifyRequest, auth: AuthResult): Promise<unknown> {
+  const { id } = req.params as { id: string };
+  const user = userOf(auth, (req.query as { user?: string }).user);
+  const parsed = parseResponseId(id);
+  const record = parsed ? deps.store.get(parsed.sessionId) : undefined;
+  if (!parsed || !record || record.principal !== user) throw notFound(`Response '${id}' not found`);
+  const host = deps.config.jaegerHost;
+  if (!host) throw apiError(404, "Tracing is not enabled on this gateway.", { code: "tracing_disabled" });
+  try {
+    return { traces: await sessionTraces(host, record.id, new Date(Date.parse(record.createdAt) - 60_000)) };
+  } catch (err) {
+    if (err instanceof PlatformError) throw apiError(err.status, err.message, { code: err.code });
+    throw err;
+  }
 }
 
 /**

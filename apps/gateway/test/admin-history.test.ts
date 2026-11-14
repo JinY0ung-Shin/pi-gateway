@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { type Harness, startHarness } from "./helpers.js";
+import { ALICE_KEY, BOB_KEY, type Harness, SERVICE_KEY, startHarness } from "./helpers.js";
 
 const ADMIN_KEY = "admin-key-for-tests-0123456789";
 const DAY = 86_400_000;
@@ -23,6 +23,12 @@ const admin = async (method: string, path: string, body?: unknown) => {
 };
 
 const sessionOf = (id: string) => /^resp_(.+)_\d+$/.exec(id)![1]!;
+
+/** `GET /v1/responses/{id}/traces` — 기본은 alice의 키 */
+const v1Traces = async (id: string, key?: string, query = "") => {
+  const res = await fetch(`${h.url}/v1/responses/${id}/traces${query}`, { headers: { authorization: `Bearer ${key ?? ALICE_KEY}` } });
+  return { status: res.status, json: (await res.json()) as any };
+};
 
 describe("admin history", () => {
   it("lists sessions and shows the committed transcript", async () => {
@@ -53,7 +59,8 @@ describe("admin history", () => {
 
   it("shows the session's traces read from Jaeger, newest turn first", async () => {
     h.llm.enqueue({ text: "hi" });
-    const sid = sessionOf((await h.post({ input: "hello" })).json.id);
+    const respId: string = (await h.post({ input: "hello" })).json.id;
+    const sid = sessionOf(respId);
     const attr = (key: string, value: object) => ({ key, value });
     const span = (traceId: string, spanId: string, name: string, startMs: number, endMs: number, extra: object = {}) => ({
       traceId,
@@ -116,6 +123,22 @@ describe("admin history", () => {
       ]);
       expect((await admin("GET", "/history/nope/traces")).status).toBe(404);
 
+      // 세션의 사용자는 같은 내용을 /v1에서 읽는다. 사용자 키는 ?user=를 무시하고, 서비스 키는 ?user=가 있어야 한다
+      const own = await v1Traces(respId);
+      expect(own.status).toBe(200);
+      expect(own.json).toEqual(res.json);
+      expect((await v1Traces(respId, ALICE_KEY, "?user=bob")).json).toEqual(res.json);
+      expect((await v1Traces(respId, SERVICE_KEY, "?user=alice")).json).toEqual(res.json);
+      expect((await v1Traces(respId, SERVICE_KEY)).status).toBe(400);
+      // 다른 사용자의 응답과 없는 응답은 같은 404다
+      const foreign = await v1Traces(respId, BOB_KEY, "?user=alice");
+      expect(foreign.status).toBe(404);
+      expect(foreign.json).toEqual({ error: { message: `Response '${respId}' not found`, type: "api_error", code: "404" } });
+      expect((await v1Traces(respId, SERVICE_KEY, "?user=bob")).json).toEqual(foreign.json);
+      const unknown = await v1Traces("resp_nope_1");
+      expect([unknown.status, unknown.json.error.code]).toEqual([404, "404"]);
+      expect((await v1Traces("nope")).status).toBe(404);
+
       // 통계는 세션을 가리지 않고 최근 턴을 읽는다
       stub.mockImplementation(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : input);
@@ -145,6 +168,32 @@ describe("admin history", () => {
         ["sess-2", 3, 2000, true],
         ["sess-1", 1, 1000, false],
       ]);
+    } finally {
+      stub.mockRestore();
+    }
+  });
+
+  it("answers /v1 trace reads with the trace store's own error when Jaeger is down or fails", async () => {
+    h.llm.enqueue({ text: "hi" });
+    const respId: string = (await h.post({ input: "hello" })).json.id;
+    const realFetch = globalThis.fetch;
+    let jaeger: () => Promise<Response> = async () => {
+      throw new Error("connect ECONNREFUSED");
+    };
+    const stub = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      return url.hostname === "jaeger.test" ? jaeger() : realFetch(input, init);
+    });
+    try {
+      const down = await v1Traces(respId);
+      expect(down.status).toBe(503);
+      expect(down.json).toEqual({ error: { message: "Jaeger is unreachable", type: "api_error", code: "trace_store_unavailable" } });
+      jaeger = async () => new Response("boom", { status: 500 });
+      const failed = await v1Traces(respId);
+      expect([failed.status, failed.json.error.code]).toEqual([502, "trace_store_error"]);
+      // Jaeger에 이 세션의 trace가 없으면 (지워졌거나 아직 끝난 턴이 없다) 빈 목록이다
+      jaeger = async () => new Response("{}", { status: 404 });
+      expect(await v1Traces(respId)).toEqual({ status: 200, json: { traces: [] } });
     } finally {
       stub.mockRestore();
     }

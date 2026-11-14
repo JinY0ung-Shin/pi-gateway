@@ -360,6 +360,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 **실행 시간 (trace)**
 - 턴마다 trace 하나가 남는다: 턴 → LLM 호출·도구 실행 → sandboxd·mcp-broker에서 걸린 시간 (OpenTelemetry, `jaeger` 서비스에 저장).
 - 관리 화면 "대화 기록"에서 세션을 열고 **실행 시간 보기**를 누르면 턴별로 본다. Jaeger 화면은 따로 공개하지 않는다.
+- 세션의 사용자는 같은 내용을 `GET /v1/responses/{id}/traces`로 읽는다 (자기 세션만).
 - 관리 화면 "실행 시간"은 최근 턴 500개까지의 trace로 통계를 낸다: 턴 시간과 그 시간대별 추이, 시간이 쓰인 곳, 모델별 첫 token·출력 속도, 단계별 시간, 가장 오래 걸린 턴. 열 때마다 Jaeger에서 읽어 센다 (따로 저장하지 않는다).
 - span에는 이름·시간·token 수·오류 종류만 있다. 프롬프트, 도구 인자·결과, 오류 메시지는 들어가지 않는다.
 - 7일 동안 `jaeger-data` 볼륨에 보관한다 (`images/jaeger/config.yaml`의 `ttl.spans`). Jaeger가 내려가 있어도 요청 처리에는 영향이 없고 그동안의 trace만 빠진다.
