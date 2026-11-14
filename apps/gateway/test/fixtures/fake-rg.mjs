@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 테스트용 최소 ripgrep: `rg --json [--ignore-case] [--fixed-strings] [--glob G] [--context N] -- PATTERN PATH`
+// 진짜 rg처럼 --glob은 cwd 기준이고("/"가 없으면 어느 깊이의 파일 이름), 상대 PATH는 받은 그대로 출력한다.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 
 // 가짜 sandbox 안에서는 /workspace가 이 머신의 임시 디렉토리다.
 const WS = process.env.FAKE_SANDBOX_WS;
@@ -12,6 +13,7 @@ const args = process.argv.slice(2);
 let ignoreCase = false;
 let fixed = false;
 let context = 0;
+let glob;
 let i = 0;
 for (; i < args.length; i++) {
   const a = args[i];
@@ -19,20 +21,32 @@ for (; i < args.length; i++) {
   if (a === "--ignore-case") ignoreCase = true;
   else if (a === "--fixed-strings") fixed = true;
   else if (a === "--context") context = Number(args[++i]);
-  else if (a === "--glob") i++;
+  else if (a === "--glob") glob = args[++i];
 }
 const pattern = args[i + 1];
 const target = args[i + 2];
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const re = new RegExp(fixed ? escape(pattern) : pattern, ignoreCase ? "i" : "");
 
+const globRe =
+  glob &&
+  new RegExp(
+    `^${glob
+      .split("**/")
+      .map((part) => part.split("*").map(escape).join("[^/]*"))
+      .join("(?:.*/)?")}$`,
+  );
+const wanted = (file) => !globRe || globRe.test(glob.includes("/") ? relative(process.cwd(), file) : basename(file));
+
 const files = [];
 const walk = (p) => {
   const st = statSync(p);
   if (st.isDirectory()) for (const name of readdirSync(p).sort()) walk(join(p, name));
-  else files.push(p);
+  else if (wanted(p)) files.push(p);
 };
 walk(toHost(target));
+// 상대 PATH로 찾으면 rg는 그 PATH를 앞에 붙인 상대 경로를 출력한다.
+const shown = (file) => (isAbsolute(target) ? toSandbox(file) : join(target, relative(toHost(target), file)));
 
 let matches = 0;
 for (const file of files) {
@@ -45,7 +59,7 @@ for (const file of files) {
       if (emitted.has(c)) continue;
       emitted.add(c);
       const type = c === idx || re.test(lines[c]) ? "match" : "context";
-      process.stdout.write(`${JSON.stringify({ type, data: { path: { text: toSandbox(file) }, lines: { text: `${lines[c]}\n` }, line_number: c + 1 } })}\n`);
+      process.stdout.write(`${JSON.stringify({ type, data: { path: { text: shown(file) }, lines: { text: `${lines[c]}\n` }, line_number: c + 1 } })}\n`);
     }
   });
 }

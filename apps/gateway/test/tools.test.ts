@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -153,7 +153,34 @@ describe("sandbox tools", () => {
     expect(withContext).toBe("code.txt-1- one\ncode.txt:2: needle here\ncode.txt-3- three");
     expect(none).toBe("No matches found");
     const exec = h.sandbox.calls.find((c) => c.route === SANDBOXD_ROUTES.exec && (c.body.argv as string[])[0] === "rg")!;
-    expect(exec.body.argv).toEqual(["rg", "--json", "--line-number", "--color=never", "--hidden", "--glob", "*.txt", "--", "needle", "/workspace"]);
+    expect(exec.body.argv).toEqual(["rg", "--json", "--line-number", "--color=never", "--hidden", "--glob", "*.txt", "--", "needle", "."]);
+    expect(exec.body.cwd).toBe("/workspace");
+  });
+
+  it("grep matches a glob with a slash against path, not against the session's cwd", async () => {
+    const ws = h.sandbox.workspaceOf("alice");
+    mkdirSync(join(ws, "gv", "sub"), { recursive: true });
+    writeFileSync(join(ws, "gv", "sub", "a.txt"), "needle in sub\n");
+    writeFileSync(join(ws, "gv", "top.txt"), "needle on top\n");
+    h.llm.enqueue(
+      { toolCalls: [{ id: "p1", name: "grep", arguments: { pattern: "needle", path: "gv", glob: "sub/*.txt" } }] },
+      { toolCalls: [{ id: "p2", name: "grep", arguments: { pattern: "needle", path: "gv", glob: "./sub/**/*.txt" } }] },
+      { toolCalls: [{ id: "p3", name: "grep", arguments: { pattern: "needle", path: "gv/top.txt", glob: "*.txt" } }] },
+      { text: "done" },
+    );
+    const before = h.sandbox.calls.length;
+    const res = await h.stream({ input: "grep in a folder" });
+    const [inSub, dotSlash, oneFile] = ofType(res.events, "response.tool_result").map((e) => String(e.data.content));
+    expect(inSub).toBe("sub/a.txt:1: needle in sub");
+    expect(dotSlash).toBe("sub/a.txt:1: needle in sub");
+    expect(oneFile).toBe("top.txt:1: needle on top");
+    const execs = h.sandbox.calls.slice(before).filter((c) => c.route === SANDBOXD_ROUTES.exec && (c.body.argv as string[])[0] === "rg");
+    // 디렉토리는 그 안에서 "."을, 파일 하나는 세션 cwd에서 그 경로를 찾는다.
+    expect(execs.map((c) => [c.body.cwd, (c.body.argv as string[]).slice(-4)])).toEqual([
+      ["/workspace/gv", ["sub/*.txt", "--", "needle", "."]],
+      ["/workspace/gv", ["sub/**/*.txt", "--", "needle", "."]],
+      ["/workspace", ["*.txt", "--", "needle", "/workspace/gv/top.txt"]],
+    ]);
   });
 
   it("sandbox paths outside the workspace come back as tool errors from the sandbox", async () => {

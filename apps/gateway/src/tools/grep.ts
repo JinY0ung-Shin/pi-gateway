@@ -1,4 +1,4 @@
-import { basename, relative } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
   createGrepToolDefinition,
@@ -17,6 +17,8 @@ import { resolveSandboxPath } from "./remote-fs.js";
  * grep 도구 — pi 정의는 그대로 쓰고, ripgrep을 gateway가 아니라 sandbox 안에서 실행한다.
  * (pi 내장 grep은 operations를 줘도 gateway에서 rg를 띄운다.)
  * context 줄도 rg의 `--context`로 받아서 파일 전체를 읽지 않는다.
+ * glob은 pi와 같이 path 기준이다: rg는 --glob을 자신의 cwd에 맞추므로, 디렉토리를 찾을 때는
+ * 그 디렉토리에서 "."을 찾는다.
  */
 
 const DEFAULT_LIMIT = 100;
@@ -48,13 +50,14 @@ export function createSandboxGrepTool(sandbox: SandboxHandle): ToolDefinition {
       const argv = ["rg", "--json", "--line-number", "--color=never", "--hidden"];
       if (ignoreCase) argv.push("--ignore-case");
       if (literal) argv.push("--fixed-strings");
-      if (glob) argv.push("--glob", glob);
+      // rg는 "./"로 시작하는 glob을 맞추지 못한다 ("!"는 제외 표시).
+      if (glob) argv.push("--glob", glob.replace(/^(!?)(?:\.\/)+/, "$1"));
       if (contextValue > 0) argv.push("--context", String(contextValue));
-      argv.push("--", pattern, searchPath);
+      argv.push("--", pattern, isDirectory ? "." : searchPath);
 
       const formatPath = (filePath: string) => {
         if (isDirectory) {
-          const rel = relative(searchPath, filePath);
+          const rel = relative(searchPath, resolve(searchPath, filePath));
           if (rel && !rel.startsWith("..")) return rel;
         }
         return basename(filePath);
@@ -101,7 +104,7 @@ export function createSandboxGrepTool(sandbox: SandboxHandle): ToolDefinition {
       let exitCode: number | null = null;
       try {
         const result = await sandbox.exec(
-          { argv, cwd },
+          { argv, cwd: isDirectory ? searchPath : cwd },
           {
             onStdout: (chunk) => {
               pending += decoder.write(chunk);
