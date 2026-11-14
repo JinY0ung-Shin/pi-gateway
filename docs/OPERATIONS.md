@@ -31,6 +31,7 @@
 - LLM: OpenAI 호환 엔드포인트 (vLLM의 `/v1/chat/completions`) 또는 Anthropic 호환 `/v1/messages`.
   - 도구 호출(function calling)이 켜져 있어야 한다.
   - vLLM이라면 `--enable-auto-tool-choice --tool-call-parser <모델에 맞는 parser>`가 필요하다.
+  - vLLM 0.31부터는 `--tool-strict-level parameter`도 붙인다. 붙이지 않으면 vLLM이 모델이 쓴 글에서 도구 호출을 뽑아내므로 인자가 schema와 어긋날 수 있다 (gateway는 도구에 `strict`를 붙여 보내지 않는다). 붙인 뒤에는 **채팅 테스트**에서 도구를 쓰는 턴을 한 번 돌려 본다.
 
 ## 3. 설치
 
