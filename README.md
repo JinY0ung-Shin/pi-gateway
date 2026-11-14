@@ -45,7 +45,7 @@ client ─▶ gateway ─┬─▶ sandboxd ──▶ sbx-<user>   (사용자별
   - 최근 대화(큰 모델은 20000 token, 작은 모델은 context의 1/4)는 요약하지 않고 그대로 둔다. 대화가 그보다 짧거나 이미 요약한 직후면 `failed`(`nothing_to_compact`)다.
   - 스트림 전에 거절하는 경우: 세션에 진행 중인 응답이 있으면 409 `response_in_progress`, AskUserQuestion 답을 기다리는 응답이면 409, 다른 사용자의 응답이거나 없는 응답이면 404다.
   - 요약에 실패하거나 요청 연결이 끊기면 세션은 그대로다.
-- **도구 호출 상한:** 한 턴에서 모델이 도구를 200번 넘게 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다.
+- **도구 호출 상한:** 한 턴에서 모델이 도구를 상한(기본 200)보다 많이 부르면 턴을 멈추고 `incomplete`(`max_tool_calls`)로 끝낸다. 그때까지의 내용은 남고 그 id로 이어갈 수 있다. 하위 agent도 같은 상한을 넘으면 Agent 도구가 오류를 돌려준다. 상한은 관리 화면의 기본 도구 페이지에서 바꾸고(1–10000) 다음 턴부터 적용된다.
 - **모델 목록:** `GET /v1/models`는 관리 화면 LLM 페이지에 설정한 모든 서버의 모델을 돌려준다 (`owned_by`는 서버 id, `default`는 `model`을 주지 않은 새 세션이 쓰는 모델인지). 관리자가 티어(`eagle`·`falcon`·`swift`)를 설정하면 그 이름이 앞에 붙는다. 기본 모델도 티어일 수 있다. 티어로 연 세션은 티어가 가리키는 모델이 바뀌면 다음 턴부터 새 모델로 돈다. effort를 고른 적 없으면 새 모델의 기본 effort를, 고른 effort를 새 모델이 받지 않으면 그 모델의 기본 effort를 쓴다. LLM을 설정하기 전에는 `/v1/responses`가 503 `llm_not_configured`다.
   - `input`은 받는 입력(`["text"]` 또는 `["text", "image"]`)이다. `image`가 없는 모델에 `input_image`를 보내면 400 `unsupported_image_input`이다.
   - `reasoning`은 reasoning 모델이면 `{efforts, default_effort}`(받는 `reasoning.effort`와 effort를 뺐을 때 쓰는 값), 아니면 `null`(effort는 무시한다)이다. `efforts`에 없는 effort를 보내면 400 `unsupported_reasoning_effort`다.

@@ -13,6 +13,7 @@ import { ApiError, apiError, badRequest, conflict, notFound, shuttingDownError }
 import type { SessionHub, LiveSession, SessionPreview } from "../sessions/hub.js";
 import type { TurnLimiter } from "../sessions/limiter.js";
 import type { SessionRecord, SessionStore, TurnPoint } from "../sessions/store.js";
+import type { ToolSettings } from "../tools/settings.js";
 import type { ToolStats } from "../tools/stats.js";
 import { STRUCTURED_OUTPUT_PROMPT } from "../tools/structured-output.js";
 import {
@@ -56,6 +57,7 @@ export interface ResponsesDeps {
   /** `GET /v1/files/content`가 workspace 파일을 읽고, input_file을 workspace에 쓴다 */
   sandbox: SandboxClient;
   toolStats: Pick<ToolStats, "countTurn">;
+  toolSettings: Pick<ToolSettings, "maxToolCalls">;
   log: Logger;
 }
 
@@ -591,7 +593,7 @@ async function runLocked(
   const run = async (mapper: ResponseEventMapper): Promise<TurnOutcome> => {
     live.activeMapper = mapper;
     try {
-      const outcome = await executeTurn({ live, text, images, expandTemplates, mapper, signal: abort.signal, log });
+      const outcome = await executeTurn({ live, text, images, expandTemplates, mapper, maxToolCalls: deps.toolSettings.maxToolCalls(), signal: abort.signal, log });
       if (outcome.status === "aborted" && abort.signal.reason === USER_CANCELLED) {
         return { ...outcome, status: "incomplete", incompleteReason: "user_cancelled" };
       }

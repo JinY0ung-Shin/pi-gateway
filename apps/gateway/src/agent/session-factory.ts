@@ -54,7 +54,7 @@ export interface AgentFactoryDeps {
   sandboxClient: SandboxClient;
   plugins: PluginResources;
   tools: ToolRegistry;
-  toolSettings: Pick<ToolSettings, "disabled" | "revision">;
+  toolSettings: Pick<ToolSettings, "disabled" | "revision" | "maxToolCalls">;
   toolStats: Pick<ToolStats, "listener">;
   log: Logger;
   /** 테스트용 pi settings 덮어쓰기 (예: retry 끄기) */
@@ -145,6 +145,7 @@ export async function buildAgentSession(
     agents: deps.plugins.agents(),
     tools: customTools,
     dir: subagentDirFor(deps.config, record),
+    maxToolCalls: () => deps.toolSettings.maxToolCalls(),
     open: ({ systemPrompt, tools, sessionManager }) =>
       createPiSession(deps, {
         model,

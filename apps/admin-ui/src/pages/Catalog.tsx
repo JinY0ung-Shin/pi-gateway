@@ -93,13 +93,22 @@ function PluginLine(props: { plugin: PluginView }) {
 
 export function ToolsPage(props: { focus?: string | undefined }) {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
+  // 턴당 도구 호출 상한: 저장된 값과 입력 중인 글자
+  const [limit, setLimit] = useState<number | null>(null);
+  const [limitText, setLimitText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const action = useAction();
   const load = () =>
-    api<{ tools: ToolInfo[] }>("GET", "/tools").then(
-      (r) => setTools(r.tools),
+    api<{ tools: ToolInfo[]; maxToolCallsPerTurn: number }>("GET", "/tools").then(
+      (r) => {
+        setTools(r.tools);
+        setLimit(r.maxToolCallsPerTurn);
+        setLimitText(String(r.maxToolCallsPerTurn));
+      },
       (e) => setError(errorText(e)),
     );
+  const typed = /^\d+$/.test(limitText.trim()) ? Number(limitText.trim()) : null;
+  const nextLimit = typed !== null && typed >= 1 && typed <= 10000 ? typed : null;
   useEffect(() => {
     void load();
   }, []);
@@ -113,6 +122,32 @@ export function ToolsPage(props: { focus?: string | undefined }) {
             끄면 새 대화와 대화 중인 세션의 다음 턴부터 모델(plugin agent 포함)에게 그 도구를 주지 않습니다.{" "}
             <span class="warn-text">read를 끄면 모델이 skill 파일(SKILL.md)을 읽지 못합니다.</span>
           </p>
+          <div class="row wrap">
+            <label for="tool-call-limit">턴당 도구 호출 상한</label>
+            <input
+              id="tool-call-limit"
+              class="days mono"
+              inputMode="numeric"
+              value={limitText}
+              disabled={limit === null}
+              onInput={(e) => setLimitText(e.currentTarget.value)}
+            />
+            <button
+              class="small primary"
+              disabled={action.busy || nextLimit === null || nextLimit === limit}
+              onClick={() =>
+                action.run(async () => {
+                  await api("PUT", "/tool-call-limit", { value: nextLimit });
+                  await load();
+                }, "저장했습니다. 다음 턴부터 적용됩니다.")
+              }
+            >
+              저장
+            </button>
+            <span class="muted small-text">
+              한 턴에서 모델이 도구를 이 수보다 많이 부르면 턴을 멈추고 그때까지의 내용을 남깁니다 (하위 agent 호출도 같습니다). 1–10000, 기본 200.
+            </span>
+          </div>
           {action.view}
         </>
       }

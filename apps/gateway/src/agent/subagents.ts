@@ -9,7 +9,7 @@ import { MCP_CALL_TOOL, MCP_SEARCH_TOOL } from "../mcp-client/proxy.js";
 import { ASK_USER_TOOL } from "../tools/ask-user.js";
 import { PRESENT_FILE_TOOL } from "../tools/present-file.js";
 import { REQUEST_ADMIN_TOOL } from "../tools/request-admin.js";
-import { limitToolCalls, MAX_TOOL_CALLS_PER_TURN } from "./tool-call-limit.js";
+import { limitToolCalls } from "./tool-call-limit.js";
 
 /**
  * Agent·SendMessage — 내장 general-purpose agent와 plugin agent(`agents/*.md`)를 하위 pi 세션으로 실행한다.
@@ -75,6 +75,8 @@ export interface SubagentContext {
   /** 하위 세션 JSONL을 두는 디렉토리 (부모 세션마다 하나) */
   dir: string;
   open(input: { systemPrompt: string; tools: ToolDefinition[]; sessionManager: SessionManager }): Promise<AgentSession>;
+  /** 하위 agent 호출 한 번에서 모델이 부를 수 있는 도구 호출 수 (부를 때마다 읽는다) */
+  maxToolCalls(): number;
 }
 
 /**
@@ -106,7 +108,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
     try {
       const session = await ctx.open({ systemPrompt: agent.prompt, tools: subagentTools(agent, ctx.tools), sessionManager });
       try {
-        return result(agentId, await prompt(session, text, signal, onUpdate));
+        return result(agentId, await prompt(session, text, ctx.maxToolCalls(), signal, onUpdate));
       } finally {
         session.dispose();
       }
@@ -164,12 +166,12 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
 }
 
 /** 하위 세션에 한 번 묻고 마지막 응답 텍스트를 돌려준다. 실패하면 던져서 부모가 도구 오류로 보게 한다. */
-async function prompt(session: AgentSession, text: string, signal: AbortSignal | undefined, onUpdate: OnUpdate | undefined): Promise<string> {
+async function prompt(session: AgentSession, text: string, maxToolCalls: number, signal: AbortSignal | undefined, onUpdate: OnUpdate | undefined): Promise<string> {
   const onAbort = () => {
     void session.abort();
   };
   signal?.addEventListener("abort", onAbort, { once: true });
-  const stopLimit = limitToolCalls(session);
+  const stopLimit = limitToolCalls(session, maxToolCalls);
   const unsubscribe = onUpdate
     ? session.subscribe((event) => {
         if (forwarded(event)) onUpdate({ content: [], details: { subagentEvent: event } });
@@ -184,7 +186,7 @@ async function prompt(session: AgentSession, text: string, signal: AbortSignal |
     unsubscribe?.();
     limited = stopLimit();
   }
-  if (limited) throw new Error(`subagent stopped after ${MAX_TOOL_CALLS_PER_TURN} tool calls`);
+  if (limited) throw new Error(`subagent stopped after ${maxToolCalls} tool calls`);
   const last = session.messages.findLast((m) => m.role === "assistant");
   if (signal?.aborted || last?.stopReason === "aborted") throw new Error("aborted");
   if (last?.stopReason === "error") throw new Error(last.errorMessage ?? "subagent model error");

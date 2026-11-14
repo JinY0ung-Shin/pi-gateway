@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { FastifyInstance } from "fastify";
 import { createSubagentTools, subagentTools } from "../agent/subagents.js";
+import { MAX_TOOL_CALLS_RANGE } from "../agent/tool-call-limit.js";
 import type { ToolSessionContext } from "../tools/provider.js";
 import { createAskUserToolProvider } from "../tools/providers/ask-user.js";
 import { createRequestAdminToolProvider } from "../tools/providers/request-admin.js";
@@ -13,6 +14,7 @@ import { PlatformError } from "./errors.js";
  * 실행하지 않으므로 세션 context는 비워 둔다.
  * agents: plugin agent마다 실제로 받는 기본 도구 (꺼진 도구는 빠진다). MCP 도구는 세션마다 달라 이름만 따로 적는다
  * (frontmatter `tools`가 없으면 세션의 MCP 도구 전부).
+ * 턴당 도구 호출 상한도 여기서 보고 바꾼다 (다음 턴부터 적용된다).
  */
 export function registerToolRoutes(app: FastifyInstance, ctx: AdminContext): void {
   const definitions = async () => {
@@ -22,7 +24,7 @@ export function registerToolRoutes(app: FastifyInstance, ctx: AdminContext): voi
     const gateway = [
       ...(await createAskUserToolProvider().createTools(unused)),
       ...(await createRequestAdminToolProvider(ctx.adminRequests).createTools(unused)),
-      ...createSubagentTools({ agents, tools: [], dir: "", open: () => Promise.reject(new Error("not used")) }),
+      ...createSubagentTools({ agents, tools: [], dir: "", maxToolCalls: () => 0, open: () => Promise.reject(new Error("not used")) }),
     ];
     return { agents, sandbox, gateway };
   };
@@ -40,6 +42,7 @@ export function registerToolRoutes(app: FastifyInstance, ctx: AdminContext): voi
     });
     const enabledSandbox = sandbox.filter((t) => !disabled.has(t.name));
     return {
+      maxToolCallsPerTurn: ctx.toolSettings.maxToolCalls(),
       tools: [...sandbox.map(view("sandbox")), ...gateway.map(view("gateway"))],
       agents: agents.map((a) => ({
         name: a.name,
@@ -56,6 +59,17 @@ export function registerToolRoutes(app: FastifyInstance, ctx: AdminContext): voi
     ctx.log.info({ tool: name, enabled }, "tool setting updated");
     return { name, enabled };
   };
+  app.put<{ Body: { value?: unknown } | null }>("/tool-call-limit", async (req) => {
+    const value = req.body?.value;
+    const { min, max } = MAX_TOOL_CALLS_RANGE;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+      throw new PlatformError(400, "invalid_tool_call_limit", `value must be an integer from ${min} to ${max}`);
+    }
+    ctx.toolSettings.setMaxToolCalls(value);
+    ctx.log.info({ maxToolCallsPerTurn: value }, "tool call limit updated");
+    return { maxToolCallsPerTurn: value };
+  });
+
   app.post<{ Params: { name: string } }>("/tools/:name/enable", async (req) => setEnabled(req.params.name, true));
   app.post<{ Params: { name: string } }>("/tools/:name/disable", async (req) => setEnabled(req.params.name, false));
 }

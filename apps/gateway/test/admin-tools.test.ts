@@ -179,3 +179,50 @@ describe("active turns", () => {
     expect((end.data.response as { incomplete_details: unknown }).incomplete_details).toEqual({ reason: "user_cancelled" });
   });
 });
+
+describe("tool call limit", () => {
+  const put = (value: unknown) =>
+    fetch(`${h.url}/admin/api/tool-call-limit`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  const limit = async () => ((await (await admin("GET", "/tools")).json()) as { maxToolCallsPerTurn: number }).maxToolCallsPerTurn;
+  const reads = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({ id: `r${from + i}`, name: "read", arguments: { path: "x.txt" } }));
+
+  it("is 200 until an admin sets it; the next turn and a subagent then stop at the new value", async () => {
+    expect(await limit()).toBe(200);
+    for (const bad of [0, 10001, 2.5, "50", null]) {
+      const refused = await put(bad);
+      expect(refused.status).toBe(400);
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("invalid_tool_call_limit");
+    }
+    expect(await limit()).toBe(200);
+
+    const set = await put(3);
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ maxToolCallsPerTurn: 3 });
+    expect(await limit()).toBe(3);
+    try {
+      // 3번까지는 그대로 끝나고, 4번째에서 멈춘다.
+      h.llm.enqueue({ toolCalls: reads(3, 0) }, { text: "three is fine" });
+      expect((await h.post({ input: "three" })).json.status).toBe("completed");
+      h.llm.enqueue({ toolCalls: reads(4, 10) });
+      const stopped = await h.post({ input: "four" });
+      expect(stopped.json.status).toBe("incomplete");
+      expect(stopped.json.incomplete_details).toEqual({ reason: "max_tool_calls" });
+
+      // 하위 agent도 같은 값에서 멈추고, 부모는 그것을 Agent 도구의 오류로 본다.
+      h.llm.enqueue(
+        { toolCalls: [{ id: "lim_a", name: "Agent", arguments: { subagent_type: "p:scout", description: "loop", prompt: "Loop." } }] },
+        { toolCalls: reads(4, 20) },
+        { text: "The agent stopped." },
+      );
+      expect((await h.post({ input: "delegate" })).json.status).toBe("completed");
+      expect(JSON.stringify(h.llm.requests.at(-1)!.messages)).toContain("subagent stopped after 3 tool calls");
+    } finally {
+      expect((await put(200)).status).toBe(200);
+    }
+    expect(await limit()).toBe(200);
+  });
+});

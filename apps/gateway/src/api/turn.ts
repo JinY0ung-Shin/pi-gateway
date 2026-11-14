@@ -34,6 +34,8 @@ interface TurnInput {
   images: ImageContent[];
   expandTemplates: boolean;
   mapper: ResponseEventMapper;
+  /** 이 턴에서 모델이 부를 수 있는 도구 호출 수 */
+  maxToolCalls: number;
   signal: AbortSignal;
   log: Logger;
 }
@@ -69,7 +71,7 @@ async function runTurn(input: TurnInput): Promise<TurnOutcome> {
     void session.abort();
   };
   signal.addEventListener("abort", onAbort, { once: true });
-  const stopLimit = limitToolCalls(session);
+  const stopLimit = limitToolCalls(session, input.maxToolCalls);
   let thrown: unknown;
   try {
     if (signal.aborted) throw new Error("aborted");

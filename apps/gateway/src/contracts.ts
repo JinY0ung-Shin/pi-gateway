@@ -114,8 +114,8 @@ export interface AdminDeps {
   sandboxes: () => Promise<SandboxInfo[]>;
   /** LLM·System One 연결 설정 (관리 화면에서 바꾸면 바로 적용된다) */
   llm: Pick<GatewayModels, "list" | "defaultModel" | "current" | "update" | "systemOne" | "setSystemOne" | "systemOneCalls">;
-  /** 기본 도구 켜고 끄기 (메모리의 세션도 다음 턴부터 적용된다) */
-  toolSettings: Pick<ToolSettings, "disabled" | "setEnabled">;
+  /** 기본 도구 켜고 끄기, 턴당 도구 호출 상한 (메모리의 세션도 다음 턴부터 적용된다) */
+  toolSettings: Pick<ToolSettings, "disabled" | "setEnabled" | "maxToolCalls" | "setMaxToolCalls">;
   /** 도구별 호출·턴·사용자별 토큰·mcp_search 정확도 통계 (최근 30일) */
   toolStats: Pick<ToolStats, "summary" | "turns" | "users" | "searches">;
   /** 관리 화면 채팅: 관리자 로그인으로 `/v1/responses`·`…/{id}/cancel`과 같은 처리를 한다 (body.user·?user=를 믿는다) */
