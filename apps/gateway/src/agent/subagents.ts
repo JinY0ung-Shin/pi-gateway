@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { type AgentSession, type AgentSessionEvent, SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE } from "@pi-gateway/shared";
 import { Type } from "typebox";
@@ -119,7 +118,7 @@ export function createSubagentTools(ctx: SubagentContext): ToolDefinition[] {
   const agentParams = Type.Object({
     description: Type.String({ description: "A short (3-5 word) description of the task" }),
     prompt: Type.String({ description: "The task for the agent to perform" }),
-    subagent_type: StringEnum(agents.map((a) => a.name), { description: "The type of agent to use" }),
+    subagent_type: Type.Unsafe<string>({ type: "string", enum: agents.map((a) => a.name), description: "The type of agent to use" }),
   });
   const agentTool: ToolDefinition<typeof agentParams> = {
     name: AGENT_TOOL,
