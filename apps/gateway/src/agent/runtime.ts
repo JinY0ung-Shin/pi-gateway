@@ -78,8 +78,11 @@ export type LlmServer = z.infer<typeof LlmServer>;
 export const SystemOneModel = z.object({
   ...endpoint,
   id: z.string().min(1),
-  /** 정확도 비교용: 검색의 절반은 무작위로 System One에 묻지 않고 BM25로 찾는다 (상태 페이지의 MCP 검색 정확도). */
-  compare: z.boolean().default(false),
+  /**
+   * mcp_search가 System One에 묻는 검색. half는 정확도 비교용으로 무작위 절반만 묻고 나머지는 BM25로 찾는다
+   * (상태 페이지의 MCP 검색 정확도). never는 연결만 저장해 두고 늘 BM25로 찾는다.
+   */
+  use: z.enum(["always", "half", "never"]).default("always"),
 });
 export type SystemOneModel = z.infer<typeof SystemOneModel>;
 
@@ -145,7 +148,7 @@ export interface GatewayModels {
   /** 설정이 바뀔 때마다 1씩 오른다 */
   revision(): number;
   current(): LlmSettingsRecord | null;
-  /** System One 설정. 없으면 null이고 mcp_search는 BM25로 찾는다. */
+  /** System One 설정. 없거나 use가 never이면 mcp_search는 BM25로 찾는다. */
   systemOne(): SystemOneRecord | null;
   /** 등록한 뒤 저장한다 (null이면 지운다). 바로 적용된다. */
   setSystemOne(model: SystemOneModel | null): Promise<SystemOneRecord | null>;
@@ -153,7 +156,7 @@ export interface GatewayModels {
   systemOneCalls(): readonly SystemOneCall[];
   /**
    * System One에 choice 질문 하나를 묻고 선택지별 확률을 돌려준다.
-   * 설정되지 않았거나 비교용으로 이번에는 묻지 않기로 했으면 undefined, 호출이 실패하면 던진다.
+   * 묻지 않는 검색이면 undefined (설정이 없다, use가 never다, half에서 이번에는 BM25로 찾는다), 호출이 실패하면 던진다.
    */
   choose(question: ChoiceQuestion, signal?: AbortSignal): Promise<Record<string, number> | undefined>;
   /** 검증하고 provider를 다시 등록한 뒤 저장한다. 등록에 실패하면 이전 설정으로 되돌리고 던진다. */
@@ -183,6 +186,9 @@ const MIGRATIONS = [
      SELECT 1, json_extract(settings_json, '$.searchModel'), updated_at FROM llm_settings
      WHERE json_extract(settings_json, '$.searchModel') IS NOT NULL`,
   `UPDATE llm_settings SET settings_json = json_remove(settings_json, '$.searchModel')`,
+  // "BM25와 비교" 체크박스(compare) → use
+  `UPDATE systemone_settings SET settings_json = json_set(json_remove(settings_json, '$.compare'), '$.use',
+     CASE WHEN json_extract(settings_json, '$.compare') THEN 'half' ELSE 'always' END)`,
 ];
 
 const createRuntime = () =>
@@ -389,8 +395,8 @@ export async function createModelRuntime(db: Db): Promise<GatewayModels> {
     },
     systemOneCalls: () => systemOneCalls,
     async choose(question, signal) {
-      if (!systemOne) return undefined;
-      if (systemOne.model.compare && Math.random() < 0.5) return undefined;
+      if (!systemOne || systemOne.model.use === "never") return undefined;
+      if (systemOne.model.use === "half" && Math.random() < 0.5) return undefined;
       const record = await call(runtime, systemOne.model.id, question, signal);
       systemOneCalls.unshift(record);
       systemOneCalls.length = Math.min(systemOneCalls.length, SYSTEMONE_RECENT_CALLS);

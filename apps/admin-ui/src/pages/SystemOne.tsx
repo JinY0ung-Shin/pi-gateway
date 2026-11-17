@@ -8,8 +8,11 @@ import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLin
  * 최근 요청은 mcp_search가 실제로 보낸 요청이다 (gateway 메모리에만 있다).
  */
 
+/** mcp_search가 System One에 묻는 검색: 전부, 무작위 절반(BM25와 비교), 안 물음(BM25만) */
+type Use = "always" | "half" | "never";
+
 interface SystemOneView {
-  model: { baseUrl: string; id: string; headers: Record<string, string>; compare: boolean; apiKeySet: boolean } | null;
+  model: { baseUrl: string; id: string; headers: Record<string, string>; use: Use; apiKeySet: boolean } | null;
   updatedAt: string | null;
 }
 
@@ -38,8 +41,7 @@ interface Form {
   headers: string;
   apiKey: string;
   clearKey: boolean;
-  /** 검색의 절반은 BM25로 찾는다 (정확도 비교용) */
-  compare: boolean;
+  use: Use;
 }
 
 const toForm = (v: SystemOneView): Form => ({
@@ -49,7 +51,7 @@ const toForm = (v: SystemOneView): Form => ({
   headers: recordToLines(v.model?.headers, ": "),
   apiKey: "",
   clearKey: false,
-  compare: v.model?.compare ?? false,
+  use: v.model?.use ?? "always",
 });
 
 /** 연결에 쓰는 값. apiKey를 빼면 gateway가 저장된 키를 쓴다. */
@@ -64,7 +66,7 @@ function toBody(f: Form) {
   const id = f.id.trim();
   if (!f.baseUrl.trim() && !id) return null;
   if (!f.baseUrl.trim() || !id) throw new Error("base URL과 모델 id를 모두 넣으세요. 쓰지 않으려면 둘 다 비웁니다.");
-  return { ...connectionOf(f), id, compare: f.compare };
+  return { ...connectionOf(f), id, use: f.use };
 }
 
 /** 저장 안 한 변경이 있는지 보는 값 */
@@ -117,7 +119,7 @@ export function SystemOnePage() {
 
   return (
     <>
-      {!view.model && <Notice>System One을 쓰지 않습니다. mcp_search는 BM25(단어 일치)로 도구를 찾습니다.</Notice>}
+      {(!view.model || view.model.use === "never") && <Notice>System One을 쓰지 않습니다. mcp_search는 BM25(단어 일치)로 도구를 찾습니다.</Notice>}
       <p class="muted small-text">
         mcp_search가 모든 MCP 도구를 선택지로 주고 질의에 맞는 도구를 고르게 합니다. 호출이 실패하거나 10초를 넘은 검색은 BM25로 찾습니다.
         {view.updatedAt && ` · 마지막 저장 ${formatTime(view.updatedAt)}`}
@@ -170,13 +172,17 @@ export function SystemOnePage() {
             <textarea class="mono" rows={3} value={form.headers} placeholder="X-Team: ai" onInput={(e) => change({ headers: e.currentTarget.value })} />
           </label>
         </div>
-        <label class="checkbox">
-          <input type="checkbox" checked={form.compare} onChange={(e) => change({ compare: e.currentTarget.checked })} />
-          <span>BM25와 비교: 검색의 절반은 무작위로 BM25로 찾습니다</span>
+        <label class="field">
+          <span>검색 방법</span>
+          <select value={form.use} onChange={(e) => change({ use: e.currentTarget.value as Use })}>
+            <option value="always">System One</option>
+            <option value="half">절반 비교: 검색의 절반은 무작위로 BM25로 찾습니다</option>
+            <option value="never">BM25만: 연결은 저장해 두고 System One에 묻지 않습니다</option>
+          </select>
+          <small class="muted">
+            절반 비교로 두면 상태 페이지의 MCP 검색 정확도에 System One과 BM25의 top-1~3 비율이 같은 기간·같은 사용자 기준으로 쌓입니다. 비교가 끝나면 바꿉니다.
+          </small>
         </label>
-        <p class="muted small-text">
-          켜 두면 상태 페이지의 MCP 검색 정확도에 System One과 BM25의 top-1~3 비율이 같은 기간·같은 사용자 기준으로 쌓입니다. 비교가 끝나면 끕니다.
-        </p>
       </Section>
       <RecentCalls />
       <SaveBar dirty={dirty} action={action} onSave={() => void save()} onRevert={() => show(view)} />

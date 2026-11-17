@@ -248,7 +248,7 @@ describe("/admin/api/systemone", () => {
 
     expect((await putOne({ baseUrl: `${h.llm.url}/`, apiKey: "one-key", headers: { "x-team": "ai" }, id: "d3-ultra" })).status).toBe(200);
     const view = await getOne();
-    expect(view.model).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", headers: { "x-team": "ai" }, compare: false, apiKeySet: true });
+    expect(view.model).toEqual({ baseUrl: h.llm.url, id: "d3-ultra", headers: { "x-team": "ai" }, use: "always", apiKeySet: true });
     expect(JSON.stringify(view)).not.toContain("one-key");
     // 대화 모델이 아니라서 모델 목록에 나오지 않는다
     expect((await models()).map((m: any) => m.id)).not.toContain("d3-ultra");
@@ -309,9 +309,9 @@ describe("/admin/api/systemone", () => {
     expect((await putOne(null)).status).toBe(200);
   });
 
-  it("with compare on, skips System One for a random half of the searches so both methods collect stats", async () => {
-    expect((await putOne({ baseUrl: h.llm.url, id: "d3-ultra", compare: true })).status).toBe(200);
-    expect((await getOne()).model.compare).toBe(true);
+  it("set to half, skips System One for a random half of the searches so both methods collect stats", async () => {
+    expect((await putOne({ baseUrl: h.llm.url, id: "d3-ultra", use: "half" })).status).toBe(200);
+    expect((await getOne()).model.use).toBe("half");
     h.llm.setDecision(() => ({ a: 0.6, b: 0.4 }));
     const random = vi.spyOn(Math, "random");
     try {
@@ -325,6 +325,19 @@ describe("/admin/api/systemone", () => {
     } finally {
       random.mockRestore();
     }
+    expect((await putOne(null)).status).toBe(200);
+  });
+
+  it("set to never, keeps the connection for tests but never asks System One", async () => {
+    expect((await putOne({ baseUrl: h.llm.url, apiKey: "one-key", id: "d3-ultra", use: "never" })).status).toBe(200);
+    expect((await getOne()).model).toMatchObject({ id: "d3-ultra", use: "never", apiKeySet: true });
+    h.llm.setDecision(() => ({ a: 0.6, b: 0.4 }));
+    const before = h.llm.decisions.length;
+    expect(await h.gateway.models.choose(question)).toBeUndefined();
+    expect(h.llm.decisions.length).toBe(before);
+    // 저장된 연결과 키로 테스트는 된다
+    expect(await postJson("/systemone/test", { model: { baseUrl: h.llm.url, id: "d3-ultra", use: "never" } })).toMatchObject({ answer: { choice: "a" } });
+    expect(h.llm.decisions.at(-1)!.headers.authorization).toBe("Bearer one-key");
     expect((await putOne(null)).status).toBe(200);
   });
 
@@ -399,9 +412,23 @@ describe("a search model stored inside the LLM settings", () => {
     db.prepare("DELETE FROM schema_migrations WHERE module = 'llm' AND step IN (4, 5)").run();
 
     const models = await createModelRuntime(db);
-    expect(models.systemOne()).toEqual({ model: { ...settings.searchModel, headers: {}, compare: false }, updatedAt: "2026-11-11T00:00:00.000Z" });
+    expect(models.systemOne()).toEqual({ model: { ...settings.searchModel, headers: {}, use: "always" }, updatedAt: "2026-11-11T00:00:00.000Z" });
     expect(db.prepare("SELECT json_extract(settings_json, '$.searchModel') AS v FROM llm_settings").get()).toEqual({ v: null });
     expect(models.current()!.settings.defaultModel).toBe("m");
+    db.close();
+  });
+});
+
+describe("System One settings stored with the compare checkbox", () => {
+  it("become half when it was on", async () => {
+    const db = openDatabase(":memory:");
+    await createModelRuntime(db);
+    const old = { baseUrl: "http://decision.internal:8000/v1", apiKey: "k", headers: {}, id: "d3-ultra", compare: true };
+    db.prepare("INSERT INTO systemone_settings (id, settings_json, updated_at) VALUES (1, ?, ?)").run(JSON.stringify(old), "2026-11-11T00:00:00.000Z");
+    db.prepare("DELETE FROM schema_migrations WHERE module = 'llm' AND step = 6").run();
+
+    const { compare: _, ...rest } = old;
+    expect((await createModelRuntime(db)).systemOne()!.model).toEqual({ ...rest, use: "half" });
     db.close();
   });
 });

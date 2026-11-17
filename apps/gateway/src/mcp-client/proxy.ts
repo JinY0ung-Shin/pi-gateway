@@ -26,7 +26,7 @@ const CHOICE_DESCRIPTION_CHARS = 500;
 /** mcp_search 결과의 details. 통계가 검색 뒤에 부른 도구가 몇 번째였는지 센다 (tools/stats.ts). */
 export interface McpSearchDetails {
   search: {
-    /** model: System One이 골랐다. bm25: System One이 없거나 실패했다. */
+    /** model: System One이 골랐다. bm25: System One에 묻지 않았거나 실패했다. */
     method: "model" | "bm25";
     /** 돌려준 도구의 `<server id>/<MCP 도구 이름>`, 순위대로 */
     tools: string[];
