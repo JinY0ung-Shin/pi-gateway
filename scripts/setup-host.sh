@@ -6,7 +6,7 @@
 # 만드는 것
 #   $PI_GATEWAY_HOME/workspaces   uid 1000 (sandbox 사용자), 0700 — 사용자별 workspace
 #   $PI_GATEWAY_HOME/plugins      uid 10001 (gateway), 0755      — 설치된 plugin (sandbox는 읽기만)
-#   $PI_GATEWAY_SECRETS/{gateway,sandboxd,broker}/*  쓰는 서비스의 uid 소유 0400 — compose secrets
+#   $PI_GATEWAY_SECRETS/{gateway,sandboxd,broker,memory}/*  쓰는 서비스의 uid 소유 0400 — compose secrets
 #   .env의 DOCKER_GID, PI_GATEWAY_HOME, PI_GATEWAY_SECRETS (없을 때만 추가)
 set -euo pipefail
 
@@ -31,14 +31,15 @@ install -d -o 0 -g 0 -m 0700 "$SECRETS"
 #   gateway  (uid 10001): $SECRETS/gateway/*
 #   sandboxd (uid 1000) : $SECRETS/sandboxd/*
 #   broker   (root)     : $SECRETS/broker/*
+#   memory   (uid 10002): $SECRETS/memory/*
 # 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret)은 같은 값의 사본이다.
-GW_UID=10001; SBX_UID=1000
-install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/broker"
+GW_UID=10001; SBX_UID=1000; MEM_UID=10002
+install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/broker" "$SECRETS/memory"
 
 rand() { openssl rand -base64 "$1" | tr -d '\n'; }
 
 # 새로 만든 값 중 운영자가 직접 쓰는 키만 끝에 보여준다. 내부용 값(JWT secret, broker_kek)은 보여주지 않는다.
-SHOW_NEW=" admin_api_key api_key "
+SHOW_NEW=" admin_api_key api_key memory_api_key "
 shown=""
 
 # put <value> <path> <uid>: 0400, uid 소유로 쓴다
@@ -88,10 +89,12 @@ ask_git_token() {
   printf '%s' "$token"
 }
 
-G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"
+G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"; M="$SECRETS/memory"
 secret sandboxd_jwt_secret "rand 48" "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
 secret broker_jwt_secret   "rand 48" "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
 secret broker_kek          "rand 32" "$B/broker_kek:0"
+# memory 서비스를 부르는 키. agent가 메모리를 쓰게 하려면 관리 화면 MCP 페이지에서 이 값을 넣는다 (docs/OPERATIONS.md "장기 메모리")
+secret memory_api_key      "rand 32" "$M/api_key:$MEM_UID"
 secret admin_api_key       "rand 32" "$G/admin_api_key:$GW_UID"
 secret api_key             "rand 32" "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)
@@ -122,7 +125,7 @@ add_env PI_GATEWAY_SECRETS "$SECRETS"
 
 if [ -n "$shown" ]; then
   echo
-  echo "new keys (shown only now; also in $G):"
+  echo "new keys (shown only now; also under $SECRETS):"
   printf '%s' "$shown"
 fi
 

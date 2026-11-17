@@ -16,7 +16,8 @@
     "test:docker": "PI_GW_DOCKER_TESTS=1 vitest run",
     "dev:gateway": "tsx --conditions=pi-gateway-source apps/gateway/src/main.ts",
     "dev:sandboxd": "tsx --conditions=pi-gateway-source apps/sandboxd/src/main.ts",
-    "dev:broker": "tsx --conditions=pi-gateway-source apps/mcp-broker/src/main.ts"
+    "dev:broker": "tsx --conditions=pi-gateway-source apps/mcp-broker/src/main.ts",
+    "dev:memory": "tsx --conditions=pi-gateway-source apps/memory/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

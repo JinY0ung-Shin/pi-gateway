@@ -1,5 +1,6 @@
 export * from "./broker-api.js";
 export * from "./dns.js";
+export * from "./http-bridge.js";
 export * from "./internal-auth.js";
 export * from "./mcp-config.js";
 export * from "./migrate.js";

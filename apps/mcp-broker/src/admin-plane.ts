@@ -1,6 +1,7 @@
 import {
   AUD_BROKER_ADMIN,
   bearerToken,
+  errorBody,
   findLiteralCredentials,
   McpServerConfig,
   PutSecretRequest,
@@ -11,7 +12,6 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, t
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
-import { errorBody } from "./http-bridge.js";
 import type { BrokerService } from "./service.js";
 import type { BrokerStore } from "./store.js";
 

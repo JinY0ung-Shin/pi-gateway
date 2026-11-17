@@ -2,9 +2,12 @@ import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import {
   AUD_BROKER,
   bearerToken,
+  errorBody,
   isValidUserId,
   MCP_SERVER_ID_PATTERN,
   remoteParent,
+  sendWebResponse,
+  toWebRequest,
   verifyInternalToken,
   type VisibleServersResponse,
   withSpan,
@@ -13,7 +16,6 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, t
 import type { Logger } from "pino";
 import type { z } from "zod";
 import type { BrokerConfig } from "./config.js";
-import { errorBody, sendWebResponse, toWebRequest } from "./http-bridge.js";
 import type { Identity } from "./render.js";
 import type { BrokerService } from "./service.js";
 import { BROKER_CLIENT_INFO } from "./upstream/connect.js";
@@ -146,7 +148,7 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
       reply.raw.on("close", () => {
         if (!reply.raw.writableFinished) controller.abort();
       });
-      const request = toWebRequest(req, controller.signal);
+      const request = toWebRequest(req, controller.signal, "http://mcp-broker.internal");
       const response = await mcp.fetch(request, {
         authInfo: {
           token: "",

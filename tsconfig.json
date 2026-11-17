@@ -4,6 +4,7 @@
     { "path": "packages/shared" },
     { "path": "apps/sandboxd" },
     { "path": "apps/mcp-broker" },
+    { "path": "apps/memory" },
     { "path": "apps/gateway" }
   ]
 }

@@ -1,0 +1,13 @@
+{
+  "name": "@pi-gateway/memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "@pi-gateway/shared": "*",
+    "fastify": "5.12.7",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  }
+}

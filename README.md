@@ -8,10 +8,11 @@
 ```
 client ─▶ gateway ─┬─▶ sandboxd ──▶ pi-sbx-<key> (사용자별 컨테이너, 네트워크 없음)
                    │                    └─▶ egress-proxy ─▶ 허용 목록의 도메인·IP (HTTP/HTTPS만)
-                   └─▶ mcp-broker ─▶ 키가 필요한 MCP 서버
+                   └─▶ mcp-broker ─┬─▶ 키가 필요한 MCP 서버
+                                   └─▶ memory (사용자별 장기 메모리, 등록했을 때)
 ```
 
-코드는 `apps/gateway`, `apps/sandboxd`, `apps/mcp-broker`, `images/egress-proxy`에 있다. 서비스마다 하는 일·네트워크·가진 비밀은 [OPERATIONS.md §1](docs/OPERATIONS.md#1-구성)에 있다.
+코드는 `apps/gateway`, `apps/sandboxd`, `apps/mcp-broker`, `apps/memory`, `images/egress-proxy`에 있다. 서비스마다 하는 일·네트워크·가진 비밀은 [OPERATIONS.md §1](docs/OPERATIONS.md#1-구성)에 있다.
 
 ## 보안 경계
 
