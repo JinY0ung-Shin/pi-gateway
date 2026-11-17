@@ -48,6 +48,9 @@ describe("노트 경로", () => {
     expect(await code(store.read("alice", "linked.md"))).toBe("invalid_path");
     expect(await code(store.write("alice", "link/new.md", "x"))).toBe("invalid_path");
     expect((await store.list("alice")).map((n) => n.path)).toEqual(["a.md", "dir/b.md"]);
+    // 좁히는 폴더 자리의 링크도 따라가지 않는다.
+    expect(await code(store.list("alice", "link"))).toBe("invalid_path");
+    expect(await code(store.search("alice", "secret", undefined, "link"))).toBe("invalid_path");
   });
 });
 
@@ -103,6 +106,13 @@ describe("쓰기와 hash", () => {
     expect(readdirSync(ownerRoot("alice"))).toEqual([]);
   });
 
+  it("쓰다가 죽어 남은 임시 파일은 다음 쓰기 때 지운다", async () => {
+    mkdirSync(ownerRoot("alice"), { recursive: true });
+    writeFileSync(join(ownerRoot("alice"), ".0123456789abcdef.tmp"), "half written");
+    await store.write("alice", "a.md", "x");
+    expect(readdirSync(ownerRoot("alice"))).toEqual(["a.md"]);
+  });
+
   it("노트 크기 한도(512KiB)까지 받고, 넘으면 거절한다", async () => {
     expect(MAX_NOTE_BYTES).toBeGreaterThanOrEqual(512 * 1024);
     expect((await store.write("alice", "big.md", "a".repeat(MAX_NOTE_BYTES))).created).toBe(true);
@@ -151,7 +161,7 @@ describe("긴 노트", () => {
     let joined = "";
     let parts = 0;
     while (offset !== null) {
-      const part = await store.read("alice", "long.md", offset);
+      const part = await store.read("alice", "long.md", offset, saved.hash);
       expect(part.hash).toBe(saved.hash);
       expect(Buffer.byteLength(part.content)).toBeLessThanOrEqual(READ_PAGE_BYTES);
       expect(part.content).not.toContain("\uFFFD");
@@ -162,11 +172,27 @@ describe("긴 노트", () => {
     }
     expect(parts).toBeGreaterThan(3);
     expect(joined).toBe(content);
-    expect(await code(store.read("alice", "long.md", Buffer.byteLength(content) + 1))).toBe("invalid_offset");
+    expect(await code(store.read("alice", "long.md", Buffer.byteLength(content) + 1, saved.hash))).toBe("invalid_offset");
     // 글자 중간을 가리키는 offset은 받지 않는다.
-    await store.write("alice", "ko.md", "가나다");
-    expect(await code(store.read("alice", "ko.md", 1))).toBe("invalid_offset");
-    expect((await store.read("alice", "ko.md", 3)).content).toBe("나다");
+    const ko = await store.write("alice", "ko.md", "가나다");
+    expect(await code(store.read("alice", "ko.md", 1, ko.hash))).toBe("invalid_offset");
+    expect((await store.read("alice", "ko.md", 3, ko.hash)).content).toBe("나다");
+  });
+
+  it("이어 읽는 사이에 바뀐 노트는 이어 읽지 않고 거절한다", async () => {
+    const saved = await store.write("alice", "long.md", `head\n${"x".repeat(READ_PAGE_BYTES)}\ntail`);
+    const first = await store.read("alice", "long.md");
+    expect(first.next).not.toBeNull();
+    // 앞부분의 hash 없이는 이어 읽지 못한다.
+    expect(await code(store.read("alice", "long.md", first.next!))).toBe("invalid_offset");
+    await store.edit("alice", "long.md", "head", "a longer head", saved.hash);
+    expect(await code(store.read("alice", "long.md", first.next!, first.hash))).toBe("stale");
+  });
+
+  it("UTF-8이 아닌 파일은 깨진 글로 돌려주지 않고 거절한다", async () => {
+    await store.write("alice", "a.md", "x");
+    writeFileSync(join(ownerRoot("alice"), "latin1.md"), Buffer.alloc(READ_PAGE_BYTES * 2, 0xa9));
+    expect(await code(store.read("alice", "latin1.md"))).toBe("invalid_content");
   });
 
   it("한 번에 다 읽히지 않는 노트는 write로 통째로 바꿀 수 없고, edit와 delete는 된다", async () => {
@@ -176,7 +202,7 @@ describe("긴 노트", () => {
     expect(await code(store.write("alice", "long.md", "head\nrewritten", saved.hash))).toBe("too_large");
     const edited = await store.edit("alice", "long.md", "tail", "TAIL", saved.hash);
     let last = await store.read("alice", "long.md");
-    while (last.next !== null) last = await store.read("alice", "long.md", last.next);
+    while (last.next !== null) last = await store.read("alice", "long.md", last.next, last.hash);
     expect(last.content.endsWith("TAIL")).toBe(true);
     await store.delete("alice", "long.md", edited.hash);
     expect(await store.list("alice")).toEqual([]);
@@ -234,6 +260,9 @@ describe("목록과 검색", () => {
     const saved = await Promise.all(Array.from({ length: 200 }, (_, i) => store.write("alice", `n/${i}.md`, "needle")));
     const deletes = saved.map((s) => store.delete("alice", s.path, s.hash));
     const reads = Array.from({ length: 20 }, (_, i) => (i % 2 ? store.list("alice") : store.search("alice", "needle")));
+    // 읽기는 지워지기 전이면 되고, 지워진 뒤면 없는 노트다 (저장소 실패가 아니다).
+    const single = await Promise.all(saved.map((s) => code(store.read("alice", s.path))));
+    expect(single.filter((c) => c !== "ok" && c !== "not_found")).toEqual([]);
     await Promise.all([...deletes, ...reads]);
     expect(await store.list("alice")).toEqual([]);
   });
@@ -245,6 +274,16 @@ describe("목록과 검색", () => {
   it("frontmatter의 list는 주석 줄에서 끊기지 않고, 다른 key가 나오면 끝난다", () => {
     expect(parseFrontmatter("---\ntags:\n  # 메모\n  - a\n---\n").fm.tags).toEqual(["a"]);
     expect(parseFrontmatter("---\ntags:\n  - a\nrelated-notes:\n  - b\n---\n").fm.tags).toEqual(["a"]);
+  });
+
+  it("맨 앞 블록에 든 글도 검색에서 빠지지 않는다", async () => {
+    await store.write("alice", "rules.md", "---\nsecret launch date is friday\n---\nrest of note");
+    await store.write("alice", "meta.md", "---\ntitle: Plan\nowner: dana\n---\nbody");
+    expect((await store.search("alice", "friday")).hits.map((h) => h.path)).toEqual(["rules.md"]);
+    expect((await store.search("alice", "dana")).hits.map((h) => h.path)).toEqual(["meta.md"]);
+    // `---`만 있는 줄이 여닫는다.
+    expect(parseFrontmatter("----\ntitle: x\n----\nbody").fm.title).toBe("");
+    expect(parseFrontmatter("---\ntitle: x\n---not a fence\ntags: [a]\n---\nbody")).toEqual({ fm: { title: "x", tags: ["a"], aliases: [] }, body: "body" });
   });
 
   it("frontmatter가 없거나 깨져 있어도 본문으로 찾는다", () => {

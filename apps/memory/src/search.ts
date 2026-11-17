@@ -39,19 +39,24 @@ const inlineList = (v: string) =>
     .map((x) => unquote(x.trim()))
     .filter(Boolean);
 
+/** frontmatter를 여닫는 줄은 `---`만 있는 줄이다 (`----`나 `---글`은 아니다). */
+const OPEN = /^---[ \t]*\r?\n/;
+const CLOSE = /^---[ \t]*$/m;
+
 /**
  * 맨 앞의 `---` 블록에서 title·tags·aliases만 읽는다 (YAML 전체를 해석하지 않는다).
  * 블록이 없거나 깨져 있으면 빈 값으로 두고 본문만으로 찾는다.
  */
 export function parseFrontmatter(content: string): { fm: Frontmatter; body: string } {
   const fm: Frontmatter = { title: "", tags: [], aliases: [] };
-  if (!content.startsWith("---")) return { fm, body: content };
-  const close = content.indexOf("\n---", 3);
-  if (close === -1) return { fm, body: content };
-  const afterClose = content.indexOf("\n", close + 1);
-  const body = afterClose === -1 ? "" : content.slice(afterClose + 1);
+  const open = OPEN.exec(content);
+  if (!open) return { fm, body: content };
+  const rest = content.slice(open[0].length);
+  const close = CLOSE.exec(rest);
+  if (!close) return { fm, body: content };
+  const body = rest.slice(close.index + close[0].length).replace(/^\r?\n/, "");
   let listKey: "tags" | "aliases" | null = null;
-  for (const raw of content.slice(3, close).split("\n")) {
+  for (const raw of rest.slice(0, close.index).split("\n")) {
     const line = raw.trimEnd();
     if (!line.trim()) continue;
     const item = /^\s*-\s+(.*)$/.exec(line);
@@ -112,7 +117,8 @@ export async function searchNotes(
     const title = fm.title || (path.split("/").pop() ?? path).replace(/\.md$/, "");
     const titleHay = `${title} ${fm.aliases.join(" ")}`.toLowerCase();
     const tagHay = fm.tags.join(" ").toLowerCase();
-    const bodyHay = body.toLowerCase();
+    // 본문 점수는 노트 전체에서 본다: 맨 앞 블록에 든 글(다른 key의 값, 수평선 사이의 문단)도 검색에서 빠지지 않는다.
+    const bodyHay = content.toLowerCase();
     let score = 0;
     for (const t of terms) {
       if (titleHay.includes(t)) score += 5;

@@ -28,7 +28,7 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-/** 키를 가진 쪽(BFF)이 주인을 직접 넣어 붙는다 */
+/** 키를 가진 쪽이 주인을 URL에 넣어 붙는다 */
 async function connect(owner: string, key = API_KEY): Promise<McpClient> {
   const client = new McpClient({ name: "memory-test", version: "0.0.0", requestTimeoutMs: 30_000 });
   await client.connect(new StreamableHttpTransport({ url: `${url}/mcp/${owner}`, openGetStream: false, authProvider: { token: async () => key } }));
@@ -113,6 +113,8 @@ describe("memory 서비스 (MCP)", () => {
     expect((await fetch(`${url}/mcp/alice`, { method: "POST", headers, body })).status).toBe(401);
     expect((await fetch(`${url}/mcp/alice`, { method: "POST", headers: { ...headers, authorization: `Bearer ${"x".repeat(64)}` }, body })).status).toBe(401);
     expect((await fetch(`${url}/mcp/-bad`, { method: "POST", headers: { ...headers, authorization: `Bearer ${API_KEY}` }, body })).status).toBe(400);
+    // 사용자 id는 128자까지다.
+    expect((await fetch(`${url}/mcp/${"a".repeat(128)}`, { method: "POST", headers: { ...headers, authorization: `Bearer ${API_KEY}` }, body })).status).toBe(200);
     expect((await fetch(`${url}/healthz`)).status).toBe(200);
   });
 
@@ -146,8 +148,8 @@ describe("memory 서비스 (MCP)", () => {
     const written = await client.callTool("write", { path: "long.md", content });
     const first = textOf(await client.callTool("read", { path: "long.md" }));
     expect(Buffer.byteLength(first)).toBeLessThan(50 * 1024);
-    const next = Number(/MORE REMAINS: read again with offset (\d+)\./.exec(first)![1]);
-    const second = textOf(await client.callTool("read", { path: "long.md", offset: next }));
+    const next = Number(/MORE REMAINS: read again with offset (\d+) and this hash\./.exec(first)![1]);
+    const second = textOf(await client.callTool("read", { path: "long.md", offset: next, hash: hashOf(first) }));
     expect(second).toContain(`part: bytes ${next}–`);
     expect(hashOf(second)).toBe(hashOf(textOf(written)));
     // 앞부분만 본 채로 통째로 바꾸려 하면 거절한다.
