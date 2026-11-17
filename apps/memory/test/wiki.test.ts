@@ -151,6 +151,22 @@ describe("wiki 한도", () => {
   });
 });
 
+describe("wiki 전체 삭제", () => {
+  it("지운 뒤에는 세어 둔 노트 수도 버린다 (다시 한도까지 쓸 수 있다)", async () => {
+    const small = new WikiStore(dataDir, { maxNotes: 2, maxWikiBytes: 1000 });
+    const a = await small.write("alice", "a.md", "1");
+    await small.write("alice", "dir/b.md", "2");
+    expect(await code(small.write("alice", "c.md", "3"))).toBe("wiki_full");
+    await small.deleteAll("alice");
+    expect(await small.list("alice")).toEqual([]);
+    expect(await code(small.readWhole("alice", "a.md"))).toBe("not_found");
+    expect(await code(small.write("alice", "a.md", "x", a.hash))).toBe("stale");
+    await small.write("alice", "c.md", "3");
+    await small.write("alice", "d.md", "4");
+    expect(await code(small.write("alice", "e.md", "5"))).toBe("wiki_full");
+  });
+});
+
 describe("긴 노트", () => {
   it("나눠 읽은 부분을 이으면 원래 노트이고, 줄 끝에서 끊고 글자를 쪼개지 않는다", async () => {
     // 한글(3바이트)과 긴 줄을 섞어 여러 쪽이 되게 한다.

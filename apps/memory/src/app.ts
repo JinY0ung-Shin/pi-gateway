@@ -62,6 +62,16 @@ export function createMemoryService(config: MemoryConfig, options: { log: Logger
     },
   );
 
+  // Fastify가 직접 내는 오류도 이 서비스의 모양({"error":{"code","message"}})으로 답한다.
+  // 없는 라우트(404)는 "없는 노트"(not_found)와 다른 code라서, 부르는 쪽이 옛 버전이나 틀린 주소를 빈 wiki로 읽지 않는다.
+  app.setNotFoundHandler((_req, reply) => reply.code(404).send(errorBody("no_route", "this memory service has no such route")));
+  app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, _req, reply) => {
+    const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+    if (status === 500) log.error({ err: error.message }, "memory request failed");
+    const code = status === 500 ? "internal" : error.code === "FST_ERR_CTP_BODY_TOO_LARGE" ? "body_too_large" : "invalid_request";
+    return reply.code(status).send(errorBody(code, status === 500 ? "the memory service failed" : "the request was not accepted"));
+  });
+
   app.get("/healthz", async () => ({ ok: true }));
 
   // healthz가 아닌 모든 요청이 키를 낸다. 맞춰진 라우트로 고른다: URL 글자로 고르면 라우터가 풀어 주는 다른 표기(%6dcp, absolute-form)가 검사를 건너뛴다.

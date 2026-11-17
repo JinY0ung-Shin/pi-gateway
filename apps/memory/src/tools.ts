@@ -1,7 +1,7 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 import { z } from "zod";
-import { READ_PAGE_BYTES, WikiError, type WikiStore } from "./wiki.js";
+import { HASH_PATTERN, READ_PAGE_BYTES, WikiError, type WikiStore } from "./wiki.js";
 
 /**
  * wiki를 다루는 MCP 도구. 누구의 wiki인지는 인자에 없다: 부르는 쪽이 만든 URL에서 정해진다 (app.ts).
@@ -17,7 +17,7 @@ const clip = (value: string) => (value.length > LABEL_CHARS ? `${value.slice(0, 
 const pathArg = z.string().describe("Note path relative to the wiki root, ending in .md (e.g. projects/deploy.md).");
 const hashArg = z
   .string()
-  .regex(/^[0-9a-f]{64}$/, "a hash is the 64 hex characters after `hash:`")
+  .regex(HASH_PATTERN, "a hash is the 64 hex characters after `hash:`")
   .describe("The note's `hash`: the `hash:` line of the last read, or the hash the last write/edit of this note returned.");
 const prefixArg = z.string().optional().describe("Only notes under this folder (e.g. projects). Omit for the whole wiki.");
 

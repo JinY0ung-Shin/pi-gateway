@@ -46,10 +46,15 @@ export class WikiError extends Error {
   constructor(
     readonly code: WikiErrorCode,
     message: string,
+    /** `stale`인데 노트가 아예 없어진 경우 (지우려던 쪽에게는 이미 끝난 일이다) */
+    readonly gone = false,
   ) {
     super(message);
   }
 }
+
+/** 노트 hash의 모양 (sha256 hex) */
+export const HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 export interface NoteEntry {
   path: string;
@@ -290,7 +295,7 @@ export class WikiStore {
   /** 지금 내용이 `hash`와 같은지 본다. 다르면 거절한다. */
   private async current(root: string, rel: string, hash: string): Promise<Buffer> {
     const bytes = await this.bytesOf(root, rel).catch((err) => {
-      if (err instanceof WikiError && err.code === "not_found") throw new WikiError("stale", `${rel} does not exist any more: it was deleted since it was read`);
+      if (err instanceof WikiError && err.code === "not_found") throw new WikiError("stale", `${rel} does not exist any more: it was deleted since it was read`, true);
       throw err;
     });
     if (sha256(bytes) !== hash) throw new WikiError("stale", `${rel} changed since it was read. Read it again and redo the change on the current text`);
@@ -397,7 +402,10 @@ export class WikiStore {
     });
   }
 
-  /** 주인의 wiki를 통째로 지운다 (그 사용자가 지워질 때). 없는 wiki를 지워도 된다. */
+  /**
+   * 주인의 wiki를 통째로 지운다 (그 사용자가 지워질 때). 없는 wiki를 지워도 된다.
+   * 지웠다는 표시는 남기지 않는다: 그 뒤에 온 쓰기는 wiki를 다시 만든다. 부르는 쪽이 그 주인의 쓰기를 먼저 멈춘다.
+   */
   async deleteAll(owner: string): Promise<void> {
     return this.locked(owner, async () => {
       this.usage.delete(owner);

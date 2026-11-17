@@ -2,7 +2,7 @@ import { errorBody, isValidUserId } from "@pi-gateway/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import { z } from "zod";
-import { WikiError, type WikiErrorCode, type WikiStore } from "./wiki.js";
+import { HASH_PATTERN, WikiError, type WikiErrorCode, type WikiStore } from "./wiki.js";
 
 /**
  * 프로그램용 API (`/wiki/<owner>/…`, JSON). 같은 스택의 BFF가 자기가 허락한 주인의 wiki를 다룬다.
@@ -28,8 +28,9 @@ const STATUS: Record<WikiErrorCode, number> = {
 const NoteQuery = z.object({ path: z.string() });
 const ListQuery = z.object({ prefix: z.string().optional() });
 const SearchQuery = z.object({ q: z.string(), limit: z.coerce.number().int().min(1).max(20).optional(), prefix: z.string().optional() });
-const DeleteQuery = z.object({ path: z.string(), hash: z.string() });
-const PutBody = z.object({ path: z.string(), content: z.string(), hash: z.string().optional() });
+const Hash = z.string().regex(HASH_PATTERN);
+const DeleteQuery = z.object({ path: z.string(), hash: Hash });
+const PutBody = z.object({ path: z.string(), content: z.string(), hash: Hash.optional() });
 
 export function registerWikiRoutes(app: FastifyInstance, store: WikiStore, log: Logger): void {
   /** 주인을 확인하고 `run`의 결과를 JSON으로 보낸다. 거절은 그 code와 맞는 상태로, 그 밖의 실패는 500으로 답한다. */
@@ -63,7 +64,10 @@ export function registerWikiRoutes(app: FastifyInstance, store: WikiStore, log: 
     "/wiki/:owner/note",
     route((owner, req) => {
       const { path, hash } = DeleteQuery.parse(req.query);
-      return store.delete(owner, path, hash);
+      // 이미 없는 노트를 지우는 것은 충돌이 아니라 "없음"이다 (응답을 잃고 다시 보낸 삭제가 404로 끝난다).
+      return store.delete(owner, path, hash).catch((err) => {
+        throw err instanceof WikiError && err.gone ? new WikiError("not_found", err.message) : err;
+      });
     }),
   );
 
