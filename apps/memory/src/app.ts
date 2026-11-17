@@ -9,7 +9,8 @@ import { WikiStore } from "./wiki.js";
 
 /**
  * memory 서비스 — 주인별 wiki를 MCP(streamable HTTP)로 내놓는다 (`/mcp/<owner>`).
- * control 네트워크에만 있고, 키를 가진 mcp-broker만 부른다 (URL에 `{{user}}`를 넣어 그 사용자의 wiki를 부른다).
+ * 포트를 공개하지 않고, 키를 가진 쪽만 부른다: mcp-broker(URL에 `{{user}}`를 넣어 그 사용자의 wiki를 부른다)와,
+ * 같은 compose 스택에 있으면서 누가 누구의 메모리를 볼지 스스로 정하는 BFF(허락한 주인을 직접 넣는다. docs/OPERATIONS.md "장기 메모리").
  * 누구의 wiki인지는 URL에서만 오고 도구 인자에는 없다.
  */
 
