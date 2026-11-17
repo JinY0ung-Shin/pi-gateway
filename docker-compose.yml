@@ -5,7 +5,7 @@
 #   docker compose up -d --build
 #
 # 구조와 보안 경계: README.md, 운영: docs/OPERATIONS.md
-# - gateway만 포트를 공개한다. sandboxd·mcp-broker는 internal 네트워크(control)에만 있다.
+# - gateway만 포트를 공개한다. sandboxd·mcp-broker·memory는 internal 네트워크(control)에만 있다.
 # - 사용자 sandbox 컨테이너(sandboxd가 만든다)는 네트워크가 없다(network_mode none). 바깥으로는
 #   egress-proxy의 unix socket(proxy-sock 볼륨)으로만 나가고, 프록시는 허용 목록(SANDBOX_EGRESS_ALLOW)의 목적지만 연다.
 #   그래서 sandbox에서 내부 서비스·호스트·다른 sandbox에 닿을 수 없고, 호스트 방화벽 설정이 필요 없다 (docs/OPERATIONS.md §6).
@@ -164,6 +164,30 @@ services:
       - control
       - broker-egress
 
+  # 사용자별 장기 메모리 (markdown wiki, MCP). 포트를 공개하지 않고 control 네트워크에만 있다.
+  # agent가 쓰게 하려면 관리 화면 MCP 페이지에 broker 서버로 등록한다 (docs/OPERATIONS.md "장기 메모리").
+  memory:
+    <<: *hardening
+    image: pi-gateway/memory:${PI_GATEWAY_VERSION:-latest}
+    build:
+      context: .
+      target: memory
+      args: *mirror-args
+    user: "10002:10002"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATA_DIR: /data
+      MEMORY_API_KEY_FILE: /run/secrets/memory_api_key
+    secrets:
+      - source: memory_api_key
+        target: memory_api_key
+    volumes:
+      - memory-data:/data
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - control
+
   gateway:
     <<: *hardening
     image: pi-gateway/gateway:${PI_GATEWAY_VERSION:-latest}
@@ -258,6 +282,7 @@ networks:
 volumes:
   gateway-data: {}
   broker-data: {}
+  memory-data: {}
   jaeger-data: {}
   # egress-proxy의 unix socket. sandboxd가 만드는 sandbox 컨테이너가 이 이름으로 mount하므로 이름을 고정한다
   # (apps/sandboxd/src/config.ts의 proxyVolume).
@@ -288,6 +313,9 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/broker/broker_jwt_secret
   broker_kek:
     file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/broker/broker_kek
+  # memory (uid 10002)
+  memory_api_key:
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/memory/api_key
   # 사내 CA PEM (.env의 NODE_EXTRA_CA_CERTS). sandbox 이미지 빌드에서만 쓴다. 비우면 빈 파일
   extra_ca:
     file: ${NODE_EXTRA_CA_CERTS:-/dev/null}

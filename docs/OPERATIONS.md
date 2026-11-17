@@ -12,13 +12,14 @@
 | `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 인증, pi 세션(agent loop), plugin 설치, 프롬프트, 관리 화면 | LLM 키, 내부 JWT 키, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
 | `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시. 비밀키가 필요한 원격 HTTP 서버만 맡고 프로세스(stdio 서버)는 실행하지 않는다 | MCP 비밀키, KEK |
+| `memory` | `pi-gateway/memory` (uid 10002) | control | 사용자별 장기 메모리(markdown wiki)를 MCP로 내놓는다. MCP 페이지에 등록해야 agent가 쓴다 ([§9](#9-운영-메모) "장기 메모리") | memory 키 |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
 | `jaeger` | `jaegertracing/jaeger` (root, capability 없음) | control | trace 저장소. 포트를 공개하지 않는다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
 | `pi-sbx-<key>` | `pi-gateway/sandbox` (uid 1000) | 없음 (`network_mode: none`) | 사용자별 sandbox. sandboxd가 필요할 때 만들고 유휴 시 지운다 | 없음 |
 
 - **control** 네트워크는 `internal`이다. 바깥으로 나가는 경로가 없고 포트도 공개하지 않는다.
-- **sandbox 컨테이너**에는 네트워크가 없다 (인터페이스는 `lo`뿐). 바깥으로는 `proxy-sock` 볼륨의 unix socket을 거쳐 egress-proxy로만 나간다 ([§6](#6-네트워크-차단-규칙)). 그래서 sandbox에서 gateway·broker·sandboxd·다른 sandbox에 닿을 수 없고, 호스트와 사내망에는 허용 목록에 넣은 곳만 닿는다.
+- **sandbox 컨테이너**에는 네트워크가 없다 (인터페이스는 `lo`뿐). 바깥으로는 `proxy-sock` 볼륨의 unix socket을 거쳐 egress-proxy로만 나간다 ([§6](#6-네트워크-차단-규칙)). 그래서 sandbox에서 gateway·broker·sandboxd·memory·다른 sandbox에 닿을 수 없고, 호스트와 사내망에는 허용 목록에 넣은 곳만 닿는다.
 - **sandbox 컨테이너**는 compose 밖에서 만들어진다. `docker compose down`으로는 지워지지 않는다 ([§3.5](#35-중지재시작업데이트)).
 
 ## 2. 요구사항
@@ -26,7 +27,7 @@
 - Linux x86_64 호스트, Docker Engine 25 이상 (개발 확인: 29.1.3), Docker Compose v2.
 - `openssl`: 비밀값 생성에 쓴다.
 - 디스크
-  - 이미지: 약 1.5GB (sandbox 568MB, Node 서비스 3개, egress-proxy 14MB)
+  - 이미지: 약 1.5GB (sandbox 568MB, Node 서비스 4개, egress-proxy 14MB)
   - 사용자 workspace: 사용량만큼
 - LLM: OpenAI 호환 엔드포인트 (vLLM의 `/v1/chat/completions`) 또는 Anthropic 호환 `/v1/messages`.
   - 도구 호출(function calling)이 켜져 있어야 한다.
@@ -47,14 +48,14 @@ sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh
 |---|---|---|---|
 | `$PI_GATEWAY_HOME/workspaces` | 1000:1000 | 0700 | 사용자별 workspace (`u-<hash>` 디렉토리) |
 | `$PI_GATEWAY_HOME/plugins` | 10001:10001 | 0755 | 설치된 plugin. gateway만 쓰고 sandbox는 읽기만 한다 |
-| `$PI_GATEWAY_HOME/secrets/{gateway,sandboxd,broker}` | root | 0700 | compose secret 파일. 파일은 쓰는 서비스 uid 소유의 0400 ([§4](#4-비밀값)) |
+| `$PI_GATEWAY_HOME/secrets/{gateway,sandboxd,broker,memory}` | root | 0700 | compose secret 파일. 파일은 쓰는 서비스 uid 소유의 0400 ([§4](#4-비밀값)) |
 | `.env` | – | – | `PI_GATEWAY_HOME`, `PI_GATEWAY_SECRETS`, `DOCKER_GID`를 추가한다 |
 
 **비밀값 파일 권한**
 - 디렉토리가 root 0700이라 호스트의 다른 사용자는 읽을 수 없다.
 - 파일은 그 비밀값을 쓰는 서비스의 uid만 읽을 수 있다(0400).
 - 스크립트를 다시 실행하면 소유자와 권한을 바로잡는다.
-- 새로 만든 `admin_api_key`·`api_key`는 실행이 끝날 때 한 번 보여준다. 내부용 값은 보여주지 않는다.
+- 새로 만든 `admin_api_key`·`api_key`·`memory_api_key`는 실행이 끝날 때 한 번 보여준다. 내부용 값은 보여주지 않는다.
 
 **호스트에서 uid 1000이 실제 로그인 사용자인 경우**
 - 그 사용자가 모든 workspace의 소유자로 보인다.
@@ -134,6 +135,7 @@ location / {
 
 ```bash
 docker compose down                     # 서비스만 내린다. 사용자 sandbox 컨테이너는 남는다
+sudo PI_GATEWAY_HOME=/srv/pi-gateway ./scripts/setup-host.sh   # 업데이트 전에: 새 버전이 쓰는 비밀 파일을 만든다 (있는 것은 그대로 둔다)
 docker compose up -d --build            # 업데이트. sandboxd가 실행 중인 sandbox를 다시 채택한다
 docker ps --filter label=pi-gateway.sandbox=1          # 사용자 sandbox 목록
 docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 sandbox 제거 (workspace는 남는다)
@@ -156,6 +158,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
+| `memory/api_key` | 10002 | memory | memory 서비스를 부르는 키 (32자 이상). MCP 페이지에 등록할 때 비밀값으로 같은 값을 넣는다. 바꾸면 그 비밀값도 다시 넣는다 |
 
 **교체**
 - 같이 쓰는 값은 두 사본을 모두 바꾸고, 쓰는 서비스를 모두 다시 시작한다. 예: `docker compose up -d --force-recreate gateway sandboxd`
@@ -319,7 +322,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 | `/etc` | `/etc/passwd` 계정, hostname, shadow 파일 |
 | 권한 | uid, capability, no_new_privs, setuid 파일, su·sudo·user namespace·mount, seccomp |
 | 파일시스템 | `/workspace`·`/tmp` 밖 쓰기, docker.sock |
-| 네트워크 | 내부 서비스(gateway·sandboxd·broker), metadata 주소, 허용 목록에 없는 목적지, 다른 sandbox, 호스트 주소. 각각 직접 연결과 egress 프록시 경유를 둘 다 시도한다 |
+| 네트워크 | 내부 서비스(gateway·sandboxd·broker·memory), metadata 주소, 허용 목록에 없는 목적지, 다른 sandbox, 호스트 주소. 각각 직접 연결과 egress 프록시 경유를 둘 다 시도한다 |
 | 참고 | 사내망 대상 도달 여부(`--lan`, 프록시 경유), 자원 제한, 커널 정보 |
 
 **네트워크 판정**
@@ -345,7 +348,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 ## 9. 운영 메모
 
 **로그**
-- `docker compose logs -f sandboxd gateway mcp-broker egress-proxy`
+- `docker compose logs -f sandboxd gateway mcp-broker memory egress-proxy`
 - sandbox 컨테이너는 로그를 남기지 않는다 (`LogConfig: none`). 명령 출력은 gateway 세션 기록에 있다.
 
 **실행 시간 (trace)**
@@ -361,6 +364,31 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 - 위치: `$PI_GATEWAY_HOME/workspaces/u-<sha256(user)[:24]>`
 - 백업은 이 디렉토리를 대상으로 한다.
 - 사용자 id에서 디렉토리 이름을 구하는 방법: `node -e "console.log('u-'+require('crypto').createHash('sha256').update('alice').digest('hex').slice(0,24))"`
+
+**장기 메모리 (`memory` 서비스)**
+- 사용자마다 markdown wiki 하나를 둔다. agent가 `search`·`list`·`read`·`write`·`edit`·`delete` 도구로 노트를 찾고 남기며, 세션이 바뀌어도 남는다. 세션을 지우거나 대화를 되돌려도 노트는 그대로다.
+- 기본으로는 agent에게 보이지 않는다. 쓰려면 관리 화면 **MCP** 페이지에 아래 서버를 등록하고, 비밀값 `MEMORY_API_KEY`에 `$PI_GATEWAY_SECRETS/memory/api_key`의 값을 넣는다. 새 세션부터 보인다.
+
+  ```json
+  {
+    "id": "memory",
+    "runIn": "broker",
+    "displayName": "Long-term memory",
+    "description": "Your long-term memory: notes about this user that persist across sessions. Search it before answering anything that may depend on what was learned earlier, and save durable facts, preferences and decisions to it.",
+    "transport": {
+      "type": "http",
+      "url": "http://memory:7090/mcp/{{user}}",
+      "headers": { "Authorization": "Bearer {{secret:MEMORY_API_KEY}}" }
+    }
+  }
+  ```
+
+- 누구의 wiki인지는 URL의 `{{user}}`(요청한 사용자)로만 정해진다. 도구 인자로는 고를 수 없다.
+- 자기 권한 판단을 가진 BFF는 이 서버를 등록하지 않고, 같은 키로 `http://memory:7090/mcp/<주인>`을 직접 부른다. 등록하면 그 BFF의 모든 세션에 이 도구가 따로 보인다.
+- 위치: `memory-data` 볼륨의 `wikis/u-<sha256(user)[:24]>/` (디렉토리 이름을 구하는 방법은 위 workspace와 같다). 백업은 이 볼륨을 대상으로 한다.
+- 한도: 노트 하나 512KiB, wiki 하나에 노트 10,000개·256MiB. 검색은 한 번에 노트 2,000개까지 읽고, 넘으면 읽지 않은 수를 결과에 알린다.
+- 도구 결과는 gateway가 자르는 크기(50KB)보다 작게 나눠 준다. 32KiB가 넘는 노트는 여러 번에 나눠 읽고, 통째로 바꾸지 못하고 `edit`로만 고친다 (모델이 보지 못한 뒷부분이 덮어써지지 않게).
+- 다른 메모리 시스템으로 바꾸려면 MCP 페이지에서 이 서버 대신 그 시스템의 MCP 서버를 등록한다. gateway는 바꾸지 않는다.
 
 **디스크 quota**
 - 하드 quota는 걸지 않는다. 필요하면 workspaces를 XFS(`prjquota`) 볼륨에 두고 디렉토리별 project quota를 건다.

@@ -5,7 +5,7 @@
 #   ./scripts/security-check/check-secret-files.sh -p myproj --env-file /path/.env
 #
 # 인자는 그대로 `docker compose`에 넘긴다. 종료 코드: 0 = 모두 통과, 1 = 실패 있음.
-# 기대값: gateway 10001:0400, sandboxd 1000:0400, mcp-broker 0:0400
+# 기대값: gateway 10001:0400, sandboxd 1000:0400, mcp-broker 0:0400, memory 10002:0400
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 COMPOSE=(docker compose "$@")
@@ -36,5 +36,6 @@ check_service() {
 check_service gateway 10001
 check_service sandboxd 1000
 check_service mcp-broker 0
+check_service memory 10002
 
 exit "$fail"

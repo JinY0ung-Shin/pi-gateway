@@ -3,6 +3,7 @@
 #   docker build --target gateway    -t pi-gateway/gateway .
 #   docker build --target sandboxd   -t pi-gateway/sandboxd .
 #   docker build --target mcp-broker -t pi-gateway/mcp-broker .
+#   docker build --target memory     -t pi-gateway/memory .
 #   docker build --target egress-proxy -t pi-gateway/egress-proxy .
 # sandbox 이미지는 images/sandbox/Dockerfile 로 따로 만든다. 보통은 docker compose build로 한 번에 빌드한다.
 
@@ -30,6 +31,7 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/gateway/package.json apps/gateway/
 COPY apps/sandboxd/package.json apps/sandboxd/
 COPY apps/mcp-broker/package.json apps/mcp-broker/
+COPY apps/memory/package.json apps/memory/
 COPY apps/admin-ui/package.json apps/admin-ui/
 
 # ── 빌드 ────────────────────────────────────────────────────────────
@@ -47,6 +49,9 @@ RUN npx tsc -b apps/sandboxd
 FROM build-deps AS build-broker
 RUN npx tsc -b apps/mcp-broker
 
+FROM build-deps AS build-memory
+RUN npx tsc -b apps/memory
+
 FROM build-deps AS build-gateway
 RUN npx tsc -b apps/gateway \
  && npm run build -w @pi-gateway/admin-ui \
@@ -61,6 +66,9 @@ RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/sandboxd
 
 FROM manifests AS deps-broker
 RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/mcp-broker
+
+FROM manifests AS deps-memory
+RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/memory
 
 FROM base AS runtime
 ENV NODE_ENV=production HOME=/tmp
@@ -117,6 +125,23 @@ EXPOSE 7080 7081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.BROKER_PORT||7080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 CMD ["node", "apps/mcp-broker/dist/main.js"]
+
+# ── memory ──────────────────────────────────────────────────────────
+# 사용자별 장기 메모리(markdown wiki)를 MCP로 내놓는다. 노트는 /data 볼륨에만 있고, 실행하지 않는다.
+FROM runtime AS memory
+RUN groupadd -g 10002 memory \
+ && useradd -u 10002 -g 10002 -M -d /nonexistent -s /usr/sbin/nologin memory \
+ && mkdir -m 0700 /data \
+ && chown 10002:10002 /data
+COPY --from=deps-memory /app/node_modules node_modules
+COPY --from=build-memory /app/packages/shared/dist packages/shared/dist
+COPY --from=build-memory /app/apps/memory/package.json apps/memory/
+COPY --from=build-memory /app/apps/memory/dist apps/memory/dist
+USER 10002:10002
+EXPOSE 7090
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+  CMD node -e "fetch('http://127.0.0.1:7090/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+CMD ["node", "apps/memory/dist/main.js"]
 
 # ── egress-proxy ────────────────────────────────────────────────────
 # sandbox의 유일한 바깥 출구. Stripe Smokescreen v0.1.0(go.mod/go.sum으로 고정)을 감싼 정적 바이너리.

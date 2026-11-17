@@ -12,7 +12,7 @@
 //   --url URL              sandboxd 주소 (기본 http://127.0.0.1:7070)
 //   --secret-file PATH     sandboxd JWT 비밀키 파일 (기본 $SANDBOXD_JWT_SECRET_FILE, 또는 $SANDBOXD_JWT_SECRET)
 //   --internal NAME:PORT   sandbox에서 닿으면 안 되는 내부 서비스 (여러 번 가능, 기본 gateway:8080 sandboxd:7070
-//                          mcp-broker:7080 mcp-broker:7081). 이름은 이 스크립트가 도는 곳에서 IP로 바꿔 시험한다.
+//                          mcp-broker:7080 mcp-broker:7081 memory:7090). 이름은 이 스크립트가 도는 곳에서 IP로 바꿔 시험한다.
 //   --egress HOST:PORT     대조군: SANDBOX_EGRESS_ALLOW에 있는 대상 하나. egress 프록시로 연결되는지 본다 (기본 없음)
 //   --host-ip IP           sandbox에서 닿으면 안 되는 호스트 주소 (여러 번 가능). 호스트의 LAN·공인 주소(ip -4 addr)를 넣는다.
 //                          sandbox에는 경로가 없으므로 egress 프록시가 이 주소를 거부하는지 본다.
@@ -52,7 +52,7 @@ for (let i = 0; i < args.length; i++) {
     process.exit(0);
   } else throw new Error(`unknown option ${a}`);
 }
-if (opt.internal.length === 0) opt.internal = ["gateway:8080", "sandboxd:7070", "mcp-broker:7080", "mcp-broker:7081"];
+if (opt.internal.length === 0) opt.internal = ["gateway:8080", "sandboxd:7070", "mcp-broker:7080", "mcp-broker:7081", "memory:7090"];
 
 function loadSecret() {
   const file = opt.secretFile ?? process.env.SANDBOXD_JWT_SECRET_FILE;
