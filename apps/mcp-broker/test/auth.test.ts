@@ -85,6 +85,23 @@ describe("data plane authentication", () => {
     expect(wrong.statusCode).toBe(401);
   });
 
+  it("라우터가 같은 경로로 풀어 주는 다른 표기로도 토큰 없이는 닿지 못한다", async () => {
+    // 인증을 URL 글자로 고르면 %-인코딩한 경로가 검사를 건너뛴다. healthz가 아닌 모든 경로가 토큰을 요구해야 한다.
+    for (const url of ["/%6dcp/servers", "/%6Dcp/servers", "/%6dcp/echo", "/nope"]) {
+      expect((await tb.broker.dataPlane.inject({ method: "GET", url })).statusCode, url).toBe(401);
+    }
+    for (const url of ["/%61dmin/servers", "/%41dmin/servers", "/%61dmin/servers/x", "/nope"]) {
+      expect((await tb.broker.adminPlane.inject({ method: "GET", url })).statusCode, url).toBe(401);
+    }
+    const put = await tb.broker.adminPlane.inject({
+      method: "PUT",
+      url: "/%61dmin/servers/evil",
+      payload: { runIn: "broker", transport: { type: "http", url: "http://example.invalid/mcp", headers: {} } },
+    });
+    expect(put.statusCode).toBe(401);
+    expect((await tb.admin("GET", "/admin/servers")).json().servers).toEqual([]);
+  });
+
   it("healthz는 인증 없이 열린다", async () => {
     expect((await tb.broker.dataPlane.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
   });
