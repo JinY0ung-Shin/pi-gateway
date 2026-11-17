@@ -396,7 +396,9 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
     | `GET /wiki/<주인>/search?q=&limit=&prefix=` | 검색 (`hits`, 읽지 않은 수 `unscanned`) |
     | `DELETE /wiki/<주인>` | 그 주인의 wiki를 통째로 지운다 |
 
-  - 거절은 `{"error":{"code","message"}}`와 상태 코드로 답한다: 없는 노트 404, 그 사이 바뀜·이미 있음 409, 한도 413·507, 잘못된 경로·요청 400.
+  - 응답: `notes`는 `{notes:[{path,bytes}]}`, `note`는 `{path,content,hash}`, PUT은 `{path,hash,created}`, 노트 DELETE는 `{path}`, wiki DELETE는 `{deleted:true}`.
+  - 거절은 `{"error":{"code","message"}}`와 상태 코드로 답한다: 없는 노트 404 `not_found`(이미 지운 노트를 다시 지워도 같다), 그 사이 바뀜 409 `stale`, 이미 있음 409 `exists`, 한도 413·507, 잘못된 경로·요청 400, 키 없음 401, 저장소 실패 500 `internal`. 없는 라우트는 404 `no_route`라서 없는 노트와 구분된다.
+  - wiki를 통째로 지운 뒤에 온 쓰기는 wiki를 다시 만든다. 지우기 전에 그 주인의 실행을 먼저 멈춘다.
   - memory는 포트를 공개하지 않고 control 네트워크에만 있다. 직접 부르려면 BFF가 같은 compose 스택에 있어야 하고, compose override로 memory와 BFF만 있는 internal 네트워크를 하나 더 붙인다 (BFF를 control에 넣으면 sandboxd와 broker까지 닿는다).
   - 키 파일은 memory uid(10002) 소유의 사본 하나뿐이다. BFF 컨테이너는 같은 값의 사본을 자기 uid 소유로 따로 둔다 ([§4](#4-비밀값)의 다른 값들처럼).
 - 위치: `memory-data` 볼륨의 `wikis/u-<sha256(user)[:24]>/` (디렉토리 이름을 구하는 방법은 위 workspace와 같다). 백업은 이 볼륨을 대상으로 한다.
