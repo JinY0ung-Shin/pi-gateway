@@ -384,7 +384,19 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
   ```
 
 - 누구의 wiki인지는 URL의 `{{user}}`(요청한 사용자)로만 정해진다. 도구 인자로는 고를 수 없다.
-- 누가 누구의 메모리를 볼지 스스로 정하는 BFF는 이 서버를 등록하지 않고, 같은 키로 `http://memory:7090/mcp/<주인>`을 직접 부른다. 등록하면 그 BFF의 모든 세션에 요청한 사용자의 메모리 도구가 따로 보인다.
+- 누가 누구의 메모리를 볼지 스스로 정하는 BFF는 이 서버를 등록하지 않고, 같은 키로 프로그램용 API `http://memory:7090/wiki/<주인>/…`을 직접 부른다. 등록하면 그 BFF의 모든 세션에 요청한 사용자의 메모리 도구가 따로 보인다.
+  - 프로그램용 API는 JSON이고 저장소와 규칙(경로, hash, 한도)이 MCP 도구와 같다. 다만 모델용이 아니라서 결과를 나누지 않는다: 목록은 전부, 노트는 전문을 주고, 긴 노트도 hash를 내면 통째로 바꾼다.
+
+    | 요청 | 하는 일 |
+    |---|---|
+    | `GET /wiki/<주인>/notes?prefix=` | 노트 경로와 크기 전체 (`prefix` 폴더 아래만) |
+    | `GET /wiki/<주인>/note?path=` | 노트 전문과 hash |
+    | `PUT /wiki/<주인>/note` `{path, content, hash?}` | 새로 만들거나(hash 없음), hash가 맞는 노트를 바꾼다 |
+    | `DELETE /wiki/<주인>/note?path=&hash=` | hash가 맞는 노트를 지운다 |
+    | `GET /wiki/<주인>/search?q=&limit=&prefix=` | 검색 (`hits`, 읽지 않은 수 `unscanned`) |
+    | `DELETE /wiki/<주인>` | 그 주인의 wiki를 통째로 지운다 |
+
+  - 거절은 `{"error":{"code","message"}}`와 상태 코드로 답한다: 없는 노트 404, 그 사이 바뀜·이미 있음 409, 한도 413·507, 잘못된 경로·요청 400.
   - memory는 포트를 공개하지 않고 control 네트워크에만 있다. 직접 부르려면 BFF가 같은 compose 스택에 있어야 하고, compose override로 memory와 BFF만 있는 internal 네트워크를 하나 더 붙인다 (BFF를 control에 넣으면 sandboxd와 broker까지 닿는다).
   - 키 파일은 memory uid(10002) 소유의 사본 하나뿐이다. BFF 컨테이너는 같은 값의 사본을 자기 uid 소유로 따로 둔다 ([§4](#4-비밀값)의 다른 값들처럼).
 - 위치: `memory-data` 볼륨의 `wikis/u-<sha256(user)[:24]>/` (디렉토리 이름을 구하는 방법은 위 workspace와 같다). 백업은 이 볼륨을 대상으로 한다.

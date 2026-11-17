@@ -270,6 +270,14 @@ export class WikiStore {
     return { path: rel, content: bytes.subarray(offset, end).toString("utf8"), hash: current, offset, next: end < total ? end : null, total };
   }
 
+  /** 노트 전체를 읽는다. 프로그램(BFF)용이다: 모델에게는 `read`가 나눠 준다. */
+  async readWhole(owner: string, path: string): Promise<{ path: string; content: string; hash: string }> {
+    const rel = normalizeNotePath(path);
+    const bytes = await this.bytesOf(this.root(owner), rel);
+    if (!isUtf8(bytes)) throw new WikiError("invalid_content", `${rel} is not UTF-8 text and cannot be read`);
+    return { path: rel, content: bytes.toString("utf8"), hash: sha256(bytes) };
+  }
+
   private async bytesOf(root: string, rel: string): Promise<Buffer> {
     const at = await locate(root, rel);
     if (at.size !== null && at.size > MAX_NOTE_BYTES) throw new WikiError("too_large", `${rel} is larger than ${MAX_NOTE_BYTES} bytes and cannot be read`);
@@ -328,15 +336,18 @@ export class WikiStore {
     return sha256(bytes);
   }
 
-  /** 새 노트를 만들거나(`hash` 없음), 있는 노트를 통째로 바꾼다(`hash` 필요). */
-  async write(owner: string, path: string, content: string, hash?: string): Promise<{ path: string; hash: string; created: boolean }> {
+  /**
+   * 새 노트를 만들거나(`hash` 없음), 있는 노트를 통째로 바꾼다(`hash` 필요).
+   * `sawWhole`은 부르는 쪽이 노트 전체를 읽었다는 뜻이다 (readWhole을 쓰는 프로그램). 그때만 한 번에 읽히지 않는 긴 노트도 통째로 바꾼다.
+   */
+  async write(owner: string, path: string, content: string, hash?: string, sawWhole = false): Promise<{ path: string; hash: string; created: boolean }> {
     const rel = normalizeNotePath(path);
     const bytes = encode(content);
     return this.locked(owner, async () => {
       const root = this.root(owner);
       if (hash !== undefined) {
         const before = await this.current(root, rel, hash);
-        if (before.length > READ_PAGE_BYTES) {
+        if (!sawWhole && before.length > READ_PAGE_BYTES) {
           throw new WikiError(
             "too_large",
             `${rel} is ${before.length} bytes, more than one read returns (${READ_PAGE_BYTES}), so write cannot replace it as a whole: the part that was not read would be lost. Change it with edit, or delete it and write the new note`,
@@ -383,6 +394,14 @@ export class WikiStore {
         if (!(await rmdir(dir).then(() => true, () => false))) break;
       }
       return { path: rel };
+    });
+  }
+
+  /** 주인의 wiki를 통째로 지운다 (그 사용자가 지워질 때). 없는 wiki를 지워도 된다. */
+  async deleteAll(owner: string): Promise<void> {
+    return this.locked(owner, async () => {
+      this.usage.delete(owner);
+      await rm(this.root(owner), { recursive: true, force: true });
     });
   }
 
