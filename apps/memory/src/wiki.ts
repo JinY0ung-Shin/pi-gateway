@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -57,6 +58,15 @@ export interface NoteEntry {
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
+/** 없는 파일은 null로 본다. 그 밖의 실패는 그대로 던진다. */
+const missingAsNull = (err: NodeJS.ErrnoException) => {
+  if (err.code === "ENOENT") return null;
+  throw err;
+};
+
+/** 쓰는 동안만 있는 임시 파일 (wiki 맨 위에 둔다) */
+const TMP_NAME = /^\.[0-9a-f]{16}\.tmp$/;
+
 function segmentsOf(raw: string): string[] {
   const text = raw.normalize("NFC");
   if (Buffer.byteLength(text) > MAX_PATH_BYTES) throw new WikiError("invalid_path", `a path is at most ${MAX_PATH_BYTES} bytes`);
@@ -84,57 +94,79 @@ function normalizePrefix(raw: string | undefined): string {
 
 /**
  * wiki 안의 경로를 실제 경로로 바꾼다. 이미 있는 부분은 하나씩 확인해서, 폴더가 아닌 것(링크 포함)을 지나가거나
- * 파일이 아닌 것(링크 포함)을 가리키면 거절한다. `size`가 null이면 아직 없는 노트다.
+ * 마지막이 `want`(노트 = 파일, 폴더)가 아닌 것(링크 포함)이면 거절한다. `size`가 null이면 아직 없다.
  */
-async function locate(root: string, rel: string): Promise<{ abs: string; size: number | null }> {
+async function locate(root: string, rel: string, want: "note" | "folder" = "note"): Promise<{ abs: string; size: number | null }> {
   const segments = rel.split("/");
   let current = root;
   for (const [i, segment] of segments.entries()) {
     current = join(current, segment);
-    const info = await lstat(current).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === "ENOENT") return null;
-      throw err;
-    });
+    const info = await lstat(current).catch(missingAsNull);
     if (!info) return { abs: join(root, rel), size: null };
     const last = i === segments.length - 1;
-    if (last ? !info.isFile() : !info.isDirectory()) {
-      throw new WikiError("invalid_path", `${rel}: '${segment}' is not a ${last ? "note" : "folder"}`);
-    }
+    const kind = last ? want : "folder";
+    if (kind === "note" ? !info.isFile() : !info.isDirectory()) throw new WikiError("invalid_path", `${rel}: '${segment}' is not a ${kind}`);
     if (last) return { abs: current, size: info.size };
   }
   throw new WikiError("invalid_path", "empty path");
 }
 
-/** wiki의 모든 노트 (경로 순). 점으로 시작하는 이름과 링크는 보지 않는다. */
-async function walk(root: string): Promise<NoteEntry[]> {
-  const notes: NoteEntry[] = [];
+interface FoundNote {
+  path: string;
+  abs: string;
+}
+
+/** `dir`(wiki 안의 경로로는 `rel`, 맨 위면 "") 아래의 모든 노트 (경로 순). 점으로 시작하는 이름과 링크는 보지 않는다. */
+async function walk(dir: string, rel: string): Promise<FoundNote[]> {
+  const notes: FoundNote[] = [];
   const visit = async (dir: string, rel: string, depth: number): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === "ENOENT") return [];
-      throw err;
-    });
-    for (const entry of entries) {
+    for (const entry of (await readdir(dir, { withFileTypes: true }).catch(missingAsNull)) ?? []) {
       if (entry.name.startsWith(".")) continue;
       const path = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         if (depth < MAX_DEPTH) await visit(join(dir, entry.name), path, depth + 1);
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
-        // 목록을 읽은 뒤 지워진 노트는 건너뛴다 (list·search는 쓰기와 같은 줄에 서지 않는다).
-        const info = await lstat(join(dir, entry.name)).catch((err: NodeJS.ErrnoException) => {
-          if (err.code === "ENOENT") return null;
-          throw err;
-        });
-        if (info) notes.push({ path, bytes: info.size });
+        notes.push({ path, abs: join(dir, entry.name) });
       }
     }
   };
-  await visit(root, "", 1);
+  await visit(dir, rel, rel ? rel.split("/").length + 1 : 1);
   return notes.sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
-/** 임시 파일에 써서 디스크에 내린 뒤 이름을 바꾼다 (읽는 쪽이 반쯤 쓴 노트를 보지 않고, "저장했다"고 답한 노트가 남는다). */
-async function atomicWrite(abs: string, bytes: Buffer): Promise<void> {
-  const tmp = join(dirname(abs), `.${randomBytes(8).toString("hex")}.tmp`);
+/** 노트마다 크기를 붙인다. 목록을 읽은 뒤 지워진 노트는 건너뛴다 (list·search는 쓰기와 같은 줄에 서지 않는다). */
+async function sized(notes: FoundNote[]): Promise<NoteEntry[]> {
+  const entries: NoteEntry[] = [];
+  for (const note of notes) {
+    const info = await lstat(note.abs).catch(missingAsNull);
+    if (info) entries.push({ path: note.path, bytes: info.size });
+  }
+  return entries;
+}
+
+/** 검색이 읽는 노트의 글. 그 사이 지워진 노트와 한도보다 큰 파일은 null이다 (건너뛴다). 그 밖의 읽기 실패는 던진다. */
+async function textOf(abs: string): Promise<string | null> {
+  const info = await lstat(abs).catch(missingAsNull);
+  if (!info?.isFile() || info.size > MAX_NOTE_BYTES) return null;
+  return (await readFile(abs).catch(missingAsNull))?.toString("utf8") ?? null;
+}
+
+/** 디렉토리를 디스크에 내린다 (그 안에 새로 생긴 이름이 전원이 나가도 남게). */
+async function syncDir(dir: string): Promise<void> {
+  const handle = await open(dir, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * 임시 파일에 써서 디스크에 내린 뒤 이름을 바꾼다 (읽는 쪽이 반쯤 쓴 노트를 보지 않는다).
+ * 임시 파일은 wiki 맨 위(`root`)에 둔다: 쓰다가 죽어 남아도 노트 폴더를 비우는 것을 막지 않는다.
+ */
+async function atomicWrite(root: string, abs: string, bytes: Buffer): Promise<void> {
+  const tmp = join(root, `.${randomBytes(8).toString("hex")}.tmp`);
   try {
     const file = await open(tmp, "wx", 0o600);
     try {
@@ -191,19 +223,40 @@ export class WikiStore {
     return run;
   }
 
-  async list(owner: string, prefix?: string): Promise<NoteEntry[]> {
+  /** `prefix` 폴더(없으면 wiki 전체) 아래의 노트. 그 폴더부터 걷는다. */
+  private async notesUnder(owner: string, prefix?: string): Promise<FoundNote[]> {
+    const root = this.root(owner);
     const under = normalizePrefix(prefix);
-    const notes = await walk(this.root(owner));
-    return under ? notes.filter((n) => n.path === under || n.path.startsWith(`${under}/`)) : notes;
+    if (!under) return walk(root, "");
+    const folder = await locate(root, under, "folder");
+    return folder.size === null ? [] : walk(folder.abs, under);
+  }
+
+  async list(owner: string, prefix?: string): Promise<NoteEntry[]> {
+    return sized(await this.notesUnder(owner, prefix));
   }
 
   /**
    * 노트를 `offset`(바이트)부터 READ_PAGE_BYTES까지 읽는다. hash는 늘 노트 전체의 것이다.
    * 남은 부분이 있으면 `next`가 이어 읽을 offset이다. 줄 끝에서 끊고, 글자 중간에서는 끊지 않는다.
+   * 이어 읽을 때는 앞부분을 읽을 때 받은 `hash`를 낸다. 그 사이 바뀐 노트는 이어 읽지 않고 거절한다 (offset이 다른 글을 가리킨다).
    */
-  async read(owner: string, path: string, offset = 0): Promise<{ path: string; content: string; hash: string; offset: number; next: number | null; total: number }> {
+  async read(
+    owner: string,
+    path: string,
+    offset = 0,
+    hash?: string,
+  ): Promise<{ path: string; content: string; hash: string; offset: number; next: number | null; total: number }> {
     const rel = normalizeNotePath(path);
     const bytes = await this.bytesOf(this.root(owner), rel);
+    // 이 서비스가 쓴 노트는 늘 UTF-8이다. 볼륨에 직접 놓인 다른 파일은 깨진 글로 돌려주지 않는다.
+    if (!isUtf8(bytes)) throw new WikiError("invalid_content", `${rel} is not UTF-8 text and cannot be read`);
+    const current = sha256(bytes);
+    if (offset > 0 && hash !== current) {
+      throw hash === undefined
+        ? new WikiError("invalid_offset", "reading from an offset needs the `hash` the previous read of this note gave")
+        : new WikiError("stale", `${rel} changed since its previous part was read, so the offset no longer fits. Read it again from the start`);
+    }
     const total = bytes.length;
     if (offset < 0 || offset > total || (offset === total && total > 0) || (bytes[offset] ?? 0) >> 6 === 0b10) {
       throw new WikiError("invalid_offset", `offset ${offset} is not a position in ${rel} (${total} bytes). Use the offset the previous read gave`);
@@ -214,14 +267,16 @@ export class WikiStore {
       if (newline >= offset) end = newline + 1;
       else while (end > offset && bytes[end]! >> 6 === 0b10) end--;
     }
-    return { path: rel, content: bytes.subarray(offset, end).toString("utf8"), hash: sha256(bytes), offset, next: end < total ? end : null, total };
+    return { path: rel, content: bytes.subarray(offset, end).toString("utf8"), hash: current, offset, next: end < total ? end : null, total };
   }
 
   private async bytesOf(root: string, rel: string): Promise<Buffer> {
     const at = await locate(root, rel);
-    if (at.size === null) throw new WikiError("not_found", `no note at ${rel}. Use search or list to find the path`);
-    if (at.size > MAX_NOTE_BYTES) throw new WikiError("too_large", `${rel} is larger than ${MAX_NOTE_BYTES} bytes and cannot be read`);
-    return readFile(at.abs);
+    if (at.size !== null && at.size > MAX_NOTE_BYTES) throw new WikiError("too_large", `${rel} is larger than ${MAX_NOTE_BYTES} bytes and cannot be read`);
+    // 찾은 뒤 읽기 전에 지워진 노트도 없는 노트다.
+    const bytes = at.size === null ? null : await readFile(at.abs).catch(missingAsNull);
+    if (!bytes) throw new WikiError("not_found", `no note at ${rel}. Use search or list to find the path`);
+    return bytes;
   }
 
   /** 지금 내용이 `hash`와 같은지 본다. 다르면 거절한다. */
@@ -237,7 +292,11 @@ export class WikiStore {
   private async usageOf(owner: string, root: string): Promise<{ notes: number; bytes: number }> {
     let used = this.usage.get(owner);
     if (!used) {
-      const notes = await walk(root);
+      // 여기는 주인의 lock 안이라, 남아 있는 임시 파일은 쓰다가 죽은 것이다.
+      for (const name of (await readdir(root).catch(missingAsNull)) ?? []) {
+        if (TMP_NAME.test(name)) await rm(join(root, name), { force: true });
+      }
+      const notes = await sized(await walk(root, ""));
       used = { notes: notes.length, bytes: notes.reduce((sum, n) => sum + n.bytes, 0) };
       this.usage.set(owner, used);
     }
@@ -253,8 +312,14 @@ export class WikiStore {
     if (total > maxWikiBytes) throw new WikiError("wiki_full", `this wiki would exceed ${maxWikiBytes} bytes; delete or shorten notes first`);
     const abs = join(root, rel);
     try {
-      await mkdir(dirname(abs), { recursive: true, mode: 0o700 });
-      await atomicWrite(abs, bytes);
+      const made = await mkdir(dirname(abs), { recursive: true, mode: 0o700 });
+      await atomicWrite(root, abs, bytes);
+      // "저장했다"고 답한 노트가 남도록, 새 이름이 생긴 디렉토리(노트의 폴더와 새로 만든 폴더들의 부모)를 디스크에 내린다.
+      const top = made ? dirname(made) : dirname(abs);
+      for (let dir = dirname(abs); ; dir = dirname(dir)) {
+        await syncDir(dir);
+        if (dir.length <= top.length) break;
+      }
     } catch (err) {
       this.usage.delete(owner);
       throw err;
@@ -323,21 +388,9 @@ export class WikiStore {
 
   async search(owner: string, query: string, limit?: number, prefix?: string): Promise<SearchResult> {
     if (!query.trim()) throw new WikiError("invalid_query", "the query has no words to look for");
-    const root = this.root(owner);
-    const notes = await this.list(owner, prefix);
-    return searchNotes(
-      notes.map((n) => n.path),
-      // 검색 도중 지워진 노트는 건너뛴다. 그 밖의 읽기 실패는 검색 실패다 (빈 결과로 바꾸지 않는다).
-      (path) =>
-        this.bytesOf(root, path).then(
-          (b) => b.toString("utf8"),
-          (err) => {
-            if (err instanceof WikiError) return null;
-            throw err;
-          },
-        ),
-      query,
-      limit,
-    );
+    const notes = await this.notesUnder(owner, prefix);
+    const abs = new Map(notes.map((n) => [n.path, n.abs]));
+    // 검색 도중 지워진 노트는 건너뛴다. 그 밖의 읽기 실패는 검색 실패다 (빈 결과로 바꾸지 않는다).
+    return searchNotes([...abs.keys()], (path) => textOf(abs.get(path)!), query, limit);
   }
 }

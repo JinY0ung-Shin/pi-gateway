@@ -176,7 +176,6 @@ services:
     user: "10002:10002"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATA_DIR: /data
       MEMORY_API_KEY_FILE: /run/secrets/memory_api_key
     secrets:
       - source: memory_api_key

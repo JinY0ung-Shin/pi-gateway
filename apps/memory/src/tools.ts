@@ -84,14 +84,15 @@ const TOOLS: MemoryTool[] = [
     z.object({
       path: pathArg,
       offset: z.number().int().min(0).optional().describe("Where to continue a long note from: the offset the previous read of this note gave. Omit to read from the start."),
+      hash: hashArg.optional().describe("Needed with `offset`: the `hash:` line of the previous part. If the note changed since then, the read is refused."),
     }),
-    async (store, owner, { path, offset }) => {
-      const note = await store.read(owner, path, offset);
+    async (store, owner, { path, offset, hash }) => {
+      const note = await store.read(owner, path, offset, hash);
       const whole = note.offset === 0 && note.next === null;
       const part = whole
         ? ""
         : `part: bytes ${note.offset}–${note.offset + Buffer.byteLength(note.content)} of ${note.total}. ${
-            note.next === null ? "This is the end of the note." : `MORE REMAINS: read again with offset ${note.next}.`
+            note.next === null ? "This is the end of the note." : `MORE REMAINS: read again with offset ${note.next} and this hash.`
           } This note is too long to replace with write; change it with edit.\n`;
       return `path: ${note.path}\nhash: ${note.hash}\n${part}\n${note.content}`;
     },

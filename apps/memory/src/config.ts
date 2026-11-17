@@ -6,7 +6,7 @@ export interface MemoryConfig {
   port: number;
   /** wiki 파일이 놓이는 곳 (`<dataDir>/wikis/<owner key>/`) */
   dataDir: string;
-  /** 부르는 쪽(mcp-broker, BFF)이 Bearer로 보내는 키 */
+  /** 부르는 쪽(mcp-broker)이 Bearer로 보내는 키 */
   apiKey: string;
 }
 

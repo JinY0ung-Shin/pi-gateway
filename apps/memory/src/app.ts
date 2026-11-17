@@ -9,8 +9,8 @@ import { WikiStore } from "./wiki.js";
 
 /**
  * memory 서비스 — 주인별 wiki를 MCP(streamable HTTP)로 내놓는다 (`/mcp/<owner>`).
- * control 네트워크에만 있고, 키를 가진 쪽만 부른다: mcp-broker(URL에 `{{user}}`를 넣어 그 사용자의 wiki를 부른다)와
- * 자기 권한 판단을 가진 BFF(허락한 주인을 직접 넣는다). 누구의 wiki인지는 URL에서만 오고 도구 인자에는 없다.
+ * control 네트워크에만 있고, 키를 가진 mcp-broker만 부른다 (URL에 `{{user}}`를 넣어 그 사용자의 wiki를 부른다).
+ * 누구의 wiki인지는 URL에서만 오고 도구 인자에는 없다.
  */
 
 /** 요청 본문 최대 크기. 노트 한도(512KiB)가 JSON으로 감싸져 들어온다. */
@@ -37,6 +37,8 @@ export function createMemoryService(config: MemoryConfig, options: { log: Logger
   const app = Fastify({
     loggerInstance: log as FastifyBaseLogger,
     bodyLimit: MAX_BODY_BYTES,
+    // 사용자 id는 128자까지다 (라우터 기본값은 100자). %-인코딩한 표기도 받도록 넉넉히 두고, 형식은 isValidUserId가 본다.
+    routerOptions: { maxParamLength: 128 * 3 },
     logController: new LogController({ disableRequestLogging: true }),
   });
 
