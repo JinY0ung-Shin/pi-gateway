@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import { bearerToken, errorBody, isValidUserId, sendWebResponse, toWebRequest } from "@pi-gateway/shared";
-import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply } from "fastify";
 import { pino, type Logger } from "pino";
 import type { MemoryConfig } from "./config.js";
 import { registerWikiRoutes } from "./rest.js";
@@ -37,8 +37,17 @@ export function createMemoryService(config: MemoryConfig, options: { log: Logger
   const { log } = options;
   const store = new WikiStore(config.dataDir);
   const apiKey = digest(config.apiKey);
+  // Fastify가 직접 내는 오류도 이 서비스의 모양({"error":{"code","message"}})으로 답한다.
+  const onError = (error: Error & { statusCode?: number; code?: string }, _req: unknown, reply: FastifyReply) => {
+    const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+    if (status === 500) log.error({ err: error }, "memory request failed");
+    const code = status === 500 ? "internal" : error.code === "FST_ERR_CTP_BODY_TOO_LARGE" ? "body_too_large" : "invalid_request";
+    return reply.code(status).send(errorBody(code, status === 500 ? "the memory service failed" : "the request was not accepted"));
+  };
   const app = Fastify({
     loggerInstance: log as FastifyBaseLogger,
+    // 라우터가 라우트를 고르기 전에 거절하는 주소(깨진 %-인코딩, 너무 긴 주인)도 같은 모양으로 답한다.
+    frameworkErrors: onError,
     bodyLimit: MAX_BODY_BYTES,
     // 사용자 id는 128자까지다 (라우터 기본값은 100자). %-인코딩한 표기도 받도록 넉넉히 두고, 형식은 isValidUserId가 본다.
     routerOptions: { maxParamLength: 128 * 3 },
@@ -62,15 +71,9 @@ export function createMemoryService(config: MemoryConfig, options: { log: Logger
     },
   );
 
-  // Fastify가 직접 내는 오류도 이 서비스의 모양({"error":{"code","message"}})으로 답한다.
   // 없는 라우트(404)는 "없는 노트"(not_found)와 다른 code라서, 부르는 쪽이 옛 버전이나 틀린 주소를 빈 wiki로 읽지 않는다.
   app.setNotFoundHandler((_req, reply) => reply.code(404).send(errorBody("no_route", "this memory service has no such route")));
-  app.setErrorHandler((error: Error & { statusCode?: number; code?: string }, _req, reply) => {
-    const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
-    if (status === 500) log.error({ err: error.message }, "memory request failed");
-    const code = status === 500 ? "internal" : error.code === "FST_ERR_CTP_BODY_TOO_LARGE" ? "body_too_large" : "invalid_request";
-    return reply.code(status).send(errorBody(code, status === 500 ? "the memory service failed" : "the request was not accepted"));
-  });
+  app.setErrorHandler(onError);
 
   app.get("/healthz", async () => ({ ok: true }));
 

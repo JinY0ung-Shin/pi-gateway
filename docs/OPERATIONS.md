@@ -394,7 +394,7 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
     | `PUT /wiki/<주인>/note` `{path, content, hash?}` | 새로 만들거나(hash 없음), hash가 맞는 노트를 바꾼다 |
     | `DELETE /wiki/<주인>/note?path=&hash=` | hash가 맞는 노트를 지운다 |
     | `GET /wiki/<주인>/search?q=&limit=&prefix=` | 검색 (`hits`, 읽지 않은 수 `unscanned`) |
-    | `DELETE /wiki/<주인>` | 그 주인의 wiki를 통째로 지운다 |
+    | `DELETE /wiki/<주인>` | 그 주인의 wiki를 통째로 지운다 (query가 붙으면 400으로 거절한다) |
 
   - 응답: `notes`는 `{notes:[{path,bytes}]}`, `note`는 `{path,content,hash}`, PUT은 `{path,hash,created}`, 노트 DELETE는 `{path}`, wiki DELETE는 `{deleted:true}`.
   - 거절은 `{"error":{"code","message"}}`와 상태 코드로 답한다: 없는 노트 404 `not_found`(이미 지운 노트를 다시 지워도 같다), 그 사이 바뀜 409 `stale`, 이미 있음 409 `exists`, 한도 413·507, 잘못된 경로·요청 400, 키 없음 401, 저장소 실패 500 `internal`. 없는 라우트는 404 `no_route`라서 없는 노트와 구분된다.

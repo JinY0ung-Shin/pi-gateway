@@ -27,7 +27,8 @@ const STATUS: Record<WikiErrorCode, number> = {
 
 const NoteQuery = z.object({ path: z.string() });
 const ListQuery = z.object({ prefix: z.string().optional() });
-const SearchQuery = z.object({ q: z.string(), limit: z.coerce.number().int().min(1).max(20).optional(), prefix: z.string().optional() });
+const NoQuery = z.strictObject({});
+const SearchQuery = z.object({ q: z.string().max(500), limit: z.coerce.number().int().min(1).max(20).optional(), prefix: z.string().optional() });
 const Hash = z.string().regex(HASH_PATTERN);
 const DeleteQuery = z.object({ path: z.string(), hash: Hash });
 const PutBody = z.object({ path: z.string(), content: z.string(), hash: Hash.optional() });
@@ -64,10 +65,7 @@ export function registerWikiRoutes(app: FastifyInstance, store: WikiStore, log: 
     "/wiki/:owner/note",
     route((owner, req) => {
       const { path, hash } = DeleteQuery.parse(req.query);
-      // 이미 없는 노트를 지우는 것은 충돌이 아니라 "없음"이다 (응답을 잃고 다시 보낸 삭제가 404로 끝난다).
-      return store.delete(owner, path, hash).catch((err) => {
-        throw err instanceof WikiError && err.gone ? new WikiError("not_found", err.message) : err;
-      });
+      return store.delete(owner, path, hash);
     }),
   );
 
@@ -81,7 +79,9 @@ export function registerWikiRoutes(app: FastifyInstance, store: WikiStore, log: 
 
   app.delete(
     "/wiki/:owner",
-    route(async (owner) => {
+    route(async (owner, req) => {
+      // query가 붙은 요청은 `/note`를 빠뜨린 노트 하나의 삭제일 수 있다. 전부 지우지 않고 거절한다.
+      NoQuery.parse(req.query);
       await store.deleteAll(owner);
       return { deleted: true };
     }),

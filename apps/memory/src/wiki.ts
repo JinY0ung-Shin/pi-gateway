@@ -46,8 +46,6 @@ export class WikiError extends Error {
   constructor(
     readonly code: WikiErrorCode,
     message: string,
-    /** `stale`인데 노트가 아예 없어진 경우 (지우려던 쪽에게는 이미 끝난 일이다) */
-    readonly gone = false,
   ) {
     super(message);
   }
@@ -292,14 +290,19 @@ export class WikiStore {
     return bytes;
   }
 
-  /** 지금 내용이 `hash`와 같은지 본다. 다르면 거절한다. */
-  private async current(root: string, rel: string, hash: string): Promise<Buffer> {
-    const bytes = await this.bytesOf(root, rel).catch((err) => {
-      if (err instanceof WikiError && err.code === "not_found") throw new WikiError("stale", `${rel} does not exist any more: it was deleted since it was read`, true);
-      throw err;
-    });
+  /** 지금 내용이 `hash`와 같은지 본다. 다르면 거절한다. 없는 노트는 `not_found`다. */
+  private async matching(root: string, rel: string, hash: string): Promise<Buffer> {
+    const bytes = await this.bytesOf(root, rel);
     if (sha256(bytes) !== hash) throw new WikiError("stale", `${rel} changed since it was read. Read it again and redo the change on the current text`);
     return bytes;
+  }
+
+  /** 바꾸려는 노트의 지금 내용. `matching`과 같되, 그 사이 지워진 노트도 `stale`이다. */
+  private current(root: string, rel: string, hash: string): Promise<Buffer> {
+    return this.matching(root, rel, hash).catch((err) => {
+      if (err instanceof WikiError && err.code === "not_found") throw new WikiError("stale", `${rel} does not exist any more: it was deleted since it was read`);
+      throw err;
+    });
   }
 
   private async usageOf(owner: string, root: string): Promise<{ notes: number; bytes: number }> {
@@ -388,7 +391,8 @@ export class WikiStore {
     const rel = normalizeNotePath(path);
     return this.locked(owner, async () => {
       const root = this.root(owner);
-      const before = await this.current(root, rel, hash);
+      // 이미 없는 노트를 지우는 것은 충돌이 아니라 "없음"이다 (응답을 잃고 다시 보낸 삭제가 not_found로 끝난다).
+      const before = await this.matching(root, rel, hash);
       const abs = join(root, rel);
       const used = this.usage.get(owner);
       this.usage.delete(owner);
@@ -410,6 +414,8 @@ export class WikiStore {
     return this.locked(owner, async () => {
       this.usage.delete(owner);
       await rm(this.root(owner), { recursive: true, force: true });
+      // "지웠다"고 답한 wiki가 전원이 나가도 되살아나지 않게 한다. wiki가 하나도 없었으면 내릴 디렉토리도 없다.
+      await syncDir(join(this.dataDir, "wikis")).catch(missingAsNull);
     });
   }
 

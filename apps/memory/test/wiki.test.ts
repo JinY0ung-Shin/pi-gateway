@@ -77,6 +77,8 @@ describe("쓰기와 hash", () => {
     // 지워진 노트를 hash로 바꾸려 해도 거절한다.
     await store.delete("alice", "a.md", second.hash);
     expect(await code(store.write("alice", "a.md", "again", second.hash))).toBe("stale");
+    // 이미 지운 노트를 다시 지우는 것은 충돌이 아니라 없음이다.
+    expect(await code(store.delete("alice", "a.md", second.hash))).toBe("not_found");
   });
 
   it("동시에 들어온 두 쓰기 중 하나만 받는다", async () => {

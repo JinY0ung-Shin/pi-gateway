@@ -82,6 +82,9 @@ describe("프로그램용 API (/wiki/<owner>)", () => {
   it("주인의 wiki를 통째로 지우고, 다른 주인의 것은 남는다", async () => {
     await call("PUT", "/wiki/dave/note", { path: "a.md", content: "dave" });
     await call("PUT", "/wiki/erin/note", { path: "a.md", content: "erin" });
+    // `/note`를 빠뜨린 노트 하나의 삭제는 wiki를 지우지 않고 거절한다.
+    expect((await call("DELETE", `/wiki/dave?${q({ path: "a.md", hash: "0".repeat(64) })}`)).json.error.code).toBe("invalid_request");
+    expect((await call("GET", "/wiki/dave/notes")).json.notes).toHaveLength(1);
     expect(await call("DELETE", "/wiki/dave")).toEqual({ status: 200, json: { deleted: true } });
     expect((await call("GET", "/wiki/dave/notes")).json.notes).toEqual([]);
     expect((await call("GET", "/wiki/erin/note?path=a.md")).json.content).toBe("erin");
@@ -102,6 +105,7 @@ describe("프로그램용 API (/wiki/<owner>)", () => {
     expect((await call("DELETE", "/wiki/frank/note?path=a.md&hash=xyz")).json.error.code).toBe("invalid_request");
     expect((await call("GET", "/wiki/frank/note?path=a.md&path=b.md")).json.error.code).toBe("invalid_request");
     for (const limit of ["0", "21", "1.5", "abc"]) expect((await call("GET", `/wiki/frank/search?${q({ q: "x", limit })}`)).status, limit).toBe(400);
+    expect((await call("GET", `/wiki/frank/search?${q({ q: "x".repeat(501) })}`)).json.error.code).toBe("invalid_request");
     expect((await call("PUT", "/wiki/frank/note", { path: "big.md", content: "a".repeat(512 * 1024 + 1) })).status).toBe(413);
     expect((await call("GET", "/wiki/-bad/notes")).json.error.code).toBe("invalid_owner");
     mkdirSync(join(dataDir, "wikis"), { recursive: true });
@@ -114,6 +118,9 @@ describe("프로그램용 API (/wiki/<owner>)", () => {
     expect((await call("GET", "/wiki/alice/note?path=none.md")).json.error.code).toBe("not_found");
     const huge = await app.inject({ method: "PUT", url: "/wiki/alice/note", headers: auth, payload: "x".repeat(4 * 1024 * 1024 + 1) });
     expect([huge.statusCode, JSON.parse(huge.body).error.code]).toEqual([413, "body_too_large"]);
+    // 라우터가 라우트를 고르기 전에 거절하는 주소도 같은 모양이다.
+    expect(await call("GET", "/wiki/%zz/notes")).toEqual({ status: 400, json: { error: { code: "invalid_request", message: expect.any(String) } } });
+    expect(await call("GET", `/wiki/${"a".repeat(400)}/notes`)).toEqual({ status: 414, json: { error: { code: "invalid_request", message: expect.any(String) } } });
   });
 
   it("키가 없거나 틀리면, 다른 표기의 경로로도 401이다", async () => {
