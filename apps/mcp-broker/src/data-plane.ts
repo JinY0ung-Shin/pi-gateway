@@ -104,8 +104,9 @@ export function buildDataPlane(deps: { config: BrokerConfig; service: BrokerServ
 
   app.get("/healthz", async () => ({ ok: true }));
 
+  // healthz가 아닌 모든 요청이 토큰을 낸다. 맞춰진 라우트로 고른다: URL 글자로 고르면 라우터가 풀어 주는 다른 표기(%6dcp)가 검사를 건너뛴다.
   app.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/mcp")) return;
+    if (req.routeOptions.url === "/healthz") return;
     const token = bearerToken(req.headers.authorization);
     if (!token) {
       return reply

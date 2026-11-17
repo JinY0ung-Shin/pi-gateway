@@ -53,8 +53,8 @@ export function buildAdminPlane(deps: {
       .send(errorBody(status === 500 ? "internal" : "invalid_request", status === 500 ? "internal error" : "invalid request"));
   });
 
+  // 모든 요청이 토큰을 낸다. URL 글자로 고르면 라우터가 풀어 주는 다른 표기(%61dmin)가 검사를 건너뛴다.
   app.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/admin")) return;
     const token = bearerToken(req.headers.authorization);
     const valid = token !== null && (await verifyInternalToken(config.jwtSecret, AUD_BROKER_ADMIN, token).then(() => true, () => false));
     if (!valid) return reply.code(401).send(errorBody("unauthorized", "invalid admin token"));
