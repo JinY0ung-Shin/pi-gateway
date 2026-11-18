@@ -645,7 +645,7 @@ function ModelEditor(props: { model: ModelRow; onChange: (patch: Partial<ModelRo
         <label class="field">
           <span>contextWindow</span>
           <input type="number" min={1} value={m.contextWindow} onInput={(e) => props.onChange({ contextWindow: Number(e.currentTarget.value) })} />
-          <small class="muted">vLLM의 --max-model-len과 맞춥니다.</small>
+          <small class="muted">vLLM의 --max-model-len과 맞춥니다. 최대 1,048,576.</small>
         </label>
         <label class="field">
           <span>maxTokens</span>

@@ -30,6 +30,16 @@ const models = async () =>
   ((await (await fetch(`${h.url}/v1/models`, { headers: { authorization: `Bearer ${ALICE_KEY}` } })).json()) as any).data;
 
 describe("/admin/api/llm", () => {
+  it("rejects a contextWindow above 1M and a maxTokens above the contextWindow", async () => {
+    const put = async (model: Record<string, unknown>) => {
+      const res = await putLlm(await withServer({ models: [{ id: "test-model", ...model }] }));
+      return { status: res.status, message: res.ok ? "" : ((await res.json()) as any).error.message };
+    };
+    expect(await put({ contextWindow: 1_048_577, maxTokens: 4096 })).toMatchObject({ status: 400, message: expect.stringContaining("contextWindow must be at most 1048576") });
+    expect(await put({ contextWindow: 8000, maxTokens: 8001 })).toMatchObject({ status: 400, message: expect.stringContaining("maxTokens must not be larger than contextWindow") });
+    expect((await getLlm()).settings.servers[0].models[0]).toMatchObject({ contextWindow: 32000, maxTokens: 4096 });
+  });
+
   it("never returns the API key, applies a new key to new and live sessions, and keeps it when omitted", async () => {
     let view = await getLlm();
     expect(view).toMatchObject({ configured: true, settings: { defaultModel: "test-model", servers: [{ id: "test", apiKeySet: false }] } });

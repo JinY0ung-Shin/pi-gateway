@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { LlmServer, LlmSettings, type LlmSettingsRecord, probeLlmServer, testLlmModel } from "../agent/runtime.js";
+import { LlmServer, LlmSettingsInput, type LlmSettingsRecord, probeLlmServer, testLlmModel } from "../agent/runtime.js";
 import type { AdminContext } from "./context.js";
 import { PlatformError, parseBody } from "./errors.js";
 
@@ -40,7 +40,7 @@ export function registerLlmRoutes(app: FastifyInstance, ctx: AdminContext): void
   app.put<{ Body: Record<string, unknown> | null }>("/llm", async (req) => {
     const body = req.body ?? {};
     const servers = Array.isArray(body.servers) ? body.servers.map(storedKey) : body.servers;
-    const settings = parseBody(LlmSettings, { ...body, servers }, { code: "invalid_llm_settings" });
+    const settings = parseBody(LlmSettingsInput, { ...body, servers }, { code: "invalid_llm_settings" });
     let record: LlmSettingsRecord;
     try {
       record = await llm.update(settings);

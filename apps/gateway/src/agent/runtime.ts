@@ -119,6 +119,24 @@ export const LlmSettings = z
   });
 export type LlmSettings = z.infer<typeof LlmSettings>;
 
+/** contextWindow 상한: 1M (2^20) */
+const MAX_CONTEXT_WINDOW = 1_048_576;
+
+/** 관리자가 저장할 때만 보는 값 범위. 저장된 설정을 읽을 때는 보지 않는다 (이미 있는 값 때문에 gateway가 못 뜨면 안 된다). */
+export const LlmSettingsInput = LlmSettings.superRefine((s, ctx) => {
+  s.servers.forEach((server, i) =>
+    server.models.forEach((m, j) => {
+      const path = ["servers", i, "models", j];
+      if (m.contextWindow > MAX_CONTEXT_WINDOW) {
+        ctx.addIssue({ code: "custom", path: [...path, "contextWindow"], message: `contextWindow must be at most ${MAX_CONTEXT_WINDOW}` });
+      }
+      if (m.maxTokens > m.contextWindow) {
+        ctx.addIssue({ code: "custom", path: [...path, "maxTokens"], message: "maxTokens must not be larger than contextWindow" });
+      }
+    }),
+  );
+});
+
 /** vLLM 같은 OpenAI 호환 서버에서 안전한 기본값. compat으로 덮어쓸 수 있다. */
 const DEFAULT_OPENAI_COMPAT: Record<string, unknown> = {
   supportsStore: false,
