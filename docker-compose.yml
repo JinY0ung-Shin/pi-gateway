@@ -267,6 +267,32 @@ services:
       - edge
       - control
 
+  # 대화 기록 프로세스 마이닝 (docs/process-mining-design.md). 늘 떠 있지 않고 cron이 하루 한 번 돌린다:
+  #   docker compose run --rm -T mining
+  # gateway 이미지를 쓰지만 비밀값이 없고, LLM으로 나가는 edge에만 붙으며, gateway 데이터는 읽기만 한다.
+  mining:
+    <<: *hardening
+    profiles: ["mining"]
+    restart: "no"
+    image: pi-gateway/gateway:${PI_GATEWAY_VERSION:-latest}
+    user: "10001:10001"
+    command: ["node", "apps/gateway/dist/mining/main.js"]
+    environment:
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:+/etc/pi-gateway/extra-ca.pem}
+    volumes:
+      - gateway-data:/data:ro
+      - mining-data:/mining
+      - type: bind
+        source: ${NODE_EXTRA_CA_CERTS:-/dev/null}
+        target: /etc/pi-gateway/extra-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - edge
+
 networks:
   # gateway의 공개 포트와 LLM 엔드포인트 접근
   edge: {}
@@ -280,6 +306,7 @@ networks:
 
 volumes:
   gateway-data: {}
+  mining-data: {}
   broker-data: {}
   memory-data: {}
   jaeger-data: {}

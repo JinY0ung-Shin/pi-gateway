@@ -79,14 +79,15 @@ COPY packages/shared/package.json packages/shared/
 
 # ── gateway ─────────────────────────────────────────────────────────
 # git: plugin marketplace 설치에 쓴다. LLM 키·세션 기록을 갖고 있으므로 사용자 코드를 실행하지 않는다.
+# /mining: compose의 mining 서비스가 같은 이미지로 돌 때 쓰는 볼륨 자리 (볼륨이 처음 mount될 때 이 소유자를 물려받는다).
 FROM runtime AS gateway
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
  && groupadd -g 10001 gateway \
  && useradd -u 10001 -g 10001 -M -d /nonexistent -s /usr/sbin/nologin gateway \
- && mkdir -p /data /opt/plugins \
- && chown 10001:10001 /data /opt/plugins \
+ && mkdir -p /data /opt/plugins /mining \
+ && chown 10001:10001 /data /opt/plugins /mining \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=deps-gateway /app/node_modules node_modules
 COPY --from=build-gateway /app/packages/shared/dist packages/shared/dist
