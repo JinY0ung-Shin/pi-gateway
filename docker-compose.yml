@@ -249,8 +249,8 @@ services:
         target: broker_jwt_secret
     volumes:
       - gateway-data:/data
-      # mining이 쓴 보고서를 관리 화면이 보여 준다 (읽기만 한다)
-      - mining-data:/mining:ro
+      # 관리 화면의 프로세스 마이닝: mining.db를 읽고, 실행 요청·자동 실행 시각·라벨 수정을 쓴다
+      - mining-data:/mining
       - type: bind
         source: ${PI_GATEWAY_HOME}/plugins
         target: /opt/plugins
@@ -269,16 +269,16 @@ services:
       - edge
       - control
 
-  # 대화 기록 프로세스 마이닝 (docs/process-mining-design.md). 늘 떠 있지 않고 cron이 하루 한 번 돌린다:
-  #   docker compose run --rm -T mining
+  # 대화 기록 프로세스 마이닝 (docs/process-mining-design.md). 늘 떠서 관리 화면의 "지금 실행"과 매일 정한 시각을 기다린다.
   # gateway 이미지를 쓰지만 비밀값이 없고, LLM으로 나가는 edge에만 붙으며, gateway 데이터는 읽기만 한다.
   mining:
     <<: *hardening
-    profiles: ["mining"]
-    restart: "no"
     image: pi-gateway/gateway:${PI_GATEWAY_VERSION:-latest}
     user: "10001:10001"
-    command: ["node", "apps/gateway/dist/mining/main.js"]
+    command: ["node", "apps/gateway/dist/mining/service.js"]
+    # 이미지의 HEALTHCHECK는 gateway의 HTTP 포트를 본다. 이 서비스는 포트가 없다.
+    healthcheck:
+      disable: true
     environment:
       NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:+/etc/pi-gateway/extra-ca.pem}
     volumes:

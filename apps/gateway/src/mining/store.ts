@@ -1,14 +1,19 @@
 import { type Db, migrate } from "../db.js";
 
 /**
- * mining의 상태 (gateway DB와 다른 파일). 세션 원문은 두지 않고, 요약한 에피소드와 라벨, 어디까지 읽었는지만 둔다.
+ * mining의 상태 (gateway DB와 다른 파일). 세션 원문은 두지 않고, 요약한 에피소드와 라벨, 어디까지 읽었는지, 실행 이력만 둔다.
  * 사용자는 저장하지 않는다. 필요할 때 gateway의 sessions에서 세션 id로 찾는다.
+ *
+ * 두 프로세스가 연다: mining 서비스(실행)와 gateway(관리 화면: 실행 요청, 자동 실행 시각, 라벨 수정).
  *
  * 에피소드의 상태는 두 컬럼으로 읽는다:
  * - 배정 전: label_id도 assigned_at도 없다 (아직 라벨을 붙여 보지 않았다)
  * - 미분류: assigned_at만 있다 (붙여 봤지만 맞는 라벨이 없었다)
  * - 배정: label_id가 있다
  */
+
+/** compose의 mining-data 볼륨. mining 서비스와 gateway가 같은 파일을 연다. */
+export const MINING_DB = "/mining/mining.db";
 
 const MIGRATIONS = [
   `CREATE TABLE session_cursor (
@@ -37,7 +42,65 @@ const MIGRATIONS = [
      flow TEXT,
      flow_count INTEGER NOT NULL DEFAULT 0
    )`,
+  `CREATE TABLE runs (
+     id INTEGER PRIMARY KEY,
+     trigger TEXT NOT NULL,
+     requested_at TEXT NOT NULL,
+     started_at TEXT,
+     finished_at TEXT,
+     status TEXT NOT NULL,
+     processed INTEGER,
+     failed INTEGER,
+     remaining INTEGER,
+     episodes INTEGER,
+     model TEXT,
+     error TEXT
+   );
+   CREATE TABLE settings (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL
+   )`,
 ];
+
+/** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다. */
+export interface Run {
+  id: number;
+  trigger: "manual" | "schedule";
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  status: "requested" | "running" | "completed" | "time_limit" | "aborted" | "failed";
+  /** 끝까지 읽은 세션, 읽다 실패한 세션, 남은 세션, 만들거나 고친 에피소드 수. 끝나기 전이나 시작하지 못했으면 null */
+  processed: number | null;
+  failed: number | null;
+  remaining: number | null;
+  episodes: number | null;
+  model: string | null;
+  /** 시작하지 못했거나 도중에 죽은 이유 */
+  error: string | null;
+}
+
+export interface RunOutcome {
+  status: Exclude<Run["status"], "requested" | "running">;
+  processed?: number;
+  failed?: number;
+  remaining?: number;
+  episodes?: number;
+  model?: string;
+  error?: string;
+}
+
+/** 매일 time("HH:MM", UTC)에 오는 시각이 after 뒤, now 이하에 있었는가 */
+export function cameDue(time: string, after: number, now: number): boolean {
+  const [hour, minute] = time.split(":").map(Number);
+  const today = new Date(now).setUTCHours(hour!, minute!, 0, 0);
+  const last = today <= now ? today : today - 86_400_000;
+  return last > after;
+}
+
+const RUN =
+  "SELECT id, trigger, requested_at AS requestedAt, started_at AS startedAt, finished_at AS finishedAt, status, processed, failed, remaining, episodes, model, error FROM runs";
+const DAILY_AT = "daily_at";
 
 export interface Episode {
   id: number;
@@ -152,13 +215,15 @@ export class MiningStore {
     for (const { session_id } of known) if (!alive.has(session_id)) this.reset(session_id);
   }
 
-  episodes(ids: readonly number[]): Episode[] {
-    return ids.flatMap((id) => this.#episodes("WHERE id = ?", id));
-  }
-
-  /** since 뒤에 끝난 에피소드 전부 (보고서용) */
+  /** since 뒤에 끝난 에피소드 전부 (건수용) */
   recent(since: string): Episode[] {
     return this.#episodes("WHERE ended_at >= ? ORDER BY ended_at DESC", since);
+  }
+
+  /** 최근에 끝난 것부터. label을 주면 그 라벨의 것만, null이면 라벨이 없는 것만 */
+  browse(label?: number | null): Episode[] {
+    if (label === undefined) return this.#episodes("ORDER BY ended_at DESC");
+    return label === null ? this.#episodes("WHERE label_id IS NULL ORDER BY ended_at DESC") : this.#episodes("WHERE label_id = ? ORDER BY ended_at DESC", label);
   }
 
   // ── 배정 ────────────────────────────────────────────────────────────
@@ -229,7 +294,7 @@ export class MiningStore {
     this.db.transaction(() => {
       for (const [from, into] of pairs) {
         this.db.prepare("UPDATE episodes SET label_id = ? WHERE label_id = ?").run(into, from);
-        this.db.prepare("UPDATE labels SET merged_into = ?, merged_at = ? WHERE id = ?").run(into, at, from);
+        this.db.prepare("UPDATE labels SET merged_into = ?, merged_at = ? WHERE id = ? OR merged_into = ?").run(into, at, from, from);
       }
     })();
   }
@@ -242,5 +307,81 @@ export class MiningStore {
   /** count: 이 흐름을 만들 때의 에피소드 수 */
   setFlow(labelId: number, steps: readonly string[], count: number): void {
     this.db.prepare("UPDATE labels SET flow = ?, flow_count = ? WHERE id = ?").run(JSON.stringify(steps), count, labelId);
+  }
+
+  // ── 사람이 고치는 라벨 (관리 화면) ─────────────────────────────────
+
+  /**
+   * 라벨을 고치는 일을 한다. 실행 중에는 하지 않고 false를 돌려준다: 실행은 라벨 목록을 읽어 둔 채로 LLM을 부르므로,
+   * 그 사이에 합치거나 지우면 없는 라벨에 배정된다. 실행 시작도 쓰기라서 이 검사와 순서가 섞이지 않는다.
+   */
+  edit(change: () => void): boolean {
+    return this.db
+      .transaction(() => {
+        if (this.db.prepare("SELECT 1 FROM runs WHERE status = 'running'").get()) return false;
+        change();
+        return true;
+      })
+      .immediate();
+  }
+
+  renameLabel(id: number, name: string, criteria: string): void {
+    this.db.prepare("UPDATE labels SET name = ?, criteria = ? WHERE id = ?").run(name, criteria, id);
+  }
+
+  /** 라벨을 없앤다. 그 에피소드는 배정 전으로 돌아가 다음 실행이 다시 붙여 본다. */
+  deleteLabel(id: number): void {
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE episodes SET label_id = NULL, assigned_at = NULL WHERE label_id = ?").run(id);
+      this.db.prepare("DELETE FROM labels WHERE id = ? OR merged_into = ?").run(id, id);
+    })();
+  }
+
+  // ── 실행 ────────────────────────────────────────────────────────────
+
+  /** 최근 실행부터 limit건 */
+  runs(limit: number): Run[] {
+    return this.db.prepare(`${RUN} ORDER BY id DESC LIMIT ?`).all(limit) as Run[];
+  }
+
+  /** 실행을 요청한다. 이미 요청됐거나 실행 중이면 만들지 않고 undefined를 돌려준다. */
+  requestRun(trigger: Run["trigger"], at: string): number | undefined {
+    return this.db
+      .transaction(() => {
+        if (this.db.prepare("SELECT 1 FROM runs WHERE status IN ('requested', 'running')").get()) return undefined;
+        return Number(this.db.prepare("INSERT INTO runs (trigger, requested_at, status) VALUES (?, ?, 'requested')").run(trigger, at).lastInsertRowid);
+      })
+      .immediate();
+  }
+
+  /** 요청된 실행이 있으면 실행 중으로 바꾸고 그 id를 돌려준다. */
+  startRun(at: string): number | undefined {
+    return this.db
+      .transaction(() => {
+        const next = this.db.prepare("SELECT id FROM runs WHERE status = 'requested' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+        if (next) this.db.prepare("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?").run(at, next.id);
+        return next?.id;
+      })
+      .immediate();
+  }
+
+  /** 실행 중인 실행을 끝낸다. id를 주지 않으면 실행 중인 것 전부 (서비스가 죽었다 살아났을 때). 이미 끝난 것은 건드리지 않는다. */
+  finishRun(id: number | undefined, outcome: RunOutcome, at: string): void {
+    this.db
+      .prepare(
+        `UPDATE runs SET status = ?, finished_at = ?, processed = ?, failed = ?, remaining = ?, episodes = ?, model = ?, error = ?
+         WHERE status = 'running' AND (? IS NULL OR id = ?)`,
+      )
+      .run(outcome.status, at, outcome.processed ?? null, outcome.failed ?? null, outcome.remaining ?? null, outcome.episodes ?? null, outcome.model ?? null, outcome.error ?? null, id ?? null, id ?? null);
+  }
+
+  /** 매일 자동으로 실행하는 시각 ("HH:MM", UTC). 없으면 자동으로 실행하지 않는다. */
+  dailyAt(): string | null {
+    return (this.db.prepare("SELECT value FROM settings WHERE key = ?").get(DAILY_AT) as { value: string } | undefined)?.value ?? null;
+  }
+
+  setDailyAt(time: string | null): void {
+    if (time === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(DAILY_AT);
+    else this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(DAILY_AT, time);
   }
 }

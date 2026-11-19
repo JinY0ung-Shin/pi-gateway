@@ -14,7 +14,7 @@ import type { MiningStore } from "./store.js";
  */
 
 /** 마지막 활동이 이보다 오래된 세션은 보지 않는다. 라벨을 찾을 때 보는 미분류의 기간이기도 하다. */
-export const RECENT_MS = 30 * 86_400_000;
+const RECENT_MS = 30 * 86_400_000;
 /** 마지막 활동 뒤 이만큼 지나야 본다 (진행 중인 대화를 읽지 않게) */
 const IDLE_MS = 30 * 60_000;
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */

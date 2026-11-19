@@ -131,8 +131,8 @@ export interface AdminDeps {
   };
   /** 대화 기록 보기와 보관 기간 */
   sessions: Pick<SessionStore, "list" | "get" | "retention" | "setRetention">;
-  /** mining이 쓴 마지막 보고서 파일. mining을 돌린 적이 없으면 파일이 없다. */
-  miningReportFile: string;
+  /** mining.db 파일 (관리 화면의 프로세스 마이닝). 처음 쓸 때 연다. */
+  miningDbFile: string;
   /** agent가 request_admin으로 남긴 요청 */
   adminRequests: Pick<AdminRequests, "add" | "list" | "remove">;
 }

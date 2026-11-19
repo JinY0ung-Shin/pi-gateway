@@ -1,17 +1,19 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { openDatabase } from "../src/db.js";
+import { MiningStore } from "../src/mining/store.js";
 import { ALICE_KEY, BOB_KEY, type Harness, SERVICE_KEY, sessionOf, startHarness } from "./helpers.js";
 
 const DAY = 86_400_000;
 
-const miningDir = mkdtempSync(join(tmpdir(), "mining-report-"));
-const miningReportFile = join(miningDir, "report.md");
+const miningDir = mkdtempSync(join(tmpdir(), "mining-admin-"));
+const miningDbFile = join(miningDir, "mining.db");
 
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { JAEGER_HOST: "jaeger.test" }, overrides: { miningReportFile } });
+  h = await startHarness({ env: { JAEGER_HOST: "jaeger.test" }, overrides: { miningDbFile } });
 });
 afterAll(async () => {
   await h.close();
@@ -24,13 +26,63 @@ const v1Traces = async (id: string, key?: string, query = "") => {
   return { status: res.status, json: (await res.json()) as any };
 };
 
-describe("admin mining report", () => {
-  it("returns the report mining last wrote, or null before the first run", async () => {
-    expect((await h.admin("GET", "/mining/report")).json).toEqual({ report: null });
-    writeFileSync(miningReportFile, "# 프로세스 마이닝 보고서\n");
-    expect((await h.admin("GET", "/mining/report")).json).toEqual({ report: "# 프로세스 마이닝 보고서\n" });
+describe("admin mining", () => {
+  it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
-    expect((await fetch(`${h.url}/admin/api/mining/report`)).status).toBe(401);
+    expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
+    expect((await h.admin("GET", "/mining")).json).toEqual({ runs: [], dailyAt: null, labels: [], recent30: 0, unlabeled30: 0 });
+
+    // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
+    const store = new MiningStore(openDatabase(miningDbFile));
+    const at = new Date().toISOString();
+
+    const requested = await h.admin("POST", "/mining/run");
+    expect(requested.status).toBe(200);
+    expect((await h.admin("POST", "/mining/run")).json.error.code).toBe("mining_busy");
+    expect((await h.admin("GET", "/mining")).json.runs).toMatchObject([{ id: requested.json.id, trigger: "manual", status: "requested" }]);
+
+    expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "25:00" })).json.error.code).toBe("invalid_schedule");
+    expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "18:00" })).json).toEqual({ dailyAt: "18:00" });
+    expect(store.dailyAt()).toBe("18:00");
+    expect((await h.admin("PUT", "/mining/schedule", { dailyAt: null })).json).toEqual({ dailyAt: null });
+
+    // alice의 세션에서 나온 작업 둘 (하나는 프로세스에 들고 하나는 미분류), 지워진 세션의 작업 하나
+    h.llm.enqueue({ text: "answer" });
+    const sid = sessionOf((await h.post({ input: "question" })).json.id);
+    const episode = (goal: string) => ({ continues: false, startedAt: at, endedAt: at, goal, steps: ["확인", "수정"] });
+    const [deploy] = store.save(sid, [episode("billing 배포"), episode("로그 확인")], "e1");
+    const [gone] = store.save("deleted-session", [episode("auth 배포")], "e1");
+    const label = store.createLabel("서비스 배포", "서비스를 운영에 올리는 작업", [deploy!, gone!], at);
+    const other = store.createLabel("로그 조사", "로그를 읽어 원인을 찾는 작업", [], at);
+
+    const overview = (await h.admin("GET", "/mining")).json;
+    expect(overview).toMatchObject({ recent30: 3, unlabeled30: 1 });
+    expect(overview.labels).toMatchObject([
+      { id: label, name: "서비스 배포", total: 2, recent7: 2, recent30: 2, users: 1, flow: null },
+      { id: other, name: "로그 조사", total: 0, recent30: 0, users: 0 },
+    ]);
+    const goals = async (query: string) => ((await h.admin("GET", `/mining/episodes${query}`)).json.items as { goal: string; user: string | null }[]).map((e) => [e.goal, e.user]);
+    expect((await goals(`?label=${label}`)).sort()).toEqual([["auth 배포", null], ["billing 배포", "alice"]]);
+    expect(await goals("?label=none")).toEqual([["로그 확인", "alice"]]);
+    expect((await goals("?user=alice")).sort()).toEqual([["billing 배포", "alice"], ["로그 확인", "alice"]]);
+
+    // 라벨 수정: 이름·기준은 배정 프롬프트에 들어가므로 마크업을 받지 않는다
+    expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "[x](http://evil)", criteria: "기준" })).json.error.code).toBe("invalid_label");
+    expect((await h.admin("PUT", "/mining/labels/999", { name: "이름", criteria: "기준" })).json.error.code).toBe("label_not_found");
+    expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "운영 배포", criteria: "새 기준" })).status).toBe(200);
+    expect(store.labels()[0]).toMatchObject({ name: "운영 배포", criteria: "새 기준" });
+
+    // 실행 중에는 고치지 못한다
+    const run = store.startRun(at)!;
+    expect((await h.admin("DELETE", `/mining/labels/${other}`)).json.error.code).toBe("mining_running");
+    store.finishRun(run, { status: "completed", processed: 1, failed: 0, remaining: 0, episodes: 3, model: "m" }, at);
+
+    expect((await h.admin("POST", `/mining/labels/${label}/merge`, { into: label })).json.error.code).toBe("invalid_merge");
+    expect((await h.admin("POST", `/mining/labels/${label}/merge`, { into: other })).status).toBe(200);
+    expect(store.labels().map((l) => [l.id, l.count])).toEqual([[other, 2]]);
+    expect((await h.admin("DELETE", `/mining/labels/${other}`)).status).toBe(200);
+    expect(store.labels()).toEqual([]);
+    expect(store.pending().length).toBe(3);
   });
 });
 

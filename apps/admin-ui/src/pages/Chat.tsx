@@ -107,7 +107,7 @@ function save(state: Saved): void {
 }
 
 /** 답변 Markdown. 이미지는 막는다: 열기만 해도 바깥 주소로 요청이 나가서, 프롬프트 주입이 대화 내용을 빼낼 수 있다. */
-export function markdown(text: string): string {
+function markdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false, gfm: true, breaks: true }), { FORBID_TAGS: ["img"] });
 }
 

@@ -17,8 +17,8 @@ const DISCOVER_SAMPLE = 60;
 /** 새 라벨이 되려면 필요한 에피소드 수와 서로 다른 사용자 수 */
 const LABEL_MIN_EPISODES = 5;
 const LABEL_MIN_USERS = 2;
-const NAME_CHARS = 60;
-const CRITERIA_CHARS = 300;
+export const NAME_CHARS = 60;
+export const CRITERIA_CHARS = 300;
 /** 흐름 합성: 에피소드가 이만큼 늘면 대표 흐름을 다시 쓴다 */
 const FLOW_GROWTH = 10;
 /** 흐름 합성: 읽는 에피소드 수 (최근 것부터) */
@@ -95,9 +95,9 @@ const DISCOVER_TOOL: Tool = {
 
 /**
  * 라벨의 이름·기준으로 쓸 수 있는 글이면 다듬어 돌려준다. 이 글은 이후의 모든 배정 프롬프트에 들어가므로,
- * 링크나 마크업이 섞였거나 너무 길면 받지 않는다.
+ * 링크나 마크업이 섞였거나 너무 길면 받지 않는다. 관리 화면에서 사람이 고칠 때도 같은 검사를 거친다.
  */
-function labelText(text: string, max: number): string | undefined {
+export function labelText(text: string, max: number): string | undefined {
   const clean = oneLine(text);
   return clean && clean.length <= max && !/[`<>[\]|#*]|:\/\//.test(clean) ? clean : undefined;
 }

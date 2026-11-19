@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import type { SessionRecord } from "../sessions/store.js";
 import { readTranscript } from "../sessions/transcript.js";
@@ -9,7 +8,7 @@ import { sessionTraces, traceStats } from "./traces.js";
 const LIST_LIMIT = 200;
 const MAX_RETENTION_DAYS = 3650;
 
-/** 서버에 저장된 대화 기록 보기(읽기 전용)와 보관 기간, 그리고 그 기록에서 뽑은 mining 보고서. 보관 기간이 지난 세션은 SessionHub가 지운다. */
+/** 서버에 저장된 대화 기록 보기(읽기 전용)와 보관 기간. 보관 기간이 지난 세션은 SessionHub가 지운다. */
 export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): void {
   const { sessions } = ctx;
   const summary = (r: SessionRecord) => ({ id: r.id, user: r.principal, model: r.model, turn: r.turn, createdAt: r.createdAt, lastActiveAt: r.lastActiveAt });
@@ -43,16 +42,6 @@ export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): 
   app.get<{ Params: { id: string } }>("/history/:id", async (req) => {
     const record = session(req.params.id);
     return { ...summary(record), messages: readTranscript(record) };
-  });
-
-  /** mining이 마지막으로 쓴 보고서 (Markdown). 돌린 적이 없으면 report가 null이다. */
-  app.get("/mining/report", async () => {
-    try {
-      return { report: readFileSync(ctx.miningReportFile, "utf8") };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { report: null };
-      throw err;
-    }
   });
 
   /** 최근 턴들의 trace로 낸 시간 통계 (관리 화면의 "실행 시간") */

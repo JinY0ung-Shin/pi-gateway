@@ -67,7 +67,7 @@ RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 
 # ── gateway ─────────────────────────────────────────────────────────
 # git: plugin marketplace 설치에 쓴다. LLM 키·세션 기록을 갖고 있으므로 사용자 코드를 실행하지 않는다.
-# /mining: compose의 mining 서비스가 같은 이미지로 돌 때 쓰는 볼륨 자리 (볼륨이 처음 mount될 때 이 소유자를 물려받는다).
+# /mining: gateway와 compose의 mining 서비스(같은 이미지)가 함께 쓰는 볼륨 자리 (볼륨이 처음 mount될 때 이 소유자를 물려받는다).
 FROM runtime AS gateway
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \

@@ -11,14 +11,16 @@ import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted } from "../src/mining/extr
 import { merge } from "../src/mining/labels.js";
 import { Caller, createLlm, type Llm } from "../src/mining/llm.js";
 import { mask } from "../src/mining/mask.js";
-import { plain, renderReport } from "../src/mining/report.js";
 import { run, type Target } from "../src/mining/run.js";
-import { MiningStore } from "../src/mining/store.js";
+import { cameDue, MiningStore } from "../src/mining/store.js";
 import { type PathEntry, readPath } from "../src/sessions/transcript.js";
 import { startFakeLlm } from "./fixtures/fake-llm.js";
 
 const dir = mkdtempSync(join(tmpdir(), "mining-test-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/** 그 id의 에피소드를 준 순서대로 */
+const byIds = (store: MiningStore, ids: readonly number[]) => ids.map((id) => store.browse().find((e) => e.id === id)!);
 
 /** 테스트용 세션 기록을 만든다. 엔트리는 앞의 것을 부모로 잇는다 (parent를 주면 거기서 분기한다). */
 class Transcript {
@@ -164,7 +166,7 @@ describe("mining: run", () => {
     const llm = fakeLlm([episode("billing 배포", 1, 1), episode("로그 확인", 2, 2)]);
     const first = await run({ targets: targetsOf(target("s1", t)), store, llm, log });
     expect(first).toMatchObject({ status: "completed", processed: 1, failed: 0, remaining: 0 });
-    expect(store.episodes(first.episodeIds).map((e) => e.goal)).toEqual(["billing 배포", "로그 확인"]);
+    expect(byIds(store, first.episodeIds).map((e) => e.goal)).toEqual(["billing 배포", "로그 확인"]);
     expect(store.cursor("s1")).toBe(t.leaf);
 
     // 바뀐 것이 없으면 LLM을 부르지 않는다
@@ -178,7 +180,7 @@ describe("mining: run", () => {
     expect(more.inputs[0]).toContain("Previous episode:\ngoal: 로그 확인");
     expect(more.inputs[0]).not.toContain("make deploy");
     expect(second.episodeIds).toEqual([first.episodeIds[1]]);
-    expect(store.episodes(first.episodeIds).map((e) => e.goal)).toEqual(["billing 배포", "로그 확인 후 오류 수정"]);
+    expect(byIds(store, first.episodeIds).map((e) => e.goal)).toEqual(["billing 배포", "로그 확인 후 오류 수정"]);
   });
 
   it("re-reads a session from the start when it branched away from the cursor", async () => {
@@ -192,7 +194,7 @@ describe("mining: run", () => {
     t.user("테스트부터 돌려줘", root);
     t.tool("bash", { command: "make test" });
     const result = await run({ targets: targetsOf(target("s2", t)), store, llm: fakeLlm([episode("테스트 실행", 1, 2)]), log });
-    expect(store.episodes(result.episodeIds).map((e) => e.goal)).toEqual(["테스트 실행"]);
+    expect(byIds(store, result.episodeIds).map((e) => e.goal)).toEqual(["테스트 실행"]);
     expect(store.lastEpisode("s2")!.goal).toBe("테스트 실행");
     expect(store.cursor("s2")).toBe(t.leaf);
   });
@@ -239,50 +241,6 @@ describe("mining: run", () => {
     const now = () => (clock += 4 * 3_600_000);
     const result = await run({ targets: targetsOf(target("late", t)), store, llm: fakeLlm(), log, now });
     expect(result).toMatchObject({ status: "time_limit", processed: 0, remaining: 1 });
-  });
-});
-
-describe("mining: report", () => {
-  it("escapes what the LLM wrote so it cannot become a link, image or table", () => {
-    expect(plain("![x](http://evil/a.png) | <b>hi</b>\n# title")).toBe("\\!\\[x\\]\\(http://evil/a.png\\) \\| \\<b\\>hi\\</b\\> \\# title");
-  });
-
-  it("lists processes with counts, shows the metrics, and breaks the work down by user", () => {
-    const at = new Date("2026-11-19T00:00:00.000Z");
-    const episode = (id: number, sessionId: string, goal: string, labelId: number | null, endedAt = "2026-11-18T00:00:00.000Z") => ({
-      id,
-      sessionId,
-      endedAt,
-      goal,
-      steps: ["확인", "수정"],
-      labelId,
-    });
-    const recent = [
-      episode(1, "s-alice", "billing 배포", 1),
-      episode(2, "s-bob", "auth 배포", 1, "2026-11-01T00:00:00.000Z"),
-      episode(3, "s-alice", "로그 확인", null),
-      episode(4, "s-alice", "디스크 정리", null),
-    ];
-    const report = renderReport({
-      at,
-      model: "test-model",
-      result: { status: "completed", processed: 2, failed: 0, remaining: 0, episodeIds: [3] },
-      labels: [{ id: 1, name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", createdAt: "2026-11-17T00:00:00.000Z", flow: ["빌드", "배포", "확인"], flowCount: 2, count: 2 }],
-      recent,
-      touched: [recent[2]!],
-      users: new Map([
-        ["s-alice", "alice"],
-        ["s-bob", "bob"],
-      ]),
-    });
-    expect(report).toContain("## 최근 7일에 새로 생긴 프로세스\n\n- 서비스 배포: 서비스를 운영에 올리는 작업");
-    expect(report).toContain("### 서비스 배포\n\n- 기준: 서비스를 운영에 올리는 작업\n- 건수: 7일 1건, 30일 2건\n- 사용자: 2명\n- 대표 흐름: 빌드 → 배포 → 확인\n- 예시: billing 배포\n- 예시: auth 배포");
-    expect(report).toContain("- 미분류율: 50% (에피소드 4건 중 2건)");
-    expect(report).toContain("- 최대 라벨 점유율: 100%");
-    // 에피소드가 많은 사용자부터, 이번 실행의 에피소드는 그 사용자 아래에
-    expect(report.indexOf("### alice")).toBeLessThan(report.indexOf("### bob"));
-    expect(report).toContain("### alice\n\n- 최근 30일 3건: 미분류 2건, 서비스 배포 1건\n\n#### 로그 확인\n\n- 라벨: 미분류\n1. 확인\n2. 수정");
-    expect(report).toContain("### bob\n\n- 최근 30일 1건: 서비스 배포 1건");
   });
 });
 
@@ -401,7 +359,7 @@ describe("mining: labels", () => {
     expect(store.labels()[0]!.count).toBe(12);
     expect(store.pending()).toHaveLength(0);
     expect(store.unlabeledCount("2026-10-20T00:00:00.000Z")).toBe(12);
-    expect(store.episodes(ids.slice(12)).every((e) => e.labelId === null)).toBe(true);
+    expect(byIds(store, ids.slice(12)).every((e) => e.labelId === null)).toBe(true);
   });
 
   it("merges a new label into the existing one it duplicates, and ignores an answer that names unknown labels", async () => {
@@ -421,8 +379,81 @@ describe("mining: labels", () => {
     const store = newStore();
     const id = seed(store, "s", "배포");
     const label = store.createLabel("서비스 배포", "기준", [id], at);
-    expect(store.episodes([id])[0]!.labelId).toBe(label);
+    expect(byIds(store, [id])[0]!.labelId).toBe(label);
     store.save("s", [{ continues: true, startedAt: "2026-11-18T02:00:00.000Z", endedAt: "2026-11-18T03:00:00.000Z", goal: "배포 후 롤백", steps: ["배포", "롤백"] }], "e2");
     expect(store.pending().map((e) => [e.id, e.goal, e.labelId])).toEqual([[id, "배포 후 롤백", null]]);
+  });
+});
+
+describe("mining: runs and label edits", () => {
+  const at = "2026-11-19T00:00:00.000Z";
+  let n = 0;
+  const newStore = () => new MiningStore(openDatabase(join(dir, `runs-${++n}.db`)));
+  const seed = (store: MiningStore, sessionId: string, goal: string) =>
+    store.save(sessionId, [{ continues: false, startedAt: "2026-11-18T00:00:00.000Z", endedAt: "2026-11-18T01:00:00.000Z", goal, steps: ["확인"] }], "e1")[0]!;
+
+  it("takes one request at a time, and records how the run ended", () => {
+    const store = newStore();
+    expect(store.startRun(at)).toBeUndefined();
+    const id = store.requestRun("manual", at)!;
+    // 요청됐거나 실행 중이면 더 받지 않는다
+    expect(store.requestRun("schedule", at)).toBeUndefined();
+    expect(store.startRun(at)).toBe(id);
+    expect(store.requestRun("manual", at)).toBeUndefined();
+    store.finishRun(id, { status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model" }, "2026-11-19T00:05:00.000Z");
+    // 이미 끝난 실행은 다시 닫히지 않는다 (서비스가 자식 프로세스가 끝난 뒤 한 번 더 부른다)
+    store.finishRun(id, { status: "failed", error: "exit 0" }, "2026-11-19T00:06:00.000Z");
+    expect(store.runs(10)).toEqual([
+      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null },
+    ]);
+
+    // 서비스가 내려가 실행 중으로 남은 것은 다음에 뜰 때 실패로 닫는다
+    const second = store.requestRun("schedule", at)!;
+    store.startRun(at);
+    store.finishRun(undefined, { status: "failed", error: "내려갔다" }, at);
+    expect(store.runs(1)[0]).toMatchObject({ id: second, trigger: "schedule", status: "failed", error: "내려갔다" });
+  });
+
+  it("refuses label edits while a run is in progress", () => {
+    const store = newStore();
+    const label = store.createLabel("서비스 배포", "기준", [seed(store, "s1", "배포")], at);
+    store.requestRun("manual", at);
+    // 요청만 된 동안에는 고칠 수 있다
+    expect(store.edit(() => store.renameLabel(label, "운영 배포", "새 기준"))).toBe(true);
+    store.startRun(at);
+    expect(store.edit(() => store.deleteLabel(label))).toBe(false);
+    expect(store.labels().map((l) => [l.name, l.criteria, l.count])).toEqual([["운영 배포", "새 기준", 1]]);
+  });
+
+  it("sends the episodes of a deleted label back to be assigned again, and moves them when labels are merged", () => {
+    const store = newStore();
+    const a = store.createLabel("배포", "기준", [seed(store, "s1", "billing 배포")], at);
+    const b = store.createLabel("서비스 배포", "기준", [seed(store, "s2", "auth 배포")], at);
+    const c = store.createLabel("로그 조사", "기준", [seed(store, "s3", "오류 로그 확인")], at);
+    store.mergeLabels([[a, b]], at);
+    expect(store.labels().map((l) => [l.id, l.count])).toEqual([[b, 2], [c, 1]]);
+    expect(store.browse(b).map((e) => e.goal).sort()).toEqual(["auth 배포", "billing 배포"]);
+
+    store.deleteLabel(b);
+    expect(store.labels().map((l) => l.id)).toEqual([c]);
+    expect(store.pending().map((e) => e.goal).sort()).toEqual(["auth 배포", "billing 배포"]);
+    expect(store.browse(null).length).toBe(2);
+  });
+
+  it("knows when the daily time has come since the last check", () => {
+    const t = (iso: string) => Date.parse(iso);
+    // 18:00을 지나는 순간에만 참이다
+    expect(cameDue("18:00", t("2026-11-19T17:59:55Z"), t("2026-11-19T18:00:05Z"))).toBe(true);
+    expect(cameDue("18:00", t("2026-11-19T18:00:05Z"), t("2026-11-19T18:00:15Z"))).toBe(false);
+    expect(cameDue("18:00", t("2026-11-19T10:00:00Z"), t("2026-11-19T10:00:10Z"))).toBe(false);
+    // 자정을 넘는 구간
+    expect(cameDue("23:59", t("2026-11-19T23:58:58Z"), t("2026-11-20T00:00:03Z"))).toBe(true);
+    const store = newStore();
+    expect(store.dailyAt()).toBeNull();
+    store.setDailyAt("18:00");
+    store.setDailyAt("03:30");
+    expect(store.dailyAt()).toBe("03:30");
+    store.setDailyAt(null);
+    expect(store.dailyAt()).toBeNull();
   });
 });
