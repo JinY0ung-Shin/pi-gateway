@@ -3,14 +3,15 @@ import type { Db } from "../db.js";
 import { readPath } from "../sessions/transcript.js";
 import { chunks, compress } from "./compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted, extractInput, toEpisodes } from "./extract.js";
-import { assign, discover, merge, synthesizeFlows } from "./labels.js";
+import { assign, discover, merge, review, synthesizeFlows } from "./labels.js";
 import { Caller, type Llm } from "./llm.js";
 import type { MiningStore } from "./store.js";
 
 /**
  * 한 번의 mining 실행 (docs/process-mining-design.md):
  * ① 새 내용이 있는 세션을 에피소드로 요약한다 — 세션 원문은 여기서 한 번만 읽는다.
- * ②~⑤ 에피소드에 라벨을 붙이고, 새 라벨을 찾고, 겹치는 라벨을 합치고, 라벨의 대표 흐름을 쓴다.
+ * ②~⑥ 에피소드에 라벨을 붙이고, 새 라벨을 찾고, 겹치는 라벨을 합치고, 쌓인 근거로 라벨을 다시 검토하고, 대표 흐름을 쓴다.
+ *    새 라벨이 생기거나 라벨이 바뀌면 다시 붙이고 또 찾는다 (한 실행 안에서 몇 번 돈다).
  */
 
 /** 마지막 활동이 이보다 오래된 세션은 보지 않는다. 라벨을 찾을 때 보는 미분류의 기간이기도 하다. */
@@ -19,6 +20,10 @@ const RECENT_MS = 30 * 86_400_000;
 const IDLE_MS = 30 * 60_000;
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */
 const RUN_LIMIT_MS = 3 * 3_600_000;
+/** 추출은 이만큼까지만 쓴다. 읽을 세션이 밀려 있어도 남은 시간에 라벨 단계가 돈다 */
+const EXTRACT_LIMIT_MS = 2.5 * 3_600_000;
+/** 붙이고 찾기를 한 실행에서 되풀이하는 횟수 */
+const DISCOVER_ROUNDS = 3;
 
 export interface Target {
   id: string;
@@ -58,10 +63,13 @@ export interface RunResult {
   episodeIds: number[];
 }
 
-export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm; log: Logger; now?: () => number }): Promise<RunResult> {
+/** runId: 이 실행의 id (라벨 변경 이력에 적는다) */
+export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm; log: Logger; now?: () => number; runId?: number }): Promise<RunResult> {
   const { targets, store, log } = deps;
   const now = deps.now ?? Date.now;
-  const caller = new Caller(deps.llm, now() + RUN_LIMIT_MS, now, log);
+  const runId = deps.runId ?? null;
+  const started = now();
+  const caller = new Caller(deps.llm, started + EXTRACT_LIMIT_MS, now, log);
   store.prune(targets.users);
 
   const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
@@ -120,13 +128,26 @@ export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm
     else if (caller.stopped !== "time_limit") failed++;
   }
 
-  // ②~⑤ 라벨. 앞 단계에서 멈췄으면 caller가 더 부르지 않으므로 아무 일도 하지 않고 지나간다.
-  const at = new Date(now()).toISOString();
-  const since = new Date(now() - RECENT_MS).toISOString();
-  await assign(store, caller, at);
-  const created = await discover(store, caller, targets.users, since, at);
-  if (created.length > 0) await merge(store, caller, created, at, log);
-  await synthesizeFlows(store, caller);
+  // ②~⑥ 라벨. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다. LLM 장애로 멈췄으면 하지 않는다.
+  // 한 단계가 멈추면 labeling이 더 부르지 않으므로, 뒤 단계는 아무 일도 하지 않고 지나간다.
+  const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log);
+  if (caller.stopped !== "aborted") {
+    const at = new Date(now()).toISOString();
+    const since = new Date(now() - RECENT_MS).toISOString();
+    // 붙이고 → 남은 미분류에서 찾고 → 새 라벨이 생겼으면 다시 붙이고 또 찾는다.
+    let created: number[] = [];
+    for (let round = 0; round < DISCOVER_ROUNDS; round++) {
+      await assign(store, labeling, at);
+      created = await discover(store, labeling, targets.users, since, at, runId);
+      if (created.length === 0) break;
+      await merge(store, labeling, created, at, log, runId);
+    }
+    // 고치거나 나눈 라벨의 에피소드는 새 기준으로 다시 붙인다.
+    const changed = await review(store, labeling, targets.users, since, at, runId);
+    if (created.length > 0 || changed > 0) await assign(store, labeling, at);
+    await synthesizeFlows(store, labeling);
+  }
 
-  return { status: caller.stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
+  const stopped = caller.stopped === "aborted" || labeling.stopped === "aborted" ? "aborted" : (caller.stopped ?? labeling.stopped);
+  return { status: stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
 }

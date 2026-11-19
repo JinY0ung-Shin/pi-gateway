@@ -8,7 +8,7 @@ import { createModelRuntime, LlmSettings, openDefaultModel } from "../src/agent/
 import { openDatabase } from "../src/db.js";
 import { chunks, compress, render } from "../src/mining/compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted } from "../src/mining/extract.js";
-import { merge } from "../src/mining/labels.js";
+import { merge, review } from "../src/mining/labels.js";
 import { Caller, createLlm, type Llm } from "../src/mining/llm.js";
 import { mask } from "../src/mining/mask.js";
 import { run, type Target } from "../src/mining/run.js";
@@ -242,6 +242,36 @@ describe("mining: run", () => {
     const result = await run({ targets: targetsOf(target("late", t)), store, llm: fakeLlm(), log, now });
     expect(result).toMatchObject({ status: "time_limit", processed: 0, remaining: 1 });
   });
+
+  it("still runs the label stages when extraction used up its share of the time", async () => {
+    const store = newStore();
+    const [first, second] = [1, 2].map((i) => {
+      const t = new Transcript();
+      t.user(`작업 ${i}`);
+      t.tool("bash", { command: "ls" });
+      return target(`t${i}`, t);
+    });
+    // 대표 흐름이 아직 없는 라벨
+    const label = store.createLabel("서비스 배포", "기준", store.save("old", [{ continues: false, startedAt: "2026-11-18T00:00:00.000Z", endedAt: "2026-11-18T01:00:00.000Z", goal: "배포", steps: ["배포"] }], "e1"), "2026-11-18T01:00:00.000Z");
+    let clock = Date.UTC(2026, 10, 19);
+    const calls: string[] = [];
+    const llm: Llm = {
+      model: "test-model",
+      async call<T>(tool: { name: string }) {
+        calls.push(tool.name);
+        // 첫 세션을 읽는 데 2시간 40분이 걸렸다: 추출 몫(2시간 30분)은 넘고 전체 상한(3시간)은 남았다
+        if (tool.name === EXTRACT_TOOL.name) clock += 160 * 60_000;
+        if (tool.name === EXTRACT_TOOL.name) return { episodes: [episode("작업", 1, 1)] } as T;
+        if (tool.name === "assign_label") return { label: 0, fit: "none" } as T;
+        return { steps: ["빌드", "배포"] } as T;
+      },
+    };
+    const targets = { recent: [first!, second!], users: new Map([["t1", "alice"], ["t2", "alice"], ["old", "bob"]]) };
+    const result = await run({ targets, store, llm, log, now: () => clock });
+    expect(result).toMatchObject({ status: "time_limit", processed: 1, remaining: 1 });
+    expect(calls).toEqual([EXTRACT_TOOL.name, "assign_label", "write_flow"]);
+    expect(store.labels()[0]).toMatchObject({ id: label, flow: ["빌드", "배포"] });
+  });
 });
 
 describe("mining: LLM call", () => {
@@ -312,7 +342,7 @@ describe("mining: labels", () => {
     store.save(sessionId, [{ continues: false, startedAt: "2026-11-18T00:00:00.000Z", endedAt: "2026-11-18T01:00:00.000Z", goal, steps: ["로그 확인", "설정 수정"] }], "e1")[0]!;
   const noSessions = (users: Map<string, string>) => ({ recent: [], users });
 
-  it("finds a label from unlabeled episodes, then assigns the rest to it on the next run", async () => {
+  it("finds a label from unlabeled episodes, assigns the rest to it in the same run, and records the change", async () => {
     const store = newStore();
     const users = new Map<string, string>();
     // 배포 12건(alice·bob 번갈아), carol 혼자 한 정리 6건, 그 밖의 6건
@@ -323,8 +353,10 @@ describe("mining: labels", () => {
       ids.push(seed(store, `s${i}`, i < 12 ? `서비스 ${i} 배포` : i < 18 ? `디스크 ${i} 정리` : `기타 ${i}`));
     }
     const numberOf = (user: string, goal: string) => Number(new RegExp(`\\[E(\\d+)\\] goal: ${goal}`).exec(user)![1]);
+    const runId = store.requestRun("manual", at)!;
+    store.startRun(at);
 
-    const first = scripted({
+    const llm = scripted({
       propose_labels: (user) => ({
         groups: [
           // 두 사람이 한 배포 6건: 채택
@@ -335,31 +367,128 @@ describe("mining: labels", () => {
           { name: "보기 http://evil.example", criteria: "x", episodes: [6, 7, 8, 9, 10, 11].map((i) => numberOf(user, `서비스 ${i} 배포`)) },
         ],
       }),
+      assign_label: (user, system) => {
+        const id = store.labels()[0]!.id;
+        expect(system).toContain(`L${id}: 서비스 배포 — 서비스를 운영에 올리는 작업`);
+        if (user.includes("배포")) return { label: id, fit: "match" };
+        // 애매하면 붙이지 않는다
+        return user.includes("정리") ? { label: id, fit: "unsure" } : { label: 0, fit: "none" };
+      },
+      review_label: (user) => {
+        // 배정된 것과, 가까웠지만 붙지 않은 것을 같이 본다
+        expect(user).toContain("[E12] goal: 서비스");
+        expect(user).toContain("[N6] goal: 디스크");
+        return { decision: "keep", reason: "모두 서비스를 운영에 올리는 작업이다" };
+      },
       write_flow: () => ({ steps: ["빌드", "배포", "상태 확인"] }),
     });
-    await run({ targets: noSessions(users), store, llm: first, log, now: () => NOW });
-    // 라벨이 없을 때는 배정을 묻지 않는다. 새 라벨이 생겼지만 기존 라벨이 없어 병합도 묻지 않는다.
-    expect(first.calls).toEqual(["propose_labels", "write_flow"]);
-    const [label] = store.labels();
-    expect(label).toMatchObject({ name: "서비스 배포", count: 6, flow: ["빌드", "배포", "상태 확인"], flowCount: 6 });
-    // 남은 18건은 새 라벨로 다시 붙여 보도록 배정 전으로 돌아간다
-    expect(store.pending()).toHaveLength(18);
-
-    const second = scripted({
-      assign_label: (user, system) => {
-        expect(system).toContain(`L${label!.id}: 서비스 배포 — 서비스를 운영에 올리는 작업`);
-        if (user.includes("배포")) return { label: label!.id, fit: "match" };
-        // 애매하면 붙이지 않는다
-        return user.includes("정리") ? { label: label!.id, fit: "unsure" } : { label: 0, fit: "none" };
-      },
-    });
-    await run({ targets: noSessions(users), store, llm: second, log, now: () => NOW });
-    // 미분류가 12건뿐이라 발견을 다시 하지 않고, 에피소드가 6건만 늘어 흐름도 다시 쓰지 않는다
-    expect(second.calls).toEqual(Array(18).fill("assign_label"));
-    expect(store.labels()[0]!.count).toBe(12);
+    await run({ targets: noSessions(users), store, llm, log, now: () => NOW, runId });
+    // 라벨이 없을 때는 배정을 묻지 않는다. 라벨이 생기면 남은 18건을 다시 붙이고, 미분류가 12건뿐이라 더 찾지 않는다.
+    // 12건이 붙은 라벨은 검토를 받는다.
+    expect(llm.calls).toEqual(["propose_labels", ...Array(18).fill("assign_label"), "review_label", "write_flow"]);
+    expect(store.labels()).toMatchObject([{ name: "서비스 배포", count: 12, reviewedCount: 12, near: 0, flow: ["빌드", "배포", "상태 확인"], flowCount: 12 }]);
     expect(store.pending()).toHaveLength(0);
     expect(store.unlabeledCount("2026-10-20T00:00:00.000Z")).toBe(12);
     expect(byIds(store, ids.slice(12)).every((e) => e.labelId === null)).toBe(true);
+    expect(store.revisions(10)).toMatchObject([{ runId, kind: "created", name: "서비스 배포", after: "서비스 배포 — 서비스를 운영에 올리는 작업" }]);
+    expect(store.runs(1)[0]!.changes).toBe(1);
+
+    // 근거가 더 쌓이지 않았으면 다음 실행은 아무것도 묻지 않는다
+    const quiet = scripted({});
+    await run({ targets: noSessions(users), store, llm: quiet, log, now: () => NOW });
+    expect(quiet.calls).toEqual([]);
+  });
+
+  it("rewords a label when the review says so, and sorts its episodes again under the new criteria", async () => {
+    const store = newStore();
+    const users = new Map<string, string>();
+    const members = Array.from({ length: 10 }, (_, i) => {
+      users.set(`m${i}`, i % 2 ? "alice" : "bob");
+      return seed(store, `m${i}`, `서비스 ${i} 배포`);
+    });
+    const label = store.createLabel("배포", "배포하는 작업", members, at);
+    // 가까웠지만 붙지 않은 롤백 5건
+    const near = Array.from({ length: 5 }, (_, i) => {
+      users.set(`n${i}`, "carol");
+      return seed(store, `n${i}`, `서비스 ${i} 롤백`);
+    });
+    store.assign(near, null, at, label);
+
+    const llm = scripted({
+      review_label: () => ({ decision: "refine", name: "서비스 배포와 롤백", criteria: "서비스를 운영에 올리거나 되돌리는 작업", reason: "롤백도 같은 절차로\n한다" }),
+      assign_label: (_user, system) => {
+        expect(system).toContain(`L${label}: 서비스 배포와 롤백 — 서비스를 운영에 올리거나 되돌리는 작업`);
+        return { label, fit: "match" };
+      },
+      write_flow: () => ({ steps: ["빌드", "배포", "확인"] }),
+    });
+    await run({ targets: noSessions(users), store, llm, log, now: () => NOW });
+    expect(llm.calls).toEqual(["review_label", ...Array(15).fill("assign_label"), "write_flow"]);
+    expect(store.labels()).toMatchObject([{ id: label, name: "서비스 배포와 롤백", count: 15, reviewedCount: 10, near: 0, editedAt: null }]);
+    expect(store.revisions(10)).toMatchObject([
+      { runId: null, labelId: label, kind: "refined", before: "배포 — 배포하는 작업", after: "서비스 배포와 롤백 — 서비스를 운영에 올리거나 되돌리는 작업", reason: "롤백도 같은 절차로 한다" },
+    ]);
+  });
+
+  it("splits a label into parts that each have enough work by two people, and leaves it alone otherwise", async () => {
+    const store = newStore();
+    const users = new Map<string, string>();
+    const seedMany = (prefix: string, goal: string, people: string[]) =>
+      Array.from({ length: 6 }, (_, i) => {
+        users.set(`${prefix}${i}`, people[i % people.length]!);
+        return seed(store, `${prefix}${i}`, `${goal} ${i}`);
+      });
+    const deploys = seedMany("d", "서비스 배포", ["alice", "bob"]);
+    const cleanups = seedMany("c", "디스크 정리", ["alice", "bob"]);
+    const mixed = store.createLabel("운영 작업", "운영에서 하는 작업", [...deploys, ...cleanups], at);
+    const numbers = (user: string, goal: string) => [...user.matchAll(new RegExp(`\\[E(\\d+)\\] goal: ${goal}`, "g"))].map((m) => Number(m[1]));
+    const caller = (llm: Llm) => new Caller(llm, NOW + 1, () => NOW, log);
+    const since = "2026-10-20T00:00:00.000Z";
+
+    // 한 부분만 조건을 채우면 나누지 않는다
+    const lopsided = scripted({
+      review_label: (user) => ({
+        decision: "split",
+        reason: "두 작업이 섞였다",
+        parts: [
+          { name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", episodes: numbers(user, "서비스 배포") },
+          { name: "디스크 정리", criteria: "디스크를 비우는 작업", episodes: numbers(user, "디스크 정리").slice(0, 3) },
+        ],
+      }),
+    });
+    expect(await review(store, caller(lopsided), users, since, at)).toBe(0);
+    expect(store.labels()).toMatchObject([{ id: mixed, count: 12, reviewedCount: 12 }]);
+
+    // 다시 근거가 쌓인 뒤
+    store.markReviewed(mixed, 0);
+    const split = scripted({
+      review_label: (user) => ({
+        decision: "split",
+        reason: "배포와 디스크 정리는 목적이 다르다",
+        parts: [
+          { name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", episodes: numbers(user, "서비스 배포") },
+          { name: "디스크 정리", criteria: "디스크를 비우는 작업", episodes: numbers(user, "디스크 정리") },
+        ],
+      }),
+    });
+    expect(await review(store, caller(split), users, since, at, 7)).toBe(1);
+    expect(store.labels().map((l) => [l.name, l.count])).toEqual([["서비스 배포", 6], ["디스크 정리", 6]]);
+    expect(store.revisions(10).map((r) => [r.runId, r.kind, r.name, r.before, r.after, r.reason])).toEqual([
+      [7, "split", "운영 작업", "운영 작업 — 운영에서 하는 작업", "서비스 배포, 디스크 정리", "배포와 디스크 정리는 목적이 다르다"],
+      [7, "created", "디스크 정리", "운영 작업", "디스크 정리 — 디스크를 비우는 작업", null],
+      [7, "created", "서비스 배포", "운영 작업", "서비스 배포 — 서비스를 운영에 올리는 작업", null],
+    ]);
+  });
+
+  it("does not review a label a person has edited", async () => {
+    const store = newStore();
+    const members = Array.from({ length: 12 }, (_, i) => seed(store, `m${i}`, `배포 ${i}`));
+    const label = store.createLabel("배포", "배포하는 작업", members, at);
+    store.renameLabel(label, "운영 배포", "사람이 정한 기준", at);
+    const llm = scripted({});
+    expect(await review(store, new Caller(llm, NOW + 1, () => NOW, log), new Map(), "2026-10-20T00:00:00.000Z", at)).toBe(0);
+    expect(llm.calls).toEqual([]);
+    expect(store.labels()).toMatchObject([{ name: "운영 배포", criteria: "사람이 정한 기준", editedAt: at }]);
   });
 
   it("merges a new label into the existing one it duplicates, and ignores an answer that names unknown labels", async () => {
@@ -404,7 +533,7 @@ describe("mining: runs and label edits", () => {
     // 이미 끝난 실행은 다시 닫히지 않는다 (서비스가 자식 프로세스가 끝난 뒤 한 번 더 부른다)
     store.finishRun(id, { status: "failed", error: "exit 0" }, "2026-11-19T00:06:00.000Z");
     expect(store.runs(10)).toEqual([
-      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null },
+      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null, changes: 0 },
     ]);
 
     // 서비스가 내려가 실행 중으로 남은 것은 다음에 뜰 때 실패로 닫는다

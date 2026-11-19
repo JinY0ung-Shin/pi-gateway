@@ -41,7 +41,7 @@ try {
 if (!opened) fail("LLM이 설정되어 있지 않다 (관리 화면의 LLM)");
 
 const llm = createLlm(opened.runtime, opened.model, opened.config.maxTokens);
-const result = await run({ targets, store, llm, log });
+const result = await run({ targets, store, llm, log, runId });
 log.info(result, "mining finished");
 store.finishRun(
   runId,

@@ -30,7 +30,7 @@ describe("admin mining", () => {
   it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
     expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
-    expect((await h.admin("GET", "/mining")).json).toEqual({ runs: [], dailyAt: null, labels: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining")).json).toEqual({ runs: [], dailyAt: null, labels: [], revisions: [], recent30: 0, unlabeled30: 0 });
 
     // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
     const store = new MiningStore(openDatabase(miningDbFile));
@@ -70,7 +70,9 @@ describe("admin mining", () => {
     expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "[x](http://evil)", criteria: "기준" })).json.error.code).toBe("invalid_label");
     expect((await h.admin("PUT", "/mining/labels/999", { name: "이름", criteria: "기준" })).json.error.code).toBe("label_not_found");
     expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "운영 배포", criteria: "새 기준" })).status).toBe(200);
+    // 사람이 고친 라벨은 표시해 두어 자동 검토가 바꾸지 않는다
     expect(store.labels()[0]).toMatchObject({ name: "운영 배포", criteria: "새 기준" });
+    expect(store.labels()[0]!.editedAt).not.toBeNull();
 
     // 실행 중에는 고치지 못한다
     const run = store.startRun(at)!;
@@ -83,6 +85,12 @@ describe("admin mining", () => {
     expect((await h.admin("DELETE", `/mining/labels/${other}`)).status).toBe(200);
     expect(store.labels()).toEqual([]);
     expect(store.pending().length).toBe(3);
+    // 사람이 한 변경도 이력에 남는다 (최근 것부터)
+    expect((await h.admin("GET", "/mining")).json.revisions).toMatchObject([
+      { runId: null, labelId: other, kind: "deleted", name: "로그 조사" },
+      { runId: null, labelId: label, kind: "merged", name: "운영 배포", after: "로그 조사" },
+      { runId: null, labelId: label, kind: "refined", name: "운영 배포", before: "서비스 배포 — 서비스를 운영에 올리는 작업", after: "운영 배포 — 새 기준" },
+    ]);
   });
 });
 

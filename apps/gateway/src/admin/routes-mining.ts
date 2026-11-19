@@ -6,12 +6,13 @@ import type { AdminContext } from "./context.js";
 import { PlatformError } from "./errors.js";
 
 const RUN_LIMIT = 30;
+const REVISION_LIMIT = 100;
 const EPISODE_LIMIT = 500;
 const DAY_MS = 86_400_000;
 
 /**
  * 프로세스 마이닝 관리 (docs/process-mining-design.md): 실행 이력과 "지금 실행", 매일 자동 실행 시각,
- * 프로세스(라벨) 목록과 그 작업(에피소드), 사람이 하는 라벨 수정.
+ * 프로세스(라벨) 목록과 그 작업(에피소드), 라벨 변경 이력, 사람이 하는 라벨 수정.
  * 실행은 mining 서비스가 한다. gateway는 mining.db에 요청과 설정, 라벨 수정만 쓴다.
  */
 export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): void {
@@ -54,8 +55,10 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       dailyAt: store.dailyAt(),
       labels: store.labels().map((l) => {
         const s = stats.get(l.id);
-        return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
+        return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, editedAt: l.editedAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
       }),
+      /** 라벨에 일어난 변경 (자동 실행과 사람), 최근 것부터 */
+      revisions: store.revisions(REVISION_LIMIT),
       /** 최근 30일에 끝난 에피소드 수와, 그중 라벨이 없는 것 */
       recent30: recent.length,
       unlabeled30: recent.filter((e) => e.labelId === null).length,
@@ -116,27 +119,32 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       throw new PlatformError(400, "invalid_label", `name (at most ${NAME_CHARS} characters) and criteria (at most ${CRITERIA_CHARS}) must be plain text without markup or links`);
     }
     return edit("mining label renamed", (store) => {
-      const { id } = labelOf(store, req.params.id);
-      store.renameLabel(id, name, criteria);
-      return { label: id };
+      const label = labelOf(store, req.params.id);
+      const at = new Date().toISOString();
+      store.renameLabel(label.id, name, criteria, at);
+      store.revise({ at, runId: null, labelId: label.id, kind: "refined", name, before: `${label.name} — ${label.criteria}`, after: `${name} — ${criteria}` });
+      return { label: label.id };
     });
   });
 
   app.post<{ Params: { id: string }; Body: { into?: unknown } | null }>("/mining/labels/:id/merge", async (req) =>
     edit("mining label merged", (store) => {
-      const from = labelOf(store, req.params.id).id;
-      const into = labelOf(store, req.body?.into).id;
-      if (from === into) throw new PlatformError(400, "invalid_merge", "a label cannot be merged into itself");
-      store.mergeLabels([[from, into]], new Date().toISOString());
-      return { label: from, into };
+      const from = labelOf(store, req.params.id);
+      const into = labelOf(store, req.body?.into);
+      if (from.id === into.id) throw new PlatformError(400, "invalid_merge", "a label cannot be merged into itself");
+      const at = new Date().toISOString();
+      store.mergeLabels([[from.id, into.id]], at);
+      store.revise({ at, runId: null, labelId: from.id, kind: "merged", name: from.name, after: into.name });
+      return { label: from.id, into: into.id };
     }),
   );
 
   app.delete<{ Params: { id: string } }>("/mining/labels/:id", async (req) =>
     edit("mining label deleted", (store) => {
-      const { id } = labelOf(store, req.params.id);
-      store.deleteLabel(id);
-      return { label: id };
+      const label = labelOf(store, req.params.id);
+      store.deleteLabel(label.id);
+      store.revise({ at: new Date().toISOString(), runId: null, labelId: label.id, kind: "deleted", name: label.name, before: `${label.name} — ${label.criteria}` });
+      return { label: label.id };
     }),
   );
 }

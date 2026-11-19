@@ -3,7 +3,7 @@ import { useState } from "preact/hooks";
 import { api, duration, enc, formatTime, percent } from "../api";
 import { Badge, EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
 
-/** 프로세스 마이닝: 실행(지금 실행, 자동 실행 시각, 이력), 프로세스 목록과 수정, 그 작업 */
+/** 프로세스 마이닝: 실행(지금 실행, 자동 실행 시각, 이력), 프로세스 목록과 수정, 변경 이력, 그 작업 */
 
 interface Run {
   id: number;
@@ -18,6 +18,21 @@ interface Run {
   episodes: number | null;
   model: string | null;
   error: string | null;
+  /** 이 실행이 프로세스에 한 변경 수 */
+  changes: number;
+}
+
+interface Revision {
+  id: number;
+  at: string;
+  /** 사람이 했으면 null */
+  runId: number | null;
+  labelId: number;
+  kind: "created" | "refined" | "split" | "merged" | "deleted";
+  name: string;
+  before: string | null;
+  after: string | null;
+  reason: string | null;
 }
 
 interface Label {
@@ -25,6 +40,8 @@ interface Label {
   name: string;
   criteria: string;
   createdAt: string;
+  /** 사람이 이름·기준을 고친 때 */
+  editedAt: string | null;
   flow: string[] | null;
   total: number;
   recent7: number;
@@ -37,6 +54,7 @@ interface Overview {
   /** "HH:MM" (UTC) */
   dailyAt: string | null;
   labels: Label[];
+  revisions: Revision[];
   recent30: number;
   unlabeled30: number;
 }
@@ -61,6 +79,16 @@ const STATUS: Record<Run["status"], { text: string; tone: "blue" | "green" | "gr
   failed: { text: "실패", tone: "red" },
 };
 const UNLABELED = "미분류";
+const KIND: Record<Revision["kind"], string> = { created: "생김", refined: "고침", split: "나뉨", merged: "합쳐짐", deleted: "지워짐" };
+
+/** 변경 하나를 한 줄로 */
+function revisionText(r: Revision): string {
+  if (r.kind === "created") return r.before ? `"${r.before}"에서 나뉨: ${r.after}` : (r.after ?? "");
+  if (r.kind === "refined") return `${r.before} → ${r.after}`;
+  if (r.kind === "split") return `→ ${r.after}`;
+  if (r.kind === "merged") return `"${r.after}"(으)로 합쳐짐`;
+  return r.before ?? "";
+}
 
 /** "HH:MM"을 UTC와 브라우저 시간대 사이에서 바꾼다. */
 function shiftTime(time: string, to: "utc" | "local"): string {
@@ -88,14 +116,27 @@ export function MiningPage() {
       {error && <Notice tone="warn">{error}</Notice>}
       <RunSection data={data} reload={reload} />
       <LabelSection data={data} onOpen={setOpen} />
+      <Section title="변경 이력" actions={<span class="muted small-text">실행이 스스로 한 것과 사람이 한 것, 최근 {data.revisions.length}건</span>}>
+        <Revisions items={data.revisions} />
+      </Section>
       <EpisodeSection labels={data.labels} />
       {open === "none" && (
         <Modal title={UNLABELED} onClose={() => setOpen(null)}>
-          <p class="muted small-text">어느 프로세스에도 들지 않은 작업입니다. 20건 넘게 쌓이면 다음 실행이 여기서 새 프로세스를 찾습니다.</p>
+          <p class="muted small-text">어느 프로세스에도 들지 않은 작업입니다. 20건 이상 쌓이면 다음 실행이 여기서 새 프로세스를 찾습니다.</p>
           <Episodes path="/mining/episodes?label=none" />
         </Modal>
       )}
-      {label && <LabelModal key={label.id} label={label} others={data.labels.filter((l) => l.id !== label.id)} running={running} reload={reload} onClose={() => setOpen(null)} />}
+      {label && (
+        <LabelModal
+          key={label.id}
+          label={label}
+          others={data.labels.filter((l) => l.id !== label.id)}
+          revisions={data.revisions.filter((r) => r.labelId === label.id)}
+          running={running}
+          reload={reload}
+          onClose={() => setOpen(null)}
+        />
+      )}
     </>
   );
 }
@@ -144,7 +185,8 @@ function RunSection(props: { data: Overview; reload: () => Promise<void> }) {
         <span class="muted small-text">{saved ? `현재: 매일 ${saved} (이 브라우저의 시간대)` : "현재: 자동으로 실행하지 않음"}</span>
       </div>
       <p class="muted small-text">
-        한 번 실행하면 마지막 활동이 30일 안이고 30분 넘게 쉰 세션 중 새 내용이 있는 것을 읽습니다. 최대 3시간 돌고, 못 읽은 세션은 다음 실행이 이어 갑니다.
+        한 번 실행하면 마지막 활동이 30일 안이고 30분 넘게 쉰 세션 중 새 내용이 있는 것을 읽어 작업을 뽑고, 프로세스에 붙이고, 새 프로세스를 찾고, 근거가 쌓인 프로세스를 다시 검토해
+        고치거나 나눕니다. 최대 3시간 돌고, 못 읽은 세션은 다음 실행이 이어 갑니다.
       </p>
       <table class="table">
         <thead>
@@ -157,11 +199,12 @@ function RunSection(props: { data: Overview; reload: () => Promise<void> }) {
             <th class="num">실패</th>
             <th class="num">남음</th>
             <th class="num">작업</th>
+            <th class="num">변경</th>
             <th>모델</th>
           </tr>
         </thead>
         <tbody>
-          {runs.length === 0 && <EmptyRow cols={9}>아직 실행한 적이 없습니다.</EmptyRow>}
+          {runs.length === 0 && <EmptyRow cols={10}>아직 실행한 적이 없습니다.</EmptyRow>}
           {runs.map((r) => (
             <tr key={r.id}>
               <td>{formatTime(r.requestedAt)}</td>
@@ -176,6 +219,7 @@ function RunSection(props: { data: Overview; reload: () => Promise<void> }) {
               <td class="num">{r.failed ?? "-"}</td>
               <td class="num">{r.remaining ?? "-"}</td>
               <td class="num">{r.episodes ?? "-"}</td>
+              <td class="num">{r.changes}</td>
               <td class="clip mono muted">{r.error ?? r.model ?? "-"}</td>
             </tr>
           ))}
@@ -203,7 +247,7 @@ function LabelSection(props: { data: Overview; onOpen: (id: number | "none") => 
           </tr>
         </thead>
         <tbody>
-          {labels.length === 0 && <EmptyRow cols={7}>아직 없습니다. 미분류 작업이 20건 넘게 쌓이면 실행할 때 찾습니다.</EmptyRow>}
+          {labels.length === 0 && <EmptyRow cols={7}>아직 없습니다. 미분류 작업이 20건 이상 쌓이면 실행할 때 찾습니다.</EmptyRow>}
           {sorted.map((l) => (
             <tr key={l.id} class="clickable" onClick={() => props.onOpen(l.id)}>
               <td>{l.name}</td>
@@ -231,7 +275,7 @@ function LabelSection(props: { data: Overview; onOpen: (id: number | "none") => 
 }
 
 /** 프로세스 하나: 이름·기준 수정, 합치기, 지우기, 대표 흐름, 그 작업 */
-function LabelModal(props: { label: Label; others: Label[]; running: boolean; reload: () => Promise<void>; onClose: () => void }) {
+function LabelModal(props: { label: Label; others: Label[]; revisions: Revision[]; running: boolean; reload: () => Promise<void>; onClose: () => void }) {
   const { label } = props;
   const [name, setName] = useState(label.name);
   const [criteria, setCriteria] = useState(label.criteria);
@@ -243,7 +287,7 @@ function LabelModal(props: { label: Label; others: Label[]; running: boolean; re
     action.run(async () => {
       await api("PUT", `/mining/labels/${label.id}`, { name, criteria });
       await props.reload();
-    }, "저장했습니다. 다음 실행부터 이 기준으로 작업을 붙입니다.");
+    }, "저장했습니다. 다음 실행부터 이 기준으로 작업을 붙이고, 자동 검토는 이 프로세스의 이름·기준을 바꾸지 않습니다.");
   /** 합치거나 지우면 이 프로세스가 없어지므로 창을 닫는다. */
   const remove = async (request: () => Promise<unknown>) => {
     const done = await action.run(async () => {
@@ -258,6 +302,7 @@ function LabelModal(props: { label: Label; others: Label[]; running: boolean; re
     <Modal title={label.name} onClose={props.onClose}>
       {action.view}
       {props.running && <Notice tone="info">실행 중에는 고칠 수 없습니다.</Notice>}
+      {label.editedAt && <p class="muted small-text">사람이 {formatTime(label.editedAt)}에 고쳤습니다. 자동 검토가 이름·기준을 바꾸지 않습니다.</p>}
       <label class="field">
         <span>이름</span>
         <input value={name} maxLength={60} disabled={locked} onInput={(e) => setName(e.currentTarget.value)} />
@@ -308,9 +353,45 @@ function LabelModal(props: { label: Label; others: Label[]; running: boolean; re
       ) : (
         <p class="muted">아직 없습니다. 실행할 때 씁니다.</p>
       )}
+      <h3>변경 이력</h3>
+      <Revisions items={props.revisions} />
       <h3>작업</h3>
       <Episodes path={`/mining/episodes?label=${label.id}`} />
     </Modal>
+  );
+}
+
+/** 프로세스에 일어난 변경. 자동 검토가 적은 이유가 있으면 같이 보여 준다. */
+function Revisions(props: { items: Revision[] }) {
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          <th>때</th>
+          <th>누가</th>
+          <th>변경</th>
+          <th>프로세스</th>
+          <th>내용</th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.items.length === 0 && <EmptyRow cols={5}>아직 변경이 없습니다.</EmptyRow>}
+        {props.items.map((r) => {
+          const text = `${revisionText(r)}${r.reason ? ` (${r.reason})` : ""}`;
+          return (
+            <tr key={r.id}>
+              <td>{formatTime(r.at)}</td>
+              <td>{r.runId === null ? "사람" : "자동"}</td>
+              <td>{KIND[r.kind]}</td>
+              <td>{r.name}</td>
+              <td class="clip" title={text}>
+                {text}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

@@ -1,14 +1,14 @@
 import { type Db, migrate } from "../db.js";
 
 /**
- * mining의 상태 (gateway DB와 다른 파일). 세션 원문은 두지 않고, 요약한 에피소드와 라벨, 어디까지 읽었는지, 실행 이력만 둔다.
+ * mining의 상태 (gateway DB와 다른 파일). 세션 원문은 두지 않고, 요약한 에피소드와 라벨, 어디까지 읽었는지, 실행 이력과 라벨 변경 이력만 둔다.
  * 사용자는 저장하지 않는다. 필요할 때 gateway의 sessions에서 세션 id로 찾는다.
  *
  * 두 프로세스가 연다: mining 서비스(실행)와 gateway(관리 화면: 실행 요청, 자동 실행 시각, 라벨 수정).
  *
  * 에피소드의 상태는 두 컬럼으로 읽는다:
  * - 배정 전: label_id도 assigned_at도 없다 (아직 라벨을 붙여 보지 않았다)
- * - 미분류: assigned_at만 있다 (붙여 봤지만 맞는 라벨이 없었다)
+ * - 미분류: assigned_at만 있다 (붙여 봤지만 맞는 라벨이 없었다). 가까운 라벨이 있었으면 near_label_id에 남는다
  * - 배정: label_id가 있다
  */
 
@@ -60,6 +60,22 @@ const MIGRATIONS = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL
    )`,
+  `ALTER TABLE episodes ADD COLUMN near_label_id INTEGER;
+   CREATE INDEX episodes_near ON episodes(near_label_id);
+   ALTER TABLE labels ADD COLUMN reviewed_count INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE labels ADD COLUMN edited_at TEXT;
+   CREATE TABLE label_revisions (
+     id INTEGER PRIMARY KEY,
+     at TEXT NOT NULL,
+     run_id INTEGER,
+     label_id INTEGER NOT NULL,
+     kind TEXT NOT NULL,
+     name TEXT NOT NULL,
+     before TEXT,
+     after TEXT,
+     reason TEXT
+   );
+   CREATE INDEX label_revisions_run ON label_revisions(run_id)`,
 ];
 
 /** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다. */
@@ -78,6 +94,8 @@ export interface Run {
   model: string | null;
   /** 시작하지 못했거나 도중에 죽은 이유 */
   error: string | null;
+  /** 이 실행이 라벨에 한 변경 수 (생김, 고침, 나뉨, 합쳐짐) */
+  changes: number;
 }
 
 export interface RunOutcome {
@@ -98,8 +116,8 @@ export function cameDue(time: string, after: number, now: number): boolean {
   return last > after;
 }
 
-const RUN =
-  "SELECT id, trigger, requested_at AS requestedAt, started_at AS startedAt, finished_at AS finishedAt, status, processed, failed, remaining, episodes, model, error FROM runs";
+const RUN = `SELECT id, trigger, requested_at AS requestedAt, started_at AS startedAt, finished_at AS finishedAt, status, processed, failed, remaining, episodes, model, error,
+  (SELECT COUNT(*) FROM label_revisions r WHERE r.run_id = runs.id) AS changes FROM runs`;
 const DAILY_AT = "daily_at";
 
 export interface Episode {
@@ -134,6 +152,28 @@ export interface Label {
   flowCount: number;
   /** 지금 배정된 에피소드 수 */
   count: number;
+  /** 마지막으로 검토했을 때의 에피소드 수 */
+  reviewedCount: number;
+  /** 가깝지만 분명히 맞지는 않아 미분류로 남은 에피소드 수 */
+  near: number;
+  /** 사람이 이름·기준을 고친 때. 고친 라벨은 자동 검토가 바꾸지 않는다 */
+  editedAt: string | null;
+}
+
+/** 라벨에 일어난 변경 하나. 라벨이 없어진 뒤에도 읽을 수 있게 그때의 이름을 같이 둔다. */
+export interface Revision {
+  id: number;
+  at: string;
+  /** 그 변경을 한 실행. 사람이 관리 화면에서 했으면 null */
+  runId: number | null;
+  labelId: number;
+  kind: "created" | "refined" | "split" | "merged" | "deleted";
+  name: string;
+  /** 바뀌기 전과 뒤 (이름 — 기준, 또는 합쳐지거나 나뉜 라벨의 이름) */
+  before: string | null;
+  after: string | null;
+  /** 자동 검토가 적은 이유 */
+  reason: string | null;
 }
 
 interface EpisodeRow {
@@ -184,7 +224,7 @@ export class MiningStore {
         const last = e.continues ? this.lastEpisode(sessionId) : undefined;
         if (last) {
           this.db
-            .prepare("UPDATE episodes SET ended_at = ?, goal = ?, steps = ?, label_id = NULL, assigned_at = NULL WHERE id = ?")
+            .prepare("UPDATE episodes SET ended_at = ?, goal = ?, steps = ?, label_id = NULL, assigned_at = NULL, near_label_id = NULL WHERE id = ?")
             .run(e.endedAt, e.goal, JSON.stringify(e.steps), last.id);
           ids.push(last.id);
         } else {
@@ -233,11 +273,11 @@ export class MiningStore {
     return this.#episodes("WHERE label_id IS NULL AND assigned_at IS NULL ORDER BY id");
   }
 
-  /** 라벨을 붙인다. labelId가 null이면 미분류로 둔다. */
-  assign(episodeIds: readonly number[], labelId: number | null, at: string): void {
-    const set = this.db.prepare("UPDATE episodes SET label_id = ?, assigned_at = ? WHERE id = ?");
+  /** 라벨을 붙인다. labelId가 null이면 미분류로 둔다. near: 미분류지만 가까웠던 라벨 */
+  assign(episodeIds: readonly number[], labelId: number | null, at: string, near: number | null = null): void {
+    const set = this.db.prepare("UPDATE episodes SET label_id = ?, assigned_at = ?, near_label_id = ? WHERE id = ?");
     this.db.transaction(() => {
-      for (const id of episodeIds) set.run(labelId, at, id);
+      for (const id of episodeIds) set.run(labelId, at, near, id);
     })();
   }
 
@@ -255,7 +295,19 @@ export class MiningStore {
 
   /** since 뒤에 끝난 미분류 에피소드를 배정 전으로 되돌린다 (새 라벨이 생겼으니 다시 붙여 본다). */
   reopenUnlabeled(since: string): void {
-    this.db.prepare("UPDATE episodes SET assigned_at = NULL WHERE label_id IS NULL AND assigned_at IS NOT NULL AND ended_at >= ?").run(since);
+    this.db.prepare("UPDATE episodes SET assigned_at = NULL, near_label_id = NULL WHERE label_id IS NULL AND assigned_at IS NOT NULL AND ended_at >= ?").run(since);
+  }
+
+  /** 그 라벨에 가까웠던 미분류 에피소드, 최근 것부터 limit건 */
+  nearOf(labelId: number, limit: number): Episode[] {
+    return this.#episodes("WHERE near_label_id = ? ORDER BY ended_at DESC LIMIT ?", labelId, limit);
+  }
+
+  /** 기준이 바뀐 라벨의 것을 배정 전으로 되돌린다: since 뒤에 끝난 그 라벨의 에피소드와, 그 라벨에 가까웠던 미분류 */
+  reopenLabel(labelId: number, since: string): void {
+    this.db
+      .prepare("UPDATE episodes SET label_id = NULL, assigned_at = NULL, near_label_id = NULL WHERE (label_id = ? AND ended_at >= ?) OR near_label_id = ?")
+      .run(labelId, since, labelId);
   }
 
   // ── 라벨 ────────────────────────────────────────────────────────────
@@ -264,10 +316,12 @@ export class MiningStore {
   labels(): Label[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, criteria, created_at, flow, flow_count, (SELECT COUNT(*) FROM episodes e WHERE e.label_id = labels.id) AS count
+        `SELECT id, name, criteria, created_at, flow, flow_count, reviewed_count, edited_at,
+           (SELECT COUNT(*) FROM episodes e WHERE e.label_id = labels.id) AS count,
+           (SELECT COUNT(*) FROM episodes e WHERE e.near_label_id = labels.id) AS near
          FROM labels WHERE merged_into IS NULL ORDER BY id`,
       )
-      .all() as { id: number; name: string; criteria: string; created_at: string; flow: string | null; flow_count: number; count: number }[];
+      .all() as { id: number; name: string; criteria: string; created_at: string; flow: string | null; flow_count: number; reviewed_count: number; edited_at: string | null; count: number; near: number }[];
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -276,6 +330,9 @@ export class MiningStore {
       flow: r.flow ? (JSON.parse(r.flow) as string[]) : null,
       flowCount: r.flow_count,
       count: r.count,
+      reviewedCount: r.reviewed_count,
+      near: r.near,
+      editedAt: r.edited_at,
     }));
   }
 
@@ -294,6 +351,7 @@ export class MiningStore {
     this.db.transaction(() => {
       for (const [from, into] of pairs) {
         this.db.prepare("UPDATE episodes SET label_id = ? WHERE label_id = ?").run(into, from);
+        this.db.prepare("UPDATE episodes SET near_label_id = ? WHERE near_label_id = ?").run(into, from);
         this.db.prepare("UPDATE labels SET merged_into = ?, merged_at = ? WHERE id = ? OR merged_into = ?").run(into, at, from, from);
       }
     })();
@@ -325,16 +383,46 @@ export class MiningStore {
       .immediate();
   }
 
-  renameLabel(id: number, name: string, criteria: string): void {
-    this.db.prepare("UPDATE labels SET name = ?, criteria = ? WHERE id = ?").run(name, criteria, id);
+  /** editedAt: 사람이 고친 때 (자동 검토가 고칠 때는 주지 않는다) */
+  renameLabel(id: number, name: string, criteria: string, editedAt?: string): void {
+    this.db.prepare("UPDATE labels SET name = ?, criteria = ?, edited_at = COALESCE(?, edited_at) WHERE id = ?").run(name, criteria, editedAt ?? null, id);
   }
 
   /** 라벨을 없앤다. 그 에피소드는 배정 전으로 돌아가 다음 실행이 다시 붙여 본다. */
   deleteLabel(id: number): void {
     this.db.transaction(() => {
       this.db.prepare("UPDATE episodes SET label_id = NULL, assigned_at = NULL WHERE label_id = ?").run(id);
+      this.db.prepare("UPDATE episodes SET near_label_id = NULL WHERE near_label_id = ?").run(id);
       this.db.prepare("DELETE FROM labels WHERE id = ? OR merged_into = ?").run(id, id);
     })();
+  }
+
+  // ── 검토와 변경 이력 ───────────────────────────────────────────────
+
+  /** 여러 변경을 한 트랜잭션으로 한다. */
+  atomic(change: () => void): void {
+    this.db.transaction(change)();
+  }
+
+  /** 검토를 마쳤다고 적는다. 가까웠던 미분류는 이번 검토에서 봤으므로 표시를 지운다. */
+  markReviewed(labelId: number, count: number): void {
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE labels SET reviewed_count = ? WHERE id = ?").run(count, labelId);
+      this.db.prepare("UPDATE episodes SET near_label_id = NULL WHERE near_label_id = ?").run(labelId);
+    })();
+  }
+
+  revise(revision: Omit<Revision, "id" | "before" | "after" | "reason"> & Partial<Pick<Revision, "before" | "after" | "reason">>): void {
+    this.db
+      .prepare("INSERT INTO label_revisions (at, run_id, label_id, kind, name, before, after, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(revision.at, revision.runId, revision.labelId, revision.kind, revision.name, revision.before ?? null, revision.after ?? null, revision.reason ?? null);
+  }
+
+  /** 최근 변경부터 limit건 */
+  revisions(limit: number): Revision[] {
+    return this.db
+      .prepare("SELECT id, at, run_id AS runId, label_id AS labelId, kind, name, before, after, reason FROM label_revisions ORDER BY id DESC LIMIT ?")
+      .all(limit) as Revision[];
   }
 
   // ── 실행 ────────────────────────────────────────────────────────────
