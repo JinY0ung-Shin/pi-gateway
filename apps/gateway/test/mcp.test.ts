@@ -7,7 +7,7 @@ import { McpServerConfig, SANDBOXD_ROUTES } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { attachedStdioTransport, McpToolCache, pluginDataDirs, resolveSandboxCommand, SANDBOX_SYSTEM_PATH, wholeSseEvents } from "../src/mcp-client/connections.js";
-import { createMcpProxyTools, searchTerms } from "../src/mcp-client/proxy.js";
+import { createMcpProxyTools } from "../src/mcp-client/proxy.js";
 import { bombPng, tinyPng } from "./fixtures/images.js";
 import { BOB_KEY, type Harness, last, ofType, startHarness } from "./helpers.js";
 
@@ -170,9 +170,19 @@ describe("mcp_search and mcp_call", () => {
     expect(String(ambiguous!.content)).toContain("'echo' matches several tools: mcp__demo__echo, mcp__local__echo.");
   });
 
-  it("splits Korean into two-letter terms so particles do not block a match", () => {
-    expect(searchTerms("결함을 조회")).toEqual(["결함", "함을", "조회"]);
-    expect(searchTerms("listIssues v2")).toEqual(["list", "issues", "v2"]);
+  it("finds a tool by one word of a camelCase name, and by a Korean word whatever particle follows", async () => {
+    const tool = (name: string, description: string): ToolDefinition => ({
+      name: `mcp__t__${name}`,
+      label: `t/${name}`,
+      description,
+      parameters: Type.Object({}),
+      execute: async () => ({ content: [], details: {} }),
+    });
+    const [search] = createMcpProxyTools([tool("listIssues", "open tickets"), tool("lookup", "결함을 조회한다")], [{ id: "t" }]);
+    const found = async (query: string) => JSON.stringify((await search!.execute("s", { query }, undefined, undefined, undefined as never)).content);
+    expect(await found("issues")).toContain("## mcp__t__listIssues");
+    expect(await found("issues")).not.toContain("## mcp__t__lookup");
+    expect(await found("결함이")).toContain("## mcp__t__lookup");
   });
 
   it("lists a server whose tool list failed, and fetches it again when the model needs it", async () => {

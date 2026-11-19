@@ -1,6 +1,6 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { annotateSpan } from "@pi-gateway/shared";
+import { annotateSpan, bm25 } from "@pi-gateway/shared";
 import { Type } from "typebox";
 import type { Choose } from "../contracts.js";
 
@@ -39,24 +39,6 @@ export interface ProxiedServer {
   description?: string;
 }
 
-/** 소문자 단어. 한글은 조사가 붙어도 맞도록 두 글자씩 자른다 (`결함을` → `결함`, `함을`). */
-export function searchTerms(text: string): string[] {
-  const terms: string[] = [];
-  const words = text
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u);
-  for (const word of words) {
-    if (!word) continue;
-    if (!/\p{Script=Hangul}/u.test(word) || word.length <= 2) {
-      terms.push(word);
-      continue;
-    }
-    for (let i = 0; i < word.length - 1; i++) terms.push(word.slice(i, i + 2));
-  }
-  return terms;
-}
-
 /** 도구 이름·설명·인자 이름과 설명, 서버 이름과 설명을 검색 대상으로 쓴다. */
 function documentText(tool: ToolDefinition, server: ProxiedServer | undefined): string {
   const parts = [tool.name.replaceAll("_", " "), tool.description, server?.displayName ?? "", server?.description ?? ""];
@@ -68,30 +50,17 @@ function documentText(tool: ToolDefinition, server: ProxiedServer | undefined): 
   return parts.join(" ");
 }
 
-/** Okapi BM25 (k1 1.2, b 0.75). 점수가 같으면 원래 순서를 지킨다. */
+/** camelCase 이름을 낱말로 나눈다 (`listIssues` → `list Issues`). */
+const splitCamel = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+
+/** BM25 순위. 점수가 같으면 원래 순서를 지킨다. */
 function rank(query: string, documents: string[], limit: number): number[] {
-  const queryTerms = [...new Set(searchTerms(query))];
-  if (queryTerms.length === 0) return [];
-  const counts = documents.map((text) => {
-    const m = new Map<string, number>();
-    for (const term of searchTerms(text)) m.set(term, (m.get(term) ?? 0) + 1);
-    return m;
-  });
-  const lengths = counts.map((m) => [...m.values()].reduce((a, b) => a + b, 0));
-  const average = lengths.reduce((a, b) => a + b, 0) / documents.length || 1;
-  const scored: { index: number; score: number }[] = [];
-  counts.forEach((m, index) => {
-    let score = 0;
-    for (const term of queryTerms) {
-      const count = m.get(term);
-      if (!count) continue;
-      const frequency = counts.filter((c) => c.has(term)).length;
-      const idf = Math.log(1 + (documents.length - frequency + 0.5) / (frequency + 0.5));
-      score += (idf * (count * 2.2)) / (count + 1.2 * (0.25 + (0.75 * lengths[index]!) / average));
-    }
-    if (score > 0) scored.push({ index, score });
-  });
-  return scored
+  const ranker = bm25(splitCamel(query));
+  for (const document of documents) ranker.add(splitCamel(document));
+  return ranker
+    .scores()
+    .map((score, index) => ({ index, score }))
+    .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((s) => s.index);

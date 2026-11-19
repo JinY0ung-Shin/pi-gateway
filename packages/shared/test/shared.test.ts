@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   AUD_BROKER,
   AUD_SANDBOXD,
+  bm25,
   isValidUserId,
   jwtSecretBytes,
   McpServerConfig,
   mcpToolName,
   renderTemplate,
   requiredSecretNames,
+  searchTerms,
   signInternalToken,
   transportTarget,
   userKey,
@@ -129,5 +131,25 @@ describe("MCP server config", () => {
     expect(same(http("https://docs.example.com/mcp?a={{secret:A}}", { Authorization: "Bearer {{secret:T}}" }))).toBe(false);
     expect(same(http("https://evil.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}" }))).toBe(false);
     expect(same(http("https://docs.example.com/mcp?a={{secret:A}}&b={{secret:B}}", { Authorization: "Bearer {{secret:T}}", "X-Extra": "1" }))).toBe(false);
+  });
+});
+
+describe("낱말 검색", () => {
+  it("한글은 두 글자씩 잘라 조사가 붙어도 맞고, 그 밖의 낱말은 통째로 둔다", () => {
+    expect(searchTerms("결함을 조회")).toEqual(["결함", "함을", "조회"]);
+    expect(searchTerms("GitHub v2, 값")).toEqual(["github", "v2", "값"]);
+  });
+
+  it("BM25는 드문 낱말이 맞은 문서와 짧은 문서를 위에 두고, 맞는 낱말이 없으면 0점이다", () => {
+    const ranker = bm25("deploy friday");
+    expect(ranker.add("deploy notes")).toBe(true);
+    expect(ranker.add("deploy on friday")).toBe(true);
+    expect(ranker.add("deploy notes with a much longer body of unrelated words")).toBe(true);
+    expect(ranker.add("deployment")).toBe(false);
+    const [short, both, long, none] = ranker.scores();
+    expect(both).toBeGreaterThan(short!);
+    expect(short).toBeGreaterThan(long!);
+    expect(none).toBe(0);
+    expect(bm25("!!!").scores()).toEqual([]);
   });
 });

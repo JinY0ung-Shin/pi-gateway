@@ -6,6 +6,7 @@ export * from "./mcp-config.js";
 export * from "./migrate.js";
 export * from "./redact.js";
 export * from "./sandbox-api.js";
+export * from "./search.js";
 export * from "./secrets.js";
 export * from "./user-key.js";
 export * from "./tracing.js";

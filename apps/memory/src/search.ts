@@ -1,8 +1,13 @@
+import { bm25, searchTerms } from "@pi-gateway/shared";
+
 /**
- * 노트 검색. 단어가 제목·별칭(5점), 태그(3점), 본문(1점)에 있는지로 순위를 매긴다.
- * embedding이나 색인 서버는 쓰지 않는다 (Noah의 brainSearch.ts에서 옮겨 왔다).
+ * 노트 검색. 제목·별칭, 태그, 노트 전체를 따로 BM25로 채점해 5·3·1을 곱해 더한다.
+ * 낱말은 통째로 맞아야 하고(`deploy`는 `deployment`를 찾지 못한다), 한글은 두 글자씩 잘라 조사가 붙어도 맞는다.
+ * embedding이나 색인 서버는 쓰지 않는다.
  */
 
+/** 글마다 BM25 점수에 곱하는 값: 제목·별칭, 태그, 노트 전체 */
+const FIELD_WEIGHTS = [5, 3, 1];
 /** 한 번의 검색이 읽는 노트 수. 넘는 노트(경로 순으로 뒤쪽)는 읽지 않고, 결과에 그 수를 알린다. */
 export const SCAN_CAP = 2000;
 const DEFAULT_LIMIT = 8;
@@ -99,7 +104,7 @@ function snippet(body: string, terms: string[]): string {
 
 /**
  * `paths`(경로 순)의 노트를 `query`로 순위 매긴다. `read`가 null을 주는 노트는 건너뛴다.
- * 점수가 같으면 경로 순이라 결과가 늘 같다.
+ * 점수가 같으면 경로 순이라 결과가 늘 같다. 노트의 글은 들고 있지 않는다 (맞은 노트의 snippet만 남긴다).
  */
 export async function searchNotes(
   paths: string[],
@@ -107,26 +112,23 @@ export async function searchNotes(
   query: string,
   limit: number = DEFAULT_LIMIT,
 ): Promise<SearchResult> {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = [...new Set(searchTerms(query))];
+  const fields = FIELD_WEIGHTS.map(() => bm25(query));
   const scanned = paths.slice(0, SCAN_CAP);
-  const hits: SearchHit[] = [];
+  /** 읽은 노트마다 하나씩, 읽은 순서대로. 맞는 낱말이 없는 노트는 null이다. */
+  const notes: (Omit<SearchHit, "score"> | null)[] = [];
   for (const path of scanned) {
     const content = await read(path);
     if (content === null) continue;
     const { fm, body } = parseFrontmatter(content);
     const title = fm.title || (path.split("/").pop() ?? path).replace(/\.md$/, "");
-    const titleHay = `${title} ${fm.aliases.join(" ")}`.toLowerCase();
-    const tagHay = fm.tags.join(" ").toLowerCase();
     // 본문 점수는 노트 전체에서 본다: 맨 앞 블록에 든 글(다른 key의 값, 수평선 사이의 문단)도 검색에서 빠지지 않는다.
-    const bodyHay = content.toLowerCase();
-    let score = 0;
-    for (const t of terms) {
-      if (titleHay.includes(t)) score += 5;
-      if (tagHay.includes(t)) score += 3;
-      if (bodyHay.includes(t)) score += 1;
-    }
-    if (score > 0) hits.push({ path, title, tags: fm.tags, snippet: snippet(body, terms), score });
+    const texts = [`${title} ${fm.aliases.join(" ")}`, fm.tags.join(" "), content];
+    const matched = texts.map((text, i) => fields[i]!.add(text)).some(Boolean);
+    notes.push(matched ? { path, title, tags: fm.tags, snippet: snippet(body, terms) } : null);
   }
+  const scores = fields.map((field) => field.scores());
+  const hits = notes.flatMap((note, i) => (note ? [{ ...note, score: FIELD_WEIGHTS.reduce((sum, weight, f) => sum + weight * scores[f]![i]!, 0) }] : []));
   hits.sort((a, b) => b.score - a.score || (a.path < b.path ? -1 : 1));
   return { hits: hits.slice(0, Math.min(Math.max(1, limit), MAX_LIMIT)), unscanned: paths.length - scanned.length };
 }

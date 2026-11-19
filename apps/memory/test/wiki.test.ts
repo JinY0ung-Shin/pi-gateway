@@ -264,6 +264,15 @@ describe("목록과 검색", () => {
     expect((await store.search("alice", "deploy", undefined, "none")).hits).toEqual([]);
   });
 
+  it("한글은 조사가 달라도 찾고, 드문 낱말이 맞은 노트가 위에 온다", async () => {
+    await store.write("alice", "a.md", "배포 전에 결함이 있는지 본다");
+    await store.write("alice", "b.md", "배포는 금요일에 하지 않는다");
+    await store.write("alice", "c.md", "GitHub 저장소 목록");
+    expect((await store.search("alice", "결함을")).hits.map((h) => h.path)).toEqual(["a.md"]);
+    expect((await store.search("alice", "배포 금요일")).hits.map((h) => h.path)).toEqual(["b.md", "a.md"]);
+    expect((await store.search("alice", "github")).hits.map((h) => h.path)).toEqual(["c.md"]);
+  });
+
   it("한 번에 읽는 수를 넘는 wiki는 읽지 않은 노트 수를 알린다", async () => {
     // 저장소를 거치면 쓸 때마다 전체를 세므로, 파일을 직접 놓는다.
     const root = join(ownerRoot("alice"), "n");
@@ -287,6 +296,7 @@ describe("목록과 검색", () => {
 
   it("낱말이 없는 검색어는 빈 결과가 아니라 거절이다", async () => {
     expect(await code(store.search("alice", "   "))).toBe("invalid_query");
+    expect(await code(store.search("alice", "?!"))).toBe("invalid_query");
   });
 
   it("frontmatter의 list는 주석 줄에서 끊기지 않고, 다른 key가 나오면 끝난다", () => {

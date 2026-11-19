@@ -2,7 +2,7 @@ import { isUtf8 } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { userKey } from "@pi-gateway/shared";
+import { searchTerms, userKey } from "@pi-gateway/shared";
 import { type SearchResult, searchNotes } from "./search.js";
 
 /**
@@ -420,7 +420,7 @@ export class WikiStore {
   }
 
   async search(owner: string, query: string, limit?: number, prefix?: string): Promise<SearchResult> {
-    if (!query.trim()) throw new WikiError("invalid_query", "the query has no words to look for");
+    if (searchTerms(query).length === 0) throw new WikiError("invalid_query", "the query has no words to look for");
     const notes = await this.notesUnder(owner, prefix);
     const abs = new Map(notes.map((n) => [n.path, n.abs]));
     // 검색 도중 지워진 노트는 건너뛴다. 그 밖의 읽기 실패는 검색 실패다 (빈 결과로 바꾸지 않는다).

@@ -44,7 +44,7 @@ const TOOLS: MemoryTool[] = [
     "search",
     "Search your long-term memory: the notes kept for this user across sessions. Call it before answering anything that may depend on what was learned earlier (the user's preferences, past decisions, people, projects). Ranks notes by keyword hits in title and aliases, then tags, then body; each hit gives the note path and a snippet. Read a hit in full with `read`.",
     z.object({
-      query: z.string().min(1).max(500).describe("Keywords to look for."),
+      query: z.string().min(1).max(500).describe("Keywords to look for. A word matches only as a whole word (`deploy` does not find `deployment`); Korean also matches with a particle attached."),
       limit: z.number().int().min(1).max(20).optional().describe("Max notes to return (default 8)."),
       prefix: prefixArg,
     }),
