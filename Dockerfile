@@ -38,7 +38,7 @@ COPY apps/admin-ui/package.json apps/admin-ui/
 # install script는 돌리지 않는다 (better-sqlite3는 prebuild를, esbuild는 플랫폼 패키지를 쓴다).
 # 서비스마다 따로 빌드해서, 한 서비스의 빌드 실패가 다른 이미지에 영향을 주지 않게 한다.
 FROM manifests AS build-deps
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,id=npm,target=/root/.npm npm ci --ignore-scripts
 COPY tsconfig.base.json tsconfig.json ./
 COPY packages packages
 COPY apps apps
@@ -57,25 +57,13 @@ RUN npx tsc -b apps/gateway \
  && npm run build -w @pi-gateway/admin-ui \
  && test -f apps/gateway/public/admin/index.html
 
-# ── 서비스별 운영 의존성 ────────────────────────────────────────────
-FROM manifests AS deps-gateway
-RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/gateway
-
-FROM manifests AS deps-sandboxd
-RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/sandboxd
-
-FROM manifests AS deps-broker
-RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/mcp-broker
-
-FROM manifests AS deps-memory
-RUN npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/memory
-
+# ── 운영 이미지 ─────────────────────────────────────────────────────
+# 운영 의존성은 서비스 단계에서 바로 설치한다. 다른 단계에서 설치해 COPY하면 같은 파일 수만 개를 한 번 더 읽고 써서
+# 느린 디스크에서 오래 걸린다. npm 캐시는 cache mount에 두어 이미지에 남지 않고, 단계와 빌드 사이에 함께 쓴다.
 FROM base AS runtime
 ENV NODE_ENV=production HOME=/tmp
 # setuid/setgid 비트를 지운다 (gateway는 apt로 설치한 뒤 한 번 더)
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
-COPY package.json ./
-COPY packages/shared/package.json packages/shared/
 
 # ── gateway ─────────────────────────────────────────────────────────
 # git: plugin marketplace 설치에 쓴다. LLM 키·세션 기록을 갖고 있으므로 사용자 코드를 실행하지 않는다.
@@ -89,9 +77,10 @@ RUN apt-get update \
  && mkdir -p /data /opt/plugins /mining \
  && chown 10001:10001 /data /opt/plugins /mining \
  && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
-COPY --from=deps-gateway /app/node_modules node_modules
+COPY --from=manifests /app ./
+RUN --mount=type=cache,id=npm,target=/tmp/.npm npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/gateway \
+ && rm -rf /tmp/node-compile-cache
 COPY --from=build-gateway /app/packages/shared/dist packages/shared/dist
-COPY --from=build-gateway /app/apps/gateway/package.json apps/gateway/
 COPY --from=build-gateway /app/apps/gateway/dist apps/gateway/dist
 COPY --from=build-gateway /app/apps/gateway/public apps/gateway/public
 USER 10001:10001
@@ -104,9 +93,10 @@ CMD ["node", "apps/gateway/dist/main.js"]
 # docker.sock을 가진 유일한 서비스. uid 1000(node)으로 돌고 compose에서 docker 그룹을 붙인다.
 # workspace 디렉토리를 sandbox와 같은 uid 1000 소유로 만든다.
 FROM runtime AS sandboxd
-COPY --from=deps-sandboxd /app/node_modules node_modules
+COPY --from=manifests /app ./
+RUN --mount=type=cache,id=npm,target=/tmp/.npm npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/sandboxd \
+ && rm -rf /tmp/node-compile-cache
 COPY --from=build-sandboxd /app/packages/shared/dist packages/shared/dist
-COPY --from=build-sandboxd /app/apps/sandboxd/package.json apps/sandboxd/
 COPY --from=build-sandboxd /app/apps/sandboxd/dist apps/sandboxd/dist
 USER 1000:1000
 EXPOSE 7070
@@ -118,9 +108,10 @@ CMD ["node", "apps/sandboxd/dist/main.js"]
 # MCP 비밀키를 가진 서비스. 원격 MCP 서버(streamable HTTP)에 비밀키를 붙여 프록시한다.
 FROM runtime AS mcp-broker
 RUN mkdir -m 0700 /data
-COPY --from=deps-broker /app/node_modules node_modules
+COPY --from=manifests /app ./
+RUN --mount=type=cache,id=npm,target=/tmp/.npm npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/mcp-broker \
+ && rm -rf /tmp/node-compile-cache
 COPY --from=build-broker /app/packages/shared/dist packages/shared/dist
-COPY --from=build-broker /app/apps/mcp-broker/package.json apps/mcp-broker/
 COPY --from=build-broker /app/apps/mcp-broker/dist apps/mcp-broker/dist
 EXPOSE 7080 7081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
@@ -134,9 +125,10 @@ RUN groupadd -g 10002 memory \
  && useradd -u 10002 -g 10002 -M -d /nonexistent -s /usr/sbin/nologin memory \
  && mkdir -m 0700 /data \
  && chown 10002:10002 /data
-COPY --from=deps-memory /app/node_modules node_modules
+COPY --from=manifests /app ./
+RUN --mount=type=cache,id=npm,target=/tmp/.npm npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/memory \
+ && rm -rf /tmp/node-compile-cache
 COPY --from=build-memory /app/packages/shared/dist packages/shared/dist
-COPY --from=build-memory /app/apps/memory/package.json apps/memory/
 COPY --from=build-memory /app/apps/memory/dist apps/memory/dist
 USER 10002:10002
 EXPOSE 7090
