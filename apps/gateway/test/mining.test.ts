@@ -8,7 +8,8 @@ import { createModelRuntime, LlmSettings, openDefaultModel } from "../src/agent/
 import { openDatabase } from "../src/db.js";
 import { chunks, compress, render } from "../src/mining/compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted } from "../src/mining/extract.js";
-import { createLlm, type Llm } from "../src/mining/llm.js";
+import { merge } from "../src/mining/labels.js";
+import { Caller, createLlm, type Llm } from "../src/mining/llm.js";
 import { mask } from "../src/mining/mask.js";
 import { plain, renderReport } from "../src/mining/report.js";
 import { run, type Target } from "../src/mining/run.js";
@@ -246,22 +247,42 @@ describe("mining: report", () => {
     expect(plain("![x](http://evil/a.png) | <b>hi</b>\n# title")).toBe("\\!\\[x\\]\\(http://evil/a.png\\) \\| \\<b\\>hi\\</b\\> \\# title");
   });
 
-  it("groups the episodes by user, the busiest user first", () => {
-    const episode = (id: number, sessionId: string, goal: string) => ({ id, sessionId, goal, steps: ["확인", "수정"] });
+  it("lists processes with counts, shows the metrics, and breaks the work down by user", () => {
+    const at = new Date("2026-11-19T00:00:00.000Z");
+    const episode = (id: number, sessionId: string, goal: string, labelId: number | null, endedAt = "2026-11-18T00:00:00.000Z") => ({
+      id,
+      sessionId,
+      endedAt,
+      goal,
+      steps: ["확인", "수정"],
+      labelId,
+    });
+    const recent = [
+      episode(1, "s-alice", "billing 배포", 1),
+      episode(2, "s-bob", "auth 배포", 1, "2026-11-01T00:00:00.000Z"),
+      episode(3, "s-alice", "로그 확인", null),
+      episode(4, "s-alice", "디스크 정리", null),
+    ];
     const report = renderReport({
-      at: new Date(0),
+      at,
       model: "test-model",
-      result: { status: "completed", processed: 3, failed: 0, remaining: 0, episodeIds: [1, 2, 3] },
-      episodes: [episode(1, "s-bob", "로그 확인"), episode(2, "s-alice-1", "배포"), episode(3, "s-alice-2", "설정 변경")],
+      result: { status: "completed", processed: 2, failed: 0, remaining: 0, episodeIds: [3] },
+      labels: [{ id: 1, name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", createdAt: "2026-11-17T00:00:00.000Z", flow: ["빌드", "배포", "확인"], flowCount: 2, count: 2 }],
+      recent,
+      touched: [recent[2]!],
       users: new Map([
+        ["s-alice", "alice"],
         ["s-bob", "bob"],
-        ["s-alice-1", "alice"],
-        ["s-alice-2", "alice"],
       ]),
     });
-    expect(report).toContain("(3건, 사용자 2명)");
-    const headings = report.split("\n").filter((l) => l.startsWith("### ") || l.startsWith("#### "));
-    expect(headings).toEqual(["### alice (2건)", "#### 배포", "#### 설정 변경", "### bob (1건)", "#### 로그 확인"]);
+    expect(report).toContain("## 최근 7일에 새로 생긴 프로세스\n\n- 서비스 배포: 서비스를 운영에 올리는 작업");
+    expect(report).toContain("### 서비스 배포\n\n- 기준: 서비스를 운영에 올리는 작업\n- 건수: 7일 1건, 30일 2건\n- 사용자: 2명\n- 대표 흐름: 빌드 → 배포 → 확인\n- 예시: billing 배포\n- 예시: auth 배포");
+    expect(report).toContain("- 미분류율: 50% (에피소드 4건 중 2건)");
+    expect(report).toContain("- 최대 라벨 점유율: 100%");
+    // 에피소드가 많은 사용자부터, 이번 실행의 에피소드는 그 사용자 아래에
+    expect(report.indexOf("### alice")).toBeLessThan(report.indexOf("### bob"));
+    expect(report).toContain("### alice\n\n- 최근 30일 3건: 미분류 2건, 서비스 배포 1건\n\n#### 로그 확인\n\n- 라벨: 미분류\n1. 확인\n2. 수정");
+    expect(report).toContain("### bob\n\n- 최근 30일 1건: 서비스 배포 1건");
   });
 });
 
@@ -304,5 +325,104 @@ describe("mining: LLM call", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+describe("mining: labels", () => {
+  const log = pino({ level: "silent" });
+  const NOW = Date.UTC(2026, 10, 19);
+  const at = new Date(NOW).toISOString();
+  let n = 0;
+  const newStore = () => new MiningStore(openDatabase(join(dir, `labels-${++n}.db`)));
+
+  /** 도구 이름별로 답을 정하는 LLM. 부른 도구를 순서대로 적어 둔다. */
+  function scripted(answers: Record<string, (user: string, system: string) => unknown>): Llm & { calls: string[] } {
+    const calls: string[] = [];
+    return {
+      model: "test-model",
+      calls,
+      async call<T>(tool: { name: string }, system: string, user: string) {
+        calls.push(tool.name);
+        const answer = answers[tool.name];
+        if (!answer) throw new Error(`unexpected LLM call: ${tool.name}`);
+        return answer(user, system) as T;
+      },
+    };
+  }
+  /** 세션 하나에 에피소드 하나를 넣는다. */
+  const seed = (store: MiningStore, sessionId: string, goal: string) =>
+    store.save(sessionId, [{ continues: false, startedAt: "2026-11-18T00:00:00.000Z", endedAt: "2026-11-18T01:00:00.000Z", goal, steps: ["로그 확인", "설정 수정"] }], "e1")[0]!;
+  const noSessions = (users: Map<string, string>) => ({ recent: [], users });
+
+  it("finds a label from unlabeled episodes, then assigns the rest to it on the next run", async () => {
+    const store = newStore();
+    const users = new Map<string, string>();
+    // 배포 12건(alice·bob 번갈아), carol 혼자 한 정리 6건, 그 밖의 6건
+    const ids: number[] = [];
+    for (let i = 0; i < 24; i++) {
+      const user = i < 12 ? (i % 2 ? "alice" : "bob") : i < 18 ? "carol" : "dave";
+      users.set(`s${i}`, user);
+      ids.push(seed(store, `s${i}`, i < 12 ? `서비스 ${i} 배포` : i < 18 ? `디스크 ${i} 정리` : `기타 ${i}`));
+    }
+    const numberOf = (user: string, goal: string) => Number(new RegExp(`\\[E(\\d+)\\] goal: ${goal}`).exec(user)![1]);
+
+    const first = scripted({
+      propose_labels: (user) => ({
+        groups: [
+          // 두 사람이 한 배포 6건: 채택
+          { name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", episodes: [0, 1, 2, 3, 4, 5].map((i) => numberOf(user, `서비스 ${i} 배포`)) },
+          // 한 사람만 한 작업: 버린다
+          { name: "디스크 정리", criteria: "디스크를 비우는 작업", episodes: [12, 13, 14, 15, 16, 17].map((i) => numberOf(user, `디스크 ${i} 정리`)) },
+          // 이름에 링크: 버린다
+          { name: "보기 http://evil.example", criteria: "x", episodes: [6, 7, 8, 9, 10, 11].map((i) => numberOf(user, `서비스 ${i} 배포`)) },
+        ],
+      }),
+      write_flow: () => ({ steps: ["빌드", "배포", "상태 확인"] }),
+    });
+    await run({ targets: noSessions(users), store, llm: first, log, now: () => NOW });
+    // 라벨이 없을 때는 배정을 묻지 않는다. 새 라벨이 생겼지만 기존 라벨이 없어 병합도 묻지 않는다.
+    expect(first.calls).toEqual(["propose_labels", "write_flow"]);
+    const [label] = store.labels();
+    expect(label).toMatchObject({ name: "서비스 배포", count: 6, flow: ["빌드", "배포", "상태 확인"], flowCount: 6 });
+    // 남은 18건은 새 라벨로 다시 붙여 보도록 배정 전으로 돌아간다
+    expect(store.pending()).toHaveLength(18);
+
+    const second = scripted({
+      assign_label: (user, system) => {
+        expect(system).toContain(`L${label!.id}: 서비스 배포 — 서비스를 운영에 올리는 작업`);
+        if (user.includes("배포")) return { label: label!.id, fit: "match" };
+        // 애매하면 붙이지 않는다
+        return user.includes("정리") ? { label: label!.id, fit: "unsure" } : { label: 0, fit: "none" };
+      },
+    });
+    await run({ targets: noSessions(users), store, llm: second, log, now: () => NOW });
+    // 미분류가 12건뿐이라 발견을 다시 하지 않고, 에피소드가 6건만 늘어 흐름도 다시 쓰지 않는다
+    expect(second.calls).toEqual(Array(18).fill("assign_label"));
+    expect(store.labels()[0]!.count).toBe(12);
+    expect(store.pending()).toHaveLength(0);
+    expect(store.unlabeledCount("2026-10-20T00:00:00.000Z")).toBe(12);
+    expect(store.episodes(ids.slice(12)).every((e) => e.labelId === null)).toBe(true);
+  });
+
+  it("merges a new label into the existing one it duplicates, and ignores an answer that names unknown labels", async () => {
+    const store = newStore();
+    const existing = store.createLabel("서비스 배포", "서비스를 운영에 올리는 작업", [seed(store, "a", "배포 1")], at);
+    const fresh = store.createLabel("운영 배포", "운영 환경에 배포하는 작업", [seed(store, "b", "배포 2"), seed(store, "c", "배포 3")], at);
+    const caller = (llm: Llm) => new Caller(llm, NOW + 1, () => NOW, log);
+
+    await merge(store, caller(scripted({ merge_labels: () => ({ merges: [{ new_label: fresh, existing_label: 999 }] }) })), [fresh], at, log);
+    expect(store.labels().map((l) => l.id)).toEqual([existing, fresh]);
+
+    await merge(store, caller(scripted({ merge_labels: () => ({ merges: [{ new_label: fresh, existing_label: existing }] }) })), [fresh], at, log);
+    expect(store.labels()).toMatchObject([{ id: existing, name: "서비스 배포", count: 3 }]);
+  });
+
+  it("sends an episode back to be assigned again when the session continues it", () => {
+    const store = newStore();
+    const id = seed(store, "s", "배포");
+    const label = store.createLabel("서비스 배포", "기준", [id], at);
+    expect(store.episodes([id])[0]!.labelId).toBe(label);
+    store.save("s", [{ continues: true, startedAt: "2026-11-18T02:00:00.000Z", endedAt: "2026-11-18T03:00:00.000Z", goal: "배포 후 롤백", steps: ["배포", "롤백"] }], "e2");
+    expect(store.pending().map((e) => [e.id, e.goal, e.labelId])).toEqual([[id, "배포 후 롤백", null]]);
   });
 });

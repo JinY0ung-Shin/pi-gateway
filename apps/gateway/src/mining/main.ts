@@ -5,7 +5,7 @@ import { openDefaultModel } from "../agent/runtime.js";
 import { openDatabase } from "../db.js";
 import { createLlm } from "./llm.js";
 import { renderReport } from "./report.js";
-import { loadTargets, run } from "./run.js";
+import { loadTargets, RECENT_MS, run } from "./run.js";
 import { MiningStore } from "./store.js";
 
 /**
@@ -41,5 +41,14 @@ const llm = createLlm(opened.runtime, opened.model, opened.config.maxTokens);
 const result = await run({ targets, store, llm, log });
 log.info(result, "mining finished");
 
-const report = renderReport({ at: new Date(), model: llm.model, result, episodes: store.episodes(result.episodeIds), users: targets.users });
+const at = new Date();
+const report = renderReport({
+  at,
+  model: llm.model,
+  result,
+  labels: store.labels(),
+  recent: store.recent(new Date(at.getTime() - RECENT_MS).toISOString()),
+  touched: store.episodes(result.episodeIds),
+  users: targets.users,
+});
 process.stdout.write(report, () => process.exit(result.status === "aborted" ? 1 : 0));

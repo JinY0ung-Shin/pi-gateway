@@ -1,5 +1,6 @@
 import { type Api, type Model, type Tool, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Logger } from "pino";
 
 /**
  * mining의 LLM 호출: 도구 하나를 주고 그 도구를 부르게 지정한 뒤, 인자를 schema로 검증해서 돌려준다.
@@ -8,6 +9,8 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_TOKENS = 2_000;
+/** LLM 호출이 이만큼 연달아 실패하면 실행을 끝낸다 (LLM 서버 장애) */
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 export interface Llm {
   /** 모델 id (보고서에 적는다) */
@@ -50,4 +53,38 @@ export function createLlm(runtime: ModelRuntime, model: Model<Api>, maxTokens: n
       }
     },
   };
+}
+
+/**
+ * 한 번의 실행이 쓰는 LLM 호출 창구. 시간 상한이 지났거나 연달아 실패했으면 더 부르지 않는다.
+ * 실패는 던지지 않고 undefined로 돌려준다: 부른 쪽은 그 일을 건너뛰고, stopped가 있으면 단계를 끝낸다.
+ */
+export class Caller {
+  stopped: "time_limit" | "aborted" | undefined;
+  #failures = 0;
+
+  constructor(
+    private readonly llm: Llm,
+    private readonly deadline: number,
+    private readonly now: () => number,
+    private readonly log: Logger,
+  ) {}
+
+  /** about: 실패했을 때 로그에 남길 것 (세션·에피소드·라벨 id). 대화 내용은 넣지 않는다. */
+  async call<T>(tool: Tool, system: string, user: string, about: Record<string, unknown>): Promise<T | undefined> {
+    if (this.stopped) return undefined;
+    if (this.now() >= this.deadline) {
+      this.stopped = "time_limit";
+      return undefined;
+    }
+    try {
+      const out = await this.llm.call<T>(tool, system, user);
+      this.#failures = 0;
+      return out;
+    } catch (err) {
+      this.log.warn({ ...about, tool: tool.name, err: err instanceof Error ? err.message : String(err) }, "LLM call failed");
+      if (++this.#failures >= MAX_CONSECUTIVE_FAILURES) this.stopped = "aborted";
+      return undefined;
+    }
+  }
 }

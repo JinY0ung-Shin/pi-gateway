@@ -3,22 +3,22 @@ import type { Db } from "../db.js";
 import { readPath } from "../sessions/transcript.js";
 import { chunks, compress } from "./compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted, extractInput, toEpisodes } from "./extract.js";
-import type { Llm } from "./llm.js";
+import { assign, discover, merge, synthesizeFlows } from "./labels.js";
+import { Caller, type Llm } from "./llm.js";
 import type { MiningStore } from "./store.js";
 
 /**
- * 한 번의 mining 실행: 새 내용이 있는 세션을 골라 에피소드로 요약한다 (docs/process-mining-design.md).
- * 세션 원문은 여기서 한 번만 읽는다.
+ * 한 번의 mining 실행 (docs/process-mining-design.md):
+ * ① 새 내용이 있는 세션을 에피소드로 요약한다 — 세션 원문은 여기서 한 번만 읽는다.
+ * ②~⑤ 에피소드에 라벨을 붙이고, 새 라벨을 찾고, 겹치는 라벨을 합치고, 라벨의 대표 흐름을 쓴다.
  */
 
-/** 마지막 활동이 이보다 오래된 세션은 보지 않는다 */
-const RECENT_MS = 30 * 86_400_000;
+/** 마지막 활동이 이보다 오래된 세션은 보지 않는다. 라벨을 찾을 때 보는 미분류의 기간이기도 하다. */
+export const RECENT_MS = 30 * 86_400_000;
 /** 마지막 활동 뒤 이만큼 지나야 본다 (진행 중인 대화를 읽지 않게) */
 const IDLE_MS = 30 * 60_000;
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */
 const RUN_LIMIT_MS = 3 * 3_600_000;
-/** LLM 호출이 이만큼 연달아 실패하면 끝낸다 (LLM 서버 장애) */
-const MAX_CONSECUTIVE_FAILURES = 3;
 
 export interface Target {
   id: string;
@@ -50,26 +50,26 @@ export interface RunResult {
   status: "completed" | "time_limit" | "aborted";
   /** 끝까지 읽은 세션 수 */
   processed: number;
-  /** LLM 호출이 실패해 다음 실행으로 넘긴 세션 수 */
+  /** 읽다가 실패해 다음 실행으로 넘긴 세션 수 */
   failed: number;
-  /** 손대지 못한 세션 수 */
+  /** 손대지 못했거나 읽다 만 세션 수 */
   remaining: number;
   /** 이번 실행에서 만들거나 고친 에피소드 */
   episodeIds: number[];
 }
 
 export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm; log: Logger; now?: () => number }): Promise<RunResult> {
-  const { targets, store, llm, log } = deps;
+  const { targets, store, log } = deps;
   const now = deps.now ?? Date.now;
-  const deadline = now() + RUN_LIMIT_MS;
+  const caller = new Caller(deps.llm, now() + RUN_LIMIT_MS, now, log);
   store.prune(targets.users);
 
   const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
-  const result: RunResult = { status: "completed", processed: 0, failed: 0, remaining: pending.length, episodeIds: [] };
   const touched = new Set<number>();
-  let consecutiveFailures = 0;
+  let processed = 0;
+  let failed = 0;
 
-  /** 세션 하나. LLM 호출이 실패하면 던진다 (그때까지 읽은 묶음은 저장되어 있다). 시간이 다 되면 false. */
+  /** 세션 하나를 읽는다. 끝까지 읽었으면 true, LLM을 부르지 못해 멈췄으면 false (그때까지 읽은 묶음은 저장되어 있다). */
   const mine = async (target: Target): Promise<boolean> => {
     let path: ReturnType<typeof readPath>;
     try {
@@ -96,10 +96,9 @@ export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm
         store.save(target.id, [], end);
         continue;
       }
-      if (now() >= deadline) return false;
       const previous = store.lastEpisode(target.id);
-      const out = await llm.call<Extracted>(EXTRACT_TOOL, EXTRACT_PROMPT, extractInput(previous, chunk));
-      consecutiveFailures = 0;
+      const out = await caller.call<Extracted>(EXTRACT_TOOL, EXTRACT_PROMPT, extractInput(previous, chunk), { session: target.id });
+      if (!out) return false;
       for (const id of store.save(target.id, toEpisodes(chunk, out, previous !== undefined), end)) touched.add(id);
     }
     // 메시지가 없는 새 부분(수동 compaction 등)도 읽은 것으로 표시한다.
@@ -107,25 +106,27 @@ export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm
     return true;
   };
 
+  // ① 추출
   for (const target of pending) {
+    if (caller.stopped) break;
+    let done = false;
     try {
-      if (!(await mine(target))) {
-        result.status = "time_limit";
-        break;
-      }
-      result.processed++;
+      done = await mine(target);
     } catch (err) {
-      result.failed++;
-      consecutiveFailures++;
-      log.warn({ session: target.id, err: err instanceof Error ? err.message : String(err) }, "session skipped");
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        result.status = "aborted";
-        result.remaining--;
-        break;
-      }
+      log.warn({ session: target.id, err: err instanceof Error ? err.message : String(err) }, "session could not be read");
     }
-    result.remaining--;
+    if (done) processed++;
+    // 시간이 다 되어 멈춘 세션은 실패가 아니라 남은 것이다.
+    else if (caller.stopped !== "time_limit") failed++;
   }
-  result.episodeIds = [...touched];
-  return result;
+
+  // ②~⑤ 라벨. 앞 단계에서 멈췄으면 caller가 더 부르지 않으므로 아무 일도 하지 않고 지나간다.
+  const at = new Date(now()).toISOString();
+  const since = new Date(now() - RECENT_MS).toISOString();
+  await assign(store, caller, at);
+  const created = await discover(store, caller, targets.users, since, at);
+  if (created.length > 0) await merge(store, caller, created, at, log);
+  await synthesizeFlows(store, caller);
+
+  return { status: caller.stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
 }
