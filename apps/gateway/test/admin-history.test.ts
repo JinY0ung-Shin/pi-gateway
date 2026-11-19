@@ -1,15 +1,21 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ALICE_KEY, BOB_KEY, type Harness, SERVICE_KEY, sessionOf, startHarness } from "./helpers.js";
 
 const DAY = 86_400_000;
 
+const miningDir = mkdtempSync(join(tmpdir(), "mining-report-"));
+const miningReportFile = join(miningDir, "report.md");
+
 let h: Harness;
 beforeAll(async () => {
-  h = await startHarness({ env: { JAEGER_HOST: "jaeger.test" } });
+  h = await startHarness({ env: { JAEGER_HOST: "jaeger.test" }, overrides: { miningReportFile } });
 });
 afterAll(async () => {
   await h.close();
+  rmSync(miningDir, { recursive: true, force: true });
 });
 
 /** `GET /v1/responses/{id}/traces` — 기본은 alice의 키 */
@@ -17,6 +23,16 @@ const v1Traces = async (id: string, key?: string, query = "") => {
   const res = await fetch(`${h.url}/v1/responses/${id}/traces${query}`, { headers: { authorization: `Bearer ${key ?? ALICE_KEY}` } });
   return { status: res.status, json: (await res.json()) as any };
 };
+
+describe("admin mining report", () => {
+  it("returns the report mining last wrote, or null before the first run", async () => {
+    expect((await h.admin("GET", "/mining/report")).json).toEqual({ report: null });
+    writeFileSync(miningReportFile, "# 프로세스 마이닝 보고서\n");
+    expect((await h.admin("GET", "/mining/report")).json).toEqual({ report: "# 프로세스 마이닝 보고서\n" });
+    // 관리자 로그인이 있어야 한다
+    expect((await fetch(`${h.url}/admin/api/mining/report`)).status).toBe(401);
+  });
+});
 
 describe("admin history", () => {
   it("lists sessions and shows the committed transcript", async () => {

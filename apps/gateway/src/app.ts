@@ -13,6 +13,7 @@ import { cancelResponse, createResponse, previewSession, type ResponsesDeps } fr
 import { ApiError, shuttingDownError } from "./errors.js";
 import { McpToolCache } from "./mcp-client/connections.js";
 import { McpRegistryService } from "./mcp-registry/service.js";
+import { REPORT_FILE } from "./mining/report.js";
 import { PluginService } from "./plugins/service.js";
 import { PromptManager } from "./prompts/service.js";
 import { SandboxClient } from "./sandbox/client.js";
@@ -40,6 +41,8 @@ export interface GatewayOverrides {
   piSettings?: Record<string, unknown>;
   /** 유휴 세션 정리 주기 (0이면 시작하지 않음) */
   reaperIntervalMs?: number;
+  /** mining 보고서 파일 (테스트용. 기본은 mining이 쓰는 자리) */
+  miningReportFile?: string;
 }
 
 export interface Gateway {
@@ -135,6 +138,7 @@ export async function createGateway(config: GatewayConfig, logger: Logger, overr
       toolStats,
       adminRequests,
       sessions: store,
+      miningReportFile: overrides.miningReportFile ?? REPORT_FILE,
       chat: {
         respond: (req, reply) => sendApiErrors(reply, () => createResponse(responses, req, reply, { kind: "admin" })),
         cancel: (req, reply) => sendApiErrors(reply, async () => cancelResponse(responses, req, { kind: "admin" })),

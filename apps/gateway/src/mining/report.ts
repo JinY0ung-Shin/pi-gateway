@@ -1,7 +1,10 @@
 import type { RunResult } from "./run.js";
 import type { Episode, Label } from "./store.js";
 
-/** 실행 결과를 Markdown으로 쓴다 (stdout으로 나가 호스트의 파일이 된다). */
+/** 실행 결과를 Markdown으로 쓴다. stdout으로 나가 호스트의 파일이 되고, REPORT_FILE에도 남아 관리 화면이 보여 준다. */
+
+/** mining이 마지막 보고서를 두는 곳 (compose의 mining-data 볼륨. gateway는 읽기 전용으로 mount한다) */
+export const REPORT_FILE = "/mining/report.md";
 
 const STATUS: Record<RunResult["status"], string> = {
   completed: "완료",

@@ -1,19 +1,20 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import pino from "pino";
 import { openDefaultModel } from "../agent/runtime.js";
 import { openDatabase } from "../db.js";
 import { createLlm } from "./llm.js";
-import { renderReport } from "./report.js";
+import { renderReport, REPORT_FILE } from "./report.js";
 import { loadTargets, RECENT_MS, run } from "./run.js";
 import { MiningStore } from "./store.js";
 
 /**
  * mining 진입점 (compose의 `mining` 서비스). gateway와 다른 프로세스로 하루 한 번 돈다.
- * 보고서는 stdout, 로그는 stderr로 낸다. 로그에는 대화 내용을 찍지 않는다.
+ * 보고서는 stdout과 REPORT_FILE로, 로그는 stderr로 낸다. 로그에는 대화 내용을 찍지 않는다.
  */
 
-// mining.db는 소유자만 읽게 한다.
+// mining.db와 보고서는 소유자만 읽게 한다.
 process.umask(0o077);
 const log = pino({ base: { service: "mining" } }, pino.destination({ dest: 2, sync: true }));
 
@@ -51,4 +52,5 @@ const report = renderReport({
   touched: store.episodes(result.episodeIds),
   users: targets.users,
 });
+writeFileSync(REPORT_FILE, report);
 process.stdout.write(report, () => process.exit(result.status === "aborted" ? 1 : 0));

@@ -249,6 +249,8 @@ services:
         target: broker_jwt_secret
     volumes:
       - gateway-data:/data
+      # mining이 쓴 보고서를 관리 화면이 보여 준다 (읽기만 한다)
+      - mining-data:/mining:ro
       - type: bind
         source: ${PI_GATEWAY_HOME}/plugins
         target: /opt/plugins

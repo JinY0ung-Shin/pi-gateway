@@ -120,6 +120,7 @@ export async function buildHarness(options: {
       systemOneCalls: () => [],
     },
     sessions: new SessionStore(db),
+    miningReportFile: "/nonexistent/mining-report.md",
     toolSettings: new ToolSettings(db),
     toolStats: new ToolStats(db),
     adminRequests: new AdminRequests(db),

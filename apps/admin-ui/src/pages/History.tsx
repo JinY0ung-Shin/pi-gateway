@@ -1,9 +1,9 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, duration, enc, formatTime } from "../api";
 import { EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
-import { newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
+import { markdown, newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
 
-/** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간 */
+/** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간, 그 기록에서 뽑은 프로세스 마이닝 보고서 */
 
 interface SessionSummary {
   id: string;
@@ -102,6 +102,7 @@ export function HistoryPage(props: { focus?: string }) {
   return (
     <>
       <RetentionSection />
+      <MiningSection />
       <SessionList />
       {props.focus && <Transcript id={props.focus} />}
     </>
@@ -141,6 +142,30 @@ function RetentionSection() {
       </p>
     </Section>
   );
+}
+
+function MiningSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Section title="프로세스 마이닝" actions={<button onClick={() => setOpen(true)}>보고서 보기</button>}>
+      <p class="muted small-text">
+        대화 기록을 요약해 사용자들이 어떤 작업을 하는지 뽑은 보고서입니다: 작업 유형과 대표 흐름, 사용자별 작업. mining이 돌 때마다 새로 쓰입니다.
+      </p>
+      {open && (
+        <Modal title="프로세스 마이닝 보고서" onClose={() => setOpen(false)}>
+          <MiningReport />
+        </Modal>
+      )}
+    </Section>
+  );
+}
+
+function MiningReport() {
+  const { data, error } = useLoad<{ report: string | null }>("/mining/report");
+  if (error) return <Notice tone="error">{error}</Notice>;
+  if (!data) return <p class="muted">불러오는 중…</p>;
+  if (data.report === null) return <p class="muted">아직 보고서가 없습니다. mining을 한 번 돌리면 생깁니다 (운영 가이드 9절).</p>;
+  return <div class="md" dangerouslySetInnerHTML={{ __html: markdown(data.report) }} />;
 }
 
 function SessionList() {
