@@ -45,6 +45,11 @@ describe("admin mining", () => {
     // 시작하기 전에 중지하면 바로 닫히고, 다시 요청할 수 있다
     expect((await h.admin("POST", "/mining/run/stop")).status).toBe(200);
     expect((await h.admin("GET", "/mining")).json).toMatchObject({ active: null, last: { id: first.json.id, status: "stopped" } });
+    // 이름 다시 짓기도 실행으로 요청한다
+    const renaming = await h.admin("POST", "/mining/rename");
+    expect((await h.admin("GET", "/mining")).json.active).toMatchObject({ id: renaming.json.id, trigger: "rename", status: "requested" });
+    expect(store.triggerOf(renaming.json.id)).toBe("rename");
+    expect((await h.admin("POST", "/mining/run/stop")).status).toBe(200);
     expect((await h.admin("POST", "/mining/run")).status).toBe(200);
 
     expect((await h.admin("PUT", "/mining/concurrency", { value: 0 })).json.error.code).toBe("invalid_concurrency");
@@ -120,8 +125,8 @@ describe("admin mining", () => {
       { kind: "label", text: "로그 조사" },
     ]);
     // 실행 이력은 최근 것부터 한 페이지씩
-    expect((await h.admin("GET", "/mining/runs")).json).toMatchObject({ items: [{ id: run }, { id: first.json.id, status: "stopped" }], total: 2 });
-    expect((await h.admin("GET", "/mining/runs?page=2")).json).toMatchObject({ items: [], total: 2 });
+    expect((await h.admin("GET", "/mining/runs")).json).toMatchObject({ items: [{ id: run }, { id: renaming.json.id, trigger: "rename", status: "stopped" }, { id: first.json.id, status: "stopped" }], total: 3 });
+    expect((await h.admin("GET", "/mining/runs?page=2")).json).toMatchObject({ items: [], total: 3 });
     store.finishRun(run, { status: "completed", processed: 1, failed: 0, remaining: 0, episodes: 3, model: "m" }, at);
 
     expect((await h.admin("POST", `/mining/labels/${label}/merge`, { into: label })).json.error.code).toBe("invalid_merge");

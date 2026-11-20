@@ -6,11 +6,11 @@ import { Badge, Bar, EmptyRow, Modal, Notice, rowAction, Section, Stat, Time, us
 /** 프로세스 마이닝: 지금 수치, 실행(진행 상황, 지금 실행, 자동 실행 시각, 이력), 프로세스 목록과 수정, 그 작업, 변경 이력 */
 
 /** gateway의 mining/store.ts Stage와 같다 */
-type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "reassign" | "flows";
+type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "reassign" | "flows" | "rename";
 
 interface Run {
   id: number;
-  trigger: "manual" | "schedule";
+  trigger: "manual" | "schedule" | "rename";
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -104,6 +104,7 @@ const STATUS: Record<Run["status"], { text: string; tone: "blue" | "green" | "gr
   stopped: { text: "중지함", tone: "gray" },
   failed: { text: "실패", tone: "red" },
 };
+const TRIGGER: Record<Run["trigger"], string> = { manual: "수동", schedule: "자동", rename: "이름 다시 짓기" };
 /** 실행이 지나가는 큰 단계. 둘째 단계는 한 실행에서 세 번까지 돈다. */
 const PHASES: { label: string; stages: Stage[] }[] = [
   { label: "세션 읽기", stages: ["extract"] },
@@ -120,6 +121,7 @@ const STAGE: Record<Stage, { text: string; unit?: string }> = {
   review: { text: "근거가 쌓인 프로세스를 다시 검토하는 중", unit: "프로세스" },
   reassign: { text: "바뀐 기준으로 작업을 다시 분류하는 중", unit: "작업" },
   flows: { text: "대표 흐름을 쓰는 중", unit: "프로세스" },
+  rename: { text: "프로세스 이름을 다시 짓는 중", unit: "프로세스" },
 };
 const phaseOf = (stage: Stage | null) => PHASES.findIndex((p) => stage !== null && p.stages.includes(stage));
 /** LLM 호출 하나는 길어야 4분이다 (2분에 한 번 다시). 이보다 오래 진행이 없으면 눈에 띄게 한다 */
@@ -190,7 +192,7 @@ export function MiningPage() {
         <Stat label="자동 실행" value={saved ? `매일 ${saved}` : "꺼짐"} />
       </div>
       <RunSection data={data} active={active} saved={saved} reload={reload} />
-      <LabelSection data={data} onOpen={setOpen} />
+      <LabelSection data={data} busy={Boolean(active)} reload={reload} onOpen={setOpen} />
       <EpisodeSection labels={data.labels} />
       <Section title="변경 이력">
         <p class="muted small-text">실행이 스스로 한 것과 사람이 한 것입니다. 줄을 누르면 바뀌기 전과 뒤, 자동 검토가 적은 이유가 펼쳐집니다.</p>
@@ -254,7 +256,7 @@ function LiveRun(props: { run: NonNullable<Overview["active"]>; busy: boolean; o
       <div class="run-live-head">
         <strong>실행 중</strong>
         <span class="muted small-text">
-          {r.trigger === "manual" ? "수동" : "자동"} · {formatTime(r.startedAt).slice(11)} 시작 · {duration(now - Date.parse(r.startedAt!))} 지남 (길어야 3시간)
+          {TRIGGER[r.trigger]} · {formatTime(r.startedAt).slice(11)} 시작 · {duration(now - Date.parse(r.startedAt!))} 지남 (길어야 3시간)
           {r.progressAt && (
             <>
               {" · "}
@@ -265,13 +267,16 @@ function LiveRun(props: { run: NonNullable<Overview["active"]>; busy: boolean; o
         {stop}
       </div>
       {r.stopRequested && <p class="warn-text small-text">중지를 요청했습니다. 보내 둔 LLM 호출이 끝나면 멈추고, 그때까지 읽은 것은 남습니다.</p>}
-      <ol class="phases">
-        {PHASES.map((p, i) => (
-          <li key={p.label} class={i < at ? "done" : i === at ? "now" : ""} aria-current={i === at ? "step" : undefined}>
-            {p.label}
-          </li>
-        ))}
-      </ol>
+      {/* 이름만 다시 짓는 실행은 단계가 하나다 */}
+      {r.trigger !== "rename" && (
+        <ol class="phases">
+          {PHASES.map((p, i) => (
+            <li key={p.label} class={i < at ? "done" : i === at ? "now" : ""} aria-current={i === at ? "step" : undefined}>
+              {p.label}
+            </li>
+          ))}
+        </ol>
+      )}
       <div class="run-live-now">
         {/* 단계가 바뀔 때만 읽힌다 (수는 3초마다 바뀌므로 밖에 둔다) */}
         <span role="status">{stage ? stage.text : "gateway.db와 모델을 여는 중"}</span>
@@ -514,7 +519,7 @@ function Runs(props: { items: Run[] }) {
               <td>
                 <Time at={r.requestedAt} />
               </td>
-              <td>{r.trigger === "manual" ? "수동" : "자동"}</td>
+              <td>{TRIGGER[r.trigger]}</td>
               <td>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].text}</Badge>
                 {stopped && <span class="muted small-text"> {PHASES[phaseOf(r.stage)]!.label}에서</span>}
@@ -536,12 +541,33 @@ function Runs(props: { items: Run[] }) {
   );
 }
 
-function LabelSection(props: { data: Overview; onOpen: (id: number | "none") => void }) {
+/** busy: 요청됐거나 실행 중인 실행이 있다 */
+function LabelSection(props: { data: Overview; busy: boolean; reload: () => Promise<void>; onOpen: (id: number | "none") => void }) {
   const { labels, unlabeled30 } = props.data;
   const sorted = [...labels].sort((a, b) => b.recent30 - a.recent30 || a.id - b.id);
   const most = Math.max(unlabeled30, ...labels.map((l) => l.recent30));
+  const action = useAction();
+  /** 이름을 다시 지을 프로세스 수: 사람이 고친 것은 건드리지 않는다 */
+  const auto = labels.filter((l) => !l.editedAt).length;
+  const rename = () =>
+    confirm(`사람이 고치지 않은 프로세스 ${auto}개의 이름을 지금 모델과 추가 프롬프트로 다시 지을까요? 기준과 작업 분류는 그대로이고, 바뀐 이름은 변경 이력에 남습니다.`) &&
+    void action.run(async () => {
+      await api("POST", "/mining/rename");
+      await props.reload();
+    });
   return (
-    <Section title="프로세스" actions={<span class="muted small-text">최근 30일 작업이 많은 순 · 줄을 누르면 기준·대표 흐름·작업이 열립니다</span>}>
+    <Section
+      title="프로세스"
+      actions={
+        <>
+          <span class="muted small-text">최근 30일 작업이 많은 순 · 줄을 누르면 기준·대표 흐름·작업이 열립니다</span>
+          <button disabled={action.busy || props.busy || auto === 0} onClick={rename}>
+            이름 다시 짓기
+          </button>
+        </>
+      }
+    >
+      {action.view}
       <table class="table chart slim">
         <thead>
           <tr>

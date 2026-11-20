@@ -11,7 +11,7 @@ const EPISODE_PAGE = 20;
 const DAY_MS = 86_400_000;
 
 /**
- * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수, 모델, 추가 시스템 프롬프트,
+ * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 "이름 다시 짓기", 중지, 매일 자동 실행 시각, 동시 호출 수, 모델, 추가 시스템 프롬프트,
  * 프로세스(라벨) 목록과 그 작업(에피소드), 라벨 변경 이력, 사람이 하는 라벨 수정.
  * 실행은 mining 서비스가 한다. gateway는 mining.db에 실행·중지 요청과 설정, 라벨 수정만 쓴다.
  */
@@ -101,12 +101,17 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     return { items: store.revisions(REVISION_PAGE, (pageOf(req.query.page) - 1) * REVISION_PAGE, label), total: store.revisionCount(label), pageSize: REVISION_PAGE };
   });
 
-  app.post("/mining/run", async () => {
-    const id = mining().requestRun("manual", new Date().toISOString());
+  const request = (trigger: "manual" | "rename") => {
+    const id = mining().requestRun(trigger, new Date().toISOString());
     if (id === undefined) throw new PlatformError(409, "mining_busy", "a run is already requested or in progress");
-    ctx.log.info({ run: id }, "mining run requested");
+    ctx.log.info({ run: id, trigger }, "mining run requested");
     return { id };
-  });
+  };
+
+  app.post("/mining/run", async () => request("manual"));
+
+  /** 있는 프로세스의 이름만 지금 모델과 추가 프롬프트로 다시 짓는 실행 (사람이 고친 것은 빼고) */
+  app.post("/mining/rename", async () => request("rename"));
 
   app.post("/mining/run/stop", async () => {
     if (!mining().requestStop(new Date().toISOString())) throw new PlatformError(409, "mining_idle", "no run is requested or in progress");

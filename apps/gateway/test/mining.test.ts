@@ -551,6 +551,36 @@ describe("mining: labels", () => {
     ]);
   });
 
+  it("renames the labels in a rename run, leaving the criteria, the assignments and edited labels alone", async () => {
+    const store = newStore();
+    const alive = new Set(["a", "b", "c"]);
+    const deploy = store.createLabel("배포", "배포하는 작업", [seed(store, "a", "서비스 배포")], at);
+    const cleanup = store.createLabel("정리", "오래된 파일을 지우는 작업", [seed(store, "b", "로그 정리")], at);
+    const edited = store.createLabel("점검", "상태를 살피는 작업", [seed(store, "c", "서버 점검")], at);
+    store.renameLabel(edited, "정기 점검", "사람이 정한 기준", at);
+
+    const progress: string[] = [];
+    const llm = scripted({
+      rename_label: (user) => {
+        // 다른 라벨은 그때의 이름으로 보인다
+        if (user.startsWith(`Label to rename:\nL${deploy}:`)) return { name: "Service deployment" };
+        expect(user).toContain(`L${deploy}: Service deployment — 배포하는 작업`);
+        // 쓸 수 없는 이름은 받지 않는다
+        return { name: "[cleanup](http://evil)" };
+      },
+    });
+    const result = await run({ targets: noSessions(alive), store, llm, log, now: () => NOW, runId: 3, rename: true, onProgress: (p) => progress.push(`${p.stage} ${p.done}/${p.total}`) });
+    expect(result).toMatchObject({ status: "completed", processed: 0, remaining: 0 });
+    expect(llm.calls).toEqual(["rename_label", "rename_label"]);
+    expect(new Set(progress.map((p) => p.split(" ")[0]))).toEqual(new Set(["rename"]));
+    expect(store.labels()).toMatchObject([
+      { id: deploy, name: "Service deployment", criteria: "배포하는 작업", count: 1, editedAt: null },
+      { id: cleanup, name: "정리", count: 1 },
+      { id: edited, name: "정기 점검", criteria: "사람이 정한 기준" },
+    ]);
+    expect(store.revisions(10)).toMatchObject([{ runId: 3, labelId: deploy, kind: "refined", name: "Service deployment", before: "배포 — 배포하는 작업", after: "Service deployment — 배포하는 작업" }]);
+  });
+
   it("does not review a label a person has edited", async () => {
     const store = newStore();
     const members = Array.from({ length: 12 }, (_, i) => seed(store, `m${i}`, `배포 ${i}`));

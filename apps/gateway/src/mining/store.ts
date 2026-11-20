@@ -98,9 +98,9 @@ export interface Working {
 
 /**
  * 실행이 지금 하는 일. extract(세션을 읽어 에피소드를 뽑음) → assign(배정) · discover(발견) · merge(병합)를 몇 번 →
- * review(검토) · reassign(바뀐 라벨로 다시 배정) → flows(대표 흐름)
+ * review(검토) · reassign(바뀐 라벨로 다시 배정) → flows(대표 흐름). 이름만 다시 짓는 실행은 rename 하나다.
  */
-export type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "reassign" | "flows";
+export type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "reassign" | "flows" | "rename";
 
 /** 한 실행이 LLM을 동시에 부르는 수의 상한 */
 export const MAX_CONCURRENCY = 16;
@@ -110,7 +110,8 @@ export const PROMPT_CHARS = 4_000;
 /** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다 (stopped: 사람이 중지했다). */
 export interface Run {
   id: number;
-  trigger: "manual" | "schedule";
+  /** manual: 사람이 "지금 실행". schedule: 자동 실행 시각. rename: 사람이 요청한, 라벨 이름만 다시 짓는 실행 */
+  trigger: "manual" | "schedule" | "rename";
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -527,6 +528,10 @@ export class MiningStore {
   /** 가장 최근에 끝난 실행 */
   lastRun(): Run | undefined {
     return this.#runs("WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1")[0];
+  }
+
+  triggerOf(id: number): Run["trigger"] | undefined {
+    return (this.db.prepare("SELECT trigger FROM runs WHERE id = ?").get(id) as { trigger: Run["trigger"] } | undefined)?.trigger;
   }
 
   /** 실행을 요청한다. 이미 요청됐거나 실행 중이면 만들지 않고 undefined를 돌려준다. */

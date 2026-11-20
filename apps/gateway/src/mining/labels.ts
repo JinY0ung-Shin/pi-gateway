@@ -322,6 +322,45 @@ export async function review(store: MiningStore, caller: Caller, since: string, 
   return changed;
 }
 
+// ── 이름 다시 짓기 (사람이 요청한 실행) ──────────────────────────────
+
+const RENAME_PROMPT = `You are given one task label. Write its name again.
+
+- name: a short noun phrase in Korean, at most 40 characters, for the task that the criteria describe. It must tell the label apart from the other labels.
+- The criteria stay as they are, so the name must still mean the same task.
+- If the current name is already the right one, give it back unchanged.
+- Plain text only: no line breaks, links or markup.`;
+
+const RENAME_TOOL: Tool = {
+  name: "rename_label",
+  description: "Record the name of the label.",
+  parameters: Type.Object({ name: Type.String() }),
+};
+
+/**
+ * 라벨의 이름만 다시 짓는다 (추가 프롬프트를 바꾼 뒤, 이미 있는 라벨에도 적용하려고). 기준과 배정은 그대로다. 바꾼 라벨 수를 돌려준다.
+ * 다른 라벨의 지금 이름을 보여 주려고 차례로 한다. 사람이 고친 라벨은 보지 않는다.
+ */
+export async function rename(store: MiningStore, caller: Caller, at: string, runId: number | null = null, tick?: Tick): Promise<number> {
+  const due = store.labels().filter((l) => !l.editedAt);
+  let changed = 0;
+  for (const [done, label] of due.entries()) {
+    tick?.(done, due.length);
+    const others = store.labels().filter((l) => l.id !== label.id);
+    const input = [`Label to rename:\n${labelLine(label)}`, others.length > 0 ? `Other labels:\n${others.map(labelLine).join("\n")}` : ""].filter(Boolean).join("\n\n");
+    const out = await caller.call<{ name: string }>(RENAME_TOOL, RENAME_PROMPT, input, { label: label.id });
+    if (caller.stopped) return changed;
+    const name = out && labelText(out.name, NAME_CHARS);
+    if (!name || name === label.name) continue;
+    store.atomic(() => {
+      store.renameLabel(label.id, name, label.criteria);
+      store.revise({ at, runId, labelId: label.id, kind: "refined", name, before: described(label), after: described({ name, criteria: label.criteria }) });
+    });
+    changed++;
+  }
+  return changed;
+}
+
 // ── ⑥ 흐름 합성 ──────────────────────────────────────────────────────
 
 const FLOW_PROMPT = `You are given the steps of several episodes of the same task. Write the representative workflow for the task.

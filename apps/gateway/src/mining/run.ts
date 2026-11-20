@@ -3,7 +3,7 @@ import type { Db } from "../db.js";
 import { readPath } from "../sessions/transcript.js";
 import { chunks, compress } from "./compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted, extractInput, toEpisodes } from "./extract.js";
-import { assign, discover, merge, review, synthesizeFlows } from "./labels.js";
+import { assign, discover, merge, rename, review, synthesizeFlows } from "./labels.js";
 import { Caller, type Llm } from "./llm.js";
 import { IDLE_MS, type MiningStore, type Progress, RECENT_MS, type Stage } from "./store.js";
 
@@ -12,6 +12,7 @@ import { IDLE_MS, type MiningStore, type Progress, RECENT_MS, type Stage } from 
  * ① 새 내용이 있는 세션을 에피소드로 요약한다 — 세션 원문은 여기서 한 번만 읽는다.
  * ②~⑥ 에피소드에 라벨을 붙이고, 새 라벨을 찾고, 겹치는 라벨을 합치고, 쌓인 근거로 라벨을 다시 검토하고, 대표 흐름을 쓴다.
  *    붙이고 찾기는 한 실행 안에서 몇 번 되풀이한다 (찾을 때마다 미분류에서 새로 뽑는다).
+ * 이름만 다시 짓는 실행은 이 가운데 아무것도 하지 않고, 있는 라벨의 이름만 다시 짓는다.
  */
 
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */
@@ -63,6 +64,7 @@ export interface RunResult {
 /**
  * runId: 이 실행의 id (라벨 변경 이력에 적는다). onProgress: 단계가 바뀌거나, LLM 호출을 보내거나, 한 건을 마칠 때마다 불린다.
  * concurrency: LLM을 동시에 부르는 수 (세션 읽기, 배정, 대표 흐름. 한 세션 안의 묶음과 검토는 차례로 한다). stopRequested: 사람이 중지를 요청했는가
+ * rename: 이름만 다시 짓는 실행이다
  */
 export async function run(deps: {
   targets: Targets;
@@ -74,6 +76,7 @@ export async function run(deps: {
   onProgress?: (progress: Progress) => void;
   concurrency?: number;
   stopRequested?: () => boolean;
+  rename?: boolean;
 }): Promise<RunResult> {
   const { targets, store, log } = deps;
   const now = deps.now ?? Date.now;
@@ -86,7 +89,7 @@ export async function run(deps: {
   const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log, limits);
   store.prune(targets.alive);
 
-  const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
+  const pending = deps.rename ? [] : targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
   const touched = new Set<number>();
   let processed = 0;
   let failed = 0;
@@ -145,6 +148,16 @@ export async function run(deps: {
     return true;
   };
 
+  const result = (): RunResult => {
+    const stopped = (["aborted", "stopped", "time_limit"] as const).find((why) => caller.stopped === why || labeling.stopped === why);
+    return { status: stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
+  };
+
+  if (deps.rename) {
+    await rename(store, labeling, new Date(now()).toISOString(), runId, tick("rename"));
+    return result();
+  }
+
   // ① 추출 (여러 세션을 동시에)
   report("extract", 0, pending.length);
   await caller.each(pending, async (target) => {
@@ -182,6 +195,5 @@ export async function run(deps: {
     await synthesizeFlows(store, labeling, tick("flows"));
   }
 
-  const stopped = (["aborted", "stopped", "time_limit"] as const).find((why) => caller.stopped === why || labeling.stopped === why);
-  return { status: stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
+  return result();
 }

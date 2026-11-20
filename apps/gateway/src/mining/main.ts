@@ -49,6 +49,7 @@ const result = await run({
   log,
   runId,
   concurrency: store.concurrency(),
+  rename: store.triggerOf(runId) === "rename",
   stopRequested: () => store.stopRequested(runId),
   onProgress: (p) => store.progress(runId, p, new Date().toISOString()),
 });
