@@ -352,6 +352,12 @@ describe("mining: LLM call", () => {
       expect(request.tools!.map((t) => t.function.name)).toEqual([EXTRACT_TOOL.name]);
       expect(JSON.stringify(request.messages)).toContain("[U1] 배포해줘");
 
+      // 추가 시스템 프롬프트는 기본 지시 뒤에 붙는다. 없으면 기본 지시 그대로다.
+      expect(request.messages[0]!.content).toBe(EXTRACT_PROMPT);
+      server.enqueue({ toolCalls: [{ name: EXTRACT_TOOL.name, arguments: answer }] });
+      await createLlm(opened.runtime, opened.model, "이름은 한국어로 짓는다").call(EXTRACT_TOOL, EXTRACT_PROMPT, "Log:\n[U1] x");
+      expect(server.requests.at(-1)!.messages[0]!.content).toBe(`${EXTRACT_PROMPT}\n\nAdditional instructions from the operator:\n이름은 한국어로 짓는다`);
+
       // 두 번 다 형식이 틀리면 던진다. 오류 메시지에 모델이 쓴 글은 없다.
       server.enqueue({ text: "secret-ish model text" }, { toolCalls: [{ name: EXTRACT_TOOL.name, arguments: { episodes: "nope" } }] });
       await expect(llm.call(EXTRACT_TOOL, EXTRACT_PROMPT, "Log:\n[U1] x")).rejects.toThrow(/^invalid_output/);

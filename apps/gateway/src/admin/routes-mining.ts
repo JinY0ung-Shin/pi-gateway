@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { openDatabase } from "../db.js";
 import { CRITERIA_CHARS, labelText, NAME_CHARS } from "../mining/labels.js";
-import { IDLE_MS, type Label, MAX_CONCURRENCY, MiningStore, RECENT_MS, type Working } from "../mining/store.js";
+import { IDLE_MS, type Label, MAX_CONCURRENCY, MiningStore, PROMPT_CHARS, RECENT_MS, type Working } from "../mining/store.js";
 import type { AdminContext } from "./context.js";
 import { pageOf, PlatformError } from "./errors.js";
 
@@ -11,7 +11,7 @@ const EPISODE_PAGE = 20;
 const DAY_MS = 86_400_000;
 
 /**
- * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수, 모델,
+ * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수, 모델, 추가 시스템 프롬프트,
  * 프로세스(라벨) 목록과 그 작업(에피소드), 라벨 변경 이력, 사람이 하는 라벨 수정.
  * 실행은 mining 서비스가 한다. gateway는 mining.db에 실행·중지 요청과 설정, 라벨 수정만 쓴다.
  */
@@ -76,6 +76,8 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       concurrency: store.concurrency(),
       /** 실행이 쓰는 모델. null이면 gateway의 기본 모델 */
       model: store.model(),
+      /** 모든 LLM 호출의 시스템 프롬프트 끝에 붙이는 글. 없으면 null */
+      prompt: store.prompt(),
       labels: store.labels().map((l) => {
         const s = stats.get(l.id);
         return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, editedAt: l.editedAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
@@ -131,6 +133,18 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     mining().setModel(model);
     ctx.log.info({ model }, "mining model updated");
     return { model };
+  });
+
+  /** prompt: 모든 LLM 호출의 시스템 프롬프트 끝에 붙일 글, 또는 null (빈 글도 지운다) */
+  app.put<{ Body: { prompt?: unknown } | null }>("/mining/prompt", async (req) => {
+    const body = req.body?.prompt;
+    if (body !== null && (typeof body !== "string" || body.length > PROMPT_CHARS)) {
+      throw new PlatformError(400, "invalid_prompt", `prompt must be a string of at most ${PROMPT_CHARS} characters, or null`);
+    }
+    const prompt = body?.trim() || null;
+    mining().setPrompt(prompt);
+    ctx.log.info({ chars: prompt?.length ?? 0 }, "mining prompt updated");
+    return { prompt };
   });
 
   app.put<{ Body: { dailyAt?: unknown } | null }>("/mining/schedule", async (req) => {

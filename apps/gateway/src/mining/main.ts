@@ -41,7 +41,7 @@ try {
 }
 if (!opened) fail(chosen ? `마이닝에 고른 모델 ${chosen}이 LLM 설정에 없다 (관리 화면의 프로세스 마이닝에서 다시 고른다)` : "LLM이 설정되어 있지 않다 (관리 화면의 LLM)");
 
-const llm = createLlm(opened.runtime, opened.model);
+const llm = createLlm(opened.runtime, opened.model, store.prompt());
 const result = await run({
   targets,
   store,

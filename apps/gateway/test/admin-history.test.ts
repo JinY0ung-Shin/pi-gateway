@@ -30,7 +30,7 @@ describe("admin mining", () => {
   it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
     expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
-    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, next: { sessions: 0, episodes: 0 }, dailyAt: null, concurrency: 1, model: null, labels: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, next: { sessions: 0, episodes: 0 }, dailyAt: null, concurrency: 1, model: null, prompt: null, labels: [], recent30: 0, unlabeled30: 0 });
     expect((await h.admin("GET", "/mining/runs")).json).toEqual({ items: [], total: 0, pageSize: 10 });
 
     // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
@@ -58,6 +58,14 @@ describe("admin mining", () => {
     expect((await h.admin("GET", "/mining")).json.model).toBe("think-model");
     expect((await h.admin("PUT", "/mining/model", { model: null })).json).toEqual({ model: null });
     expect(store.model()).toBeNull();
+
+    // 추가 시스템 프롬프트: 길이 상한이 있고, 빈 글이나 null이면 지운다
+    expect((await h.admin("PUT", "/mining/prompt", { prompt: "x".repeat(4001) })).json.error.code).toBe("invalid_prompt");
+    expect((await h.admin("PUT", "/mining/prompt", { prompt: " 이름은 한국어로 짓는다 " })).json).toEqual({ prompt: "이름은 한국어로 짓는다" });
+    expect(store.prompt()).toBe("이름은 한국어로 짓는다");
+    expect((await h.admin("GET", "/mining")).json.prompt).toBe("이름은 한국어로 짓는다");
+    expect((await h.admin("PUT", "/mining/prompt", { prompt: "  " })).json).toEqual({ prompt: null });
+    expect(store.prompt()).toBeNull();
 
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "25:00" })).json.error.code).toBe("invalid_schedule");
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "18:00" })).json).toEqual({ dailyAt: "18:00" });

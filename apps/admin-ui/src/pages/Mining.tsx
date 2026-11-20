@@ -77,6 +77,8 @@ interface Overview {
   concurrency: number;
   /** 실행이 쓰는 모델. null이면 gateway의 기본 모델 */
   model: string | null;
+  /** 모든 LLM 호출의 시스템 프롬프트 끝에 붙이는 글. 없으면 null */
+  prompt: string | null;
   labels: Label[];
   recent30: number;
   unlabeled30: number;
@@ -126,6 +128,8 @@ const STALLED_MS = 5 * 60_000;
 const SLOW_START_MS = 60_000;
 /** gateway의 MAX_CONCURRENCY와 같다 */
 const MAX_CONCURRENCY = 16;
+/** gateway의 PROMPT_CHARS와 같다 */
+const PROMPT_CHARS = 4000;
 const UNLABELED = "미분류";
 const KIND: Record<Revision["kind"], { text: string; tone: "green" | "blue" | "violet" | "gray" | "red" }> = {
   created: { text: "생김", tone: "green" },
@@ -369,6 +373,8 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
       await api("PUT", "/mining/model", { model: next || null });
       await props.reload();
     }, "저장했습니다. 다음 실행부터 적용됩니다.");
+  const { prompt } = props.data;
+  const [editingPrompt, setEditingPrompt] = useState(false);
   // 개요를 다시 읽을 때마다 (실행 중에는 3초마다) 이력도 다시 읽는다
   const runs = usePaged<{ items: Run[]; total: number; pageSize: number }>("/mining/runs", props.data);
 
@@ -430,6 +436,13 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
         </select>
         <span class="muted small-text">작업을 뽑고 프로세스로 분류하는 데 쓰는 모델입니다. 다음 실행부터 적용됩니다.</span>
       </div>
+      <div class="row wrap">
+        <span>추가 프롬프트</span>
+        <span class="muted">{prompt ? `${prompt.length.toLocaleString()}자` : "없음"}</span>
+        <button onClick={() => setEditingPrompt(true)}>편집</button>
+        <span class="muted small-text">세션 읽기·분류·검토·대표 흐름의 모든 호출에서 시스템 프롬프트 끝에 붙습니다. 다음 실행부터 적용됩니다.</span>
+      </div>
+      {editingPrompt && <PromptModal prompt={prompt ?? ""} reload={props.reload} onClose={() => setEditingPrompt(false)} />}
       <details>
         <summary>한 번 실행하면 하는 일</summary>
         <p class="muted small-text">
@@ -442,6 +455,35 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
       {runs.data && <Runs items={runs.data.items} />}
       {runs.pager}
     </Section>
+  );
+}
+
+/** 추가 시스템 프롬프트를 고치는 창 */
+function PromptModal(props: { prompt: string; reload: () => Promise<void>; onClose: () => void }) {
+  const [draft, setDraft] = useState(props.prompt);
+  const action = useAction();
+  const save = () =>
+    action.run(async () => {
+      await api("PUT", "/mining/prompt", { prompt: draft });
+      await props.reload();
+    }, "저장했습니다. 다음 실행부터 적용됩니다.");
+
+  return (
+    <Modal title="추가 프롬프트" onClose={props.onClose}>
+      {action.view}
+      <label class="field">
+        <span>마이닝의 기본 지시 뒤에 붙일 글 (예: 조직의 용어, 프로세스 이름을 짓는 방식). 비우고 저장하면 없어집니다.</span>
+        <textarea rows={12} value={draft} maxLength={PROMPT_CHARS} disabled={action.busy} onInput={(e) => setDraft(e.currentTarget.value)} />
+      </label>
+      <div class="row wrap">
+        <button class="primary" disabled={action.busy || draft.trim() === props.prompt} onClick={() => void save()}>
+          저장
+        </button>
+        <span class="muted small-text">
+          {draft.length.toLocaleString()} / {PROMPT_CHARS.toLocaleString()}자
+        </span>
+      </div>
+    </Modal>
   );
 }
 

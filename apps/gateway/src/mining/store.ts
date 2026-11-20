@@ -104,6 +104,8 @@ export type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "re
 
 /** 한 실행이 LLM을 동시에 부르는 수의 상한 */
 export const MAX_CONCURRENCY = 16;
+/** 추가 시스템 프롬프트의 최대 길이 (글자) */
+export const PROMPT_CHARS = 4_000;
 
 /** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다 (stopped: 사람이 중지했다). */
 export interface Run {
@@ -171,6 +173,7 @@ const RUN = `SELECT id, trigger, requested_at AS requestedAt, started_at AS star
 const DAILY_AT = "daily_at";
 const CONCURRENCY = "concurrency";
 const MODEL = "model";
+const PROMPT = "prompt";
 
 export interface Episode {
   id: number;
@@ -597,8 +600,7 @@ export class MiningStore {
   }
 
   setDailyAt(time: string | null): void {
-    if (time === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(DAILY_AT);
-    else this.#set(DAILY_AT, time);
+    this.#set(DAILY_AT, time);
   }
 
   /** 한 실행이 LLM을 동시에 부르는 수 (1 ~ MAX_CONCURRENCY). 정한 적이 없으면 1: 한 번에 하나씩 부른다. */
@@ -616,15 +618,25 @@ export class MiningStore {
   }
 
   setModel(model: string | null): void {
-    if (model === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(MODEL);
-    else this.#set(MODEL, model);
+    this.#set(MODEL, model);
+  }
+
+  /** 모든 LLM 호출의 시스템 프롬프트 끝에 붙이는 글 (운영자가 쓴다). 없으면 null. */
+  prompt(): string | null {
+    return this.#setting(PROMPT);
+  }
+
+  setPrompt(prompt: string | null): void {
+    this.#set(PROMPT, prompt);
   }
 
   #setting(key: string): string | null {
     return (this.db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value ?? null;
   }
 
-  #set(key: string, value: string): void {
-    this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
+  /** value가 null이면 지운다. */
+  #set(key: string, value: string | null): void {
+    if (value === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+    else this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 }

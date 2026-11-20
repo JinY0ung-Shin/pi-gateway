@@ -22,7 +22,8 @@ export interface Llm {
 /** message에는 모델이 쓴 글을 넣지 않는다 (로그에 남는다). */
 export class LlmError extends Error {}
 
-export function createLlm(runtime: ModelRuntime, model: Model<Api>): Llm {
+/** extra: 운영자가 마이닝 화면에 적은 추가 시스템 프롬프트. 모든 호출의 시스템 프롬프트 끝에 붙인다. */
+export function createLlm(runtime: ModelRuntime, model: Model<Api>, extra?: string | null): Llm {
   // 이름을 지정한 tool choice는 API마다 모양이 다르다.
   const toolChoice = (name: string) => (model.api === "anthropic-messages" ? { type: "tool", name } : { type: "function", function: { name } });
 
@@ -30,7 +31,7 @@ export function createLlm(runtime: ModelRuntime, model: Model<Api>): Llm {
     // thinking은 요청하지 않는다 (reasoningEffort를 주지 않으면 꺼진다).
     const reply = await runtime.complete(
       model,
-      { systemPrompt: system, messages: [{ role: "user", content: user, timestamp: Date.now() }], tools: [tool] },
+      { systemPrompt: extra ? `${system}\n\nAdditional instructions from the operator:\n${extra}` : system, messages: [{ role: "user", content: user, timestamp: Date.now() }], tools: [tool] },
       { toolChoice: toolChoice(tool.name), maxTokens: model.maxTokens, signal: AbortSignal.timeout(TIMEOUT_MS) } as never,
     );
     if (reply.stopReason === "error" || reply.stopReason === "aborted") throw new LlmError(`llm_error: ${reply.errorMessage ?? reply.stopReason}`);
