@@ -51,6 +51,19 @@ export function formatTime(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** 목록에서 보는 시각: 하루 안이면 "3분 전", 그보다 오래됐으면 날짜와 시각 (올해면 연도를 뺀다) */
+export function timeAgo(iso: string | null | undefined, now = Date.now()): string {
+  const at = iso ? Date.parse(iso) : Number.NaN;
+  if (Number.isNaN(at)) return iso || "-";
+  const minutes = Math.floor((now - at) / 60_000);
+  if (minutes < 0 || minutes >= 24 * 60) return formatTime(iso).slice(new Date(at).getFullYear() === new Date(now).getFullYear() ? 5 : 0);
+  if (minutes < 1) return "방금";
+  return minutes < 60 ? `${minutes}분 전` : `${Math.floor(minutes / 60)}시간 전`;
+}
+
+/** 큰 수를 짧게: 4.1억, 310만 */
+export const compact = (n: number) => new Intl.NumberFormat("ko", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+
 export function formatBytes(n: number | undefined): string {
   if (n === undefined) return "-";
   if (n < 1024) return `${n} B`;

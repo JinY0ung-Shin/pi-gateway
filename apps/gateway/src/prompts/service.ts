@@ -206,13 +206,18 @@ export class PromptManager implements PromptService {
     };
   }
 
-  deployments(limit = 50): PromptDeployment[] {
+  deploymentCount(): number {
+    return (this.#db.prepare("SELECT COUNT(*) AS n FROM prompt_deployments").get() as { n: number }).n;
+  }
+
+  /** 배포 이력, 최근 것부터 offset번째부터 limit건 */
+  deployments(limit: number, offset = 0): PromptDeployment[] {
     const rows = this.#db
       .prepare(
         `SELECT id, at, action, name, version, note, from_name, from_version
-           FROM prompt_deployments ORDER BY id DESC LIMIT ?`,
+           FROM prompt_deployments ORDER BY id DESC LIMIT ? OFFSET ?`,
       )
-      .all(Math.max(1, Math.min(limit, 500))) as {
+      .all(limit, offset) as {
       id: number;
       at: string;
       action: PromptDeployment["action"];

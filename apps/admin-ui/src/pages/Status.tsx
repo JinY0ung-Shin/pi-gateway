@@ -1,11 +1,6 @@
-import type { ComponentChildren, JSX } from "preact";
-import { useState } from "preact/hooks";
-import { api, duration, enc, formatBytes, formatTime, percent } from "../api";
-import { Badge, EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
+import { api, compact, duration, enc, formatBytes, percent } from "../api";
+import { Badge, Bar, EmptyRow, Notice, Ranked, Section, Stat, Time, useAction, useLoad } from "../components";
 import type { SearchStat, ServiceCheck, StatusView, ToolStat, UserUsage } from "../types";
-
-/** 통계 표에 바로 보이는 줄 수. 나머지는 전체 보기에서 */
-const TOP_ROWS = 10;
 
 export function StatusPage() {
   const { data: status, error, reload } = useLoad<StatusView>("/status", 10_000);
@@ -22,7 +17,7 @@ export function StatusPage() {
       <div class="stats">
         <Stat label="메모리의 세션" value={status.stats.liveSessions} />
         <Stat label="실행 중인 턴" value={status.stats.activeTurns} />
-        <Stat label="대기 중인 턴" value={status.stats.queuedTurns} />
+        <Stat label="대기 중인 턴" value={status.stats.queuedTurns} tone={status.stats.queuedTurns > 0 ? "warn" : undefined} />
         <Stat label="활성 sandbox" value={status.sandboxes.items.filter((s) => s.state === "running").length} />
         <Stat label="gateway RSS" value={formatBytes(status.process.rssBytes)} />
         <Stat label="heap" value={formatBytes(status.process.heapUsedBytes)} of={formatBytes(status.process.heapTotalBytes)} />
@@ -124,7 +119,9 @@ export function StatusPage() {
                 <td class="mono">{s.key}</td>
                 <td class="clip mono">{s.containerName}</td>
                 <td>{s.state === "running" ? <Badge tone="green">running</Badge> : <Badge>{s.state}</Badge>}</td>
-                <td>{formatTime(s.lastActiveAt)}</td>
+                <td>
+                  <Time at={s.lastActiveAt} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -159,7 +156,7 @@ function ActiveTurns(props: { turns: StatusView["activeTurns"]; reload: () => Pr
             <tr key={t.responseId}>
               <td>{t.user}</td>
               <td class="clip mono">{t.responseId}</td>
-              <td class="num">{Math.round((Date.now() - Date.parse(t.startedAt)) / 1000)}초</td>
+              <td class="num">{duration(Date.now() - Date.parse(t.startedAt))}</td>
               <td class="actions">
                 <button class="small danger" disabled={action.busy} onClick={() => void stop(t)}>
                   중지
@@ -173,48 +170,34 @@ function ActiveTurns(props: { turns: StatusView["activeTurns"]; reload: () => Pr
   );
 }
 
-/** 상위 TOP_ROWS줄만 보이고 나머지는 전체 보기 창에서 보는 표 */
-export function Ranked<T>(props: { title: string; rows: T[]; table: (rows: T[]) => JSX.Element; children?: ComponentChildren }) {
-  const [all, setAll] = useState(false);
-  const { rows } = props;
-  const more = rows.length > TOP_ROWS && (
-    <button class="small" onClick={() => setAll(true)}>
-      전체 {rows.length}개 보기
-    </button>
-  );
-  return (
-    <Section title={props.title} actions={more}>
-      {props.children}
-      {props.table(rows.slice(0, TOP_ROWS))}
-      {all && (
-        <Modal title={props.title} onClose={() => setAll(false)}>
-          {props.table(rows)}
-        </Modal>
-      )}
-    </Section>
-  );
-}
+/** 오류율이 이보다 높으면 색으로 알린다 */
+const ERROR_WARN = 0.05;
+const ERROR_HIGH = 0.1;
 
 function ToolTable(props: { tools: ToolStat[] }) {
+  const most = Math.max(...props.tools.map((t) => t.calls), 0);
   return (
-    <table class="table">
+    <table class="table chart">
       <thead>
         <tr>
           <th>도구</th>
-          <th class="num">호출</th>
+          <th colSpan={2}>호출</th>
           <th class="num">오류율</th>
           <th class="num">평균 시간</th>
         </tr>
       </thead>
       <tbody>
-        {props.tools.length === 0 && <EmptyRow cols={4}>아직 호출된 도구가 없습니다.</EmptyRow>}
+        {props.tools.length === 0 && <EmptyRow cols={5}>아직 호출된 도구가 없습니다.</EmptyRow>}
         {props.tools.map((t) => (
           <tr key={t.tool}>
             <td class="clip mono" title={t.tool}>
               {t.tool}
             </td>
+            <Bar kind="tool" value={t.calls} max={most} />
             <td class="num">{t.calls.toLocaleString()}</td>
-            <td class="num">{t.errors > 0 ? percent(t.errors, t.calls) : "0%"}</td>
+            <td class={`num ${t.errors / t.calls >= ERROR_HIGH ? "err-text" : t.errors / t.calls >= ERROR_WARN ? "warn-text" : t.errors === 0 ? "muted" : ""}`} title={`오류 ${t.errors.toLocaleString()}번`}>
+              {t.errors > 0 ? percent(t.errors, t.calls) : "0%"}
+            </td>
             <td class="num">{duration(t.avgMs)}</td>
           </tr>
         ))}
@@ -254,26 +237,32 @@ function SearchTable(props: { searches: SearchStat[] }) {
 }
 
 function UserTable(props: { users: UserUsage[] }) {
+  const most = Math.max(...props.users.map((u) => u.inputTokens), 0);
   return (
-    <table class="table">
+    <table class="table chart">
       <thead>
         <tr>
           <th>사용자</th>
           <th class="num">LLM 호출</th>
-          <th class="num">입력 토큰</th>
+          <th colSpan={2}>입력 토큰</th>
           <th class="num">캐시 비율</th>
           <th class="num">출력 토큰</th>
         </tr>
       </thead>
       <tbody>
-        {props.users.length === 0 && <EmptyRow cols={5}>아직 사용 기록이 없습니다.</EmptyRow>}
+        {props.users.length === 0 && <EmptyRow cols={6}>아직 사용 기록이 없습니다.</EmptyRow>}
         {props.users.map((u) => (
           <tr key={u.user}>
             <td class="clip">{u.user}</td>
             <td class="num">{u.llmCalls.toLocaleString()}</td>
-            <td class="num">{u.inputTokens.toLocaleString()}</td>
+            <Bar kind="llm" value={u.inputTokens} max={most} />
+            <td class="num" title={u.inputTokens.toLocaleString()}>
+              {compact(u.inputTokens)}
+            </td>
             <td class="num">{percent(u.cachedTokens, u.inputTokens)}</td>
-            <td class="num">{u.outputTokens.toLocaleString()}</td>
+            <td class="num" title={u.outputTokens.toLocaleString()}>
+              {compact(u.outputTokens)}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -297,18 +286,5 @@ function Check(props: { check: ServiceCheck }) {
         {check.error}
       </span>
     </>
-  );
-}
-
-/** 지금 수치 하나. of는 전체 크기 (heap 사용량 / 전체). */
-export function Stat(props: { label: string; value: string | number; of?: string }) {
-  return (
-    <div class="stat">
-      <div class="muted small-text">{props.label}</div>
-      <div class="stat-value">
-        {props.value}
-        {props.of && <small> / {props.of}</small>}
-      </div>
-    </div>
   );
 }

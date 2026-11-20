@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, formatTime } from "../api";
-import { Badge, Modal, Notice, Section, useAction, useLoad } from "../components";
+import { Badge, Modal, Notice, rowAction, Section, Time, useAction, useLoad, usePaged } from "../components";
 import type { PromptDeployment, PromptDetail, PromptList, SessionPreview } from "../types";
 
 type Selection = { kind: "default" } | { kind: "prompt"; name: string } | { kind: "new" } | { kind: "full" };
@@ -36,14 +36,14 @@ export function PromptsPage() {
             </tr>
           </thead>
           <tbody>
-            <tr class="clickable" onClick={() => setSelection({ kind: "default" })}>
+            <tr {...rowAction(() => setSelection({ kind: "default" }))}>
               <td>기본 프롬프트</td>
               <td class="clip muted">배포된 프롬프트가 없을 때 쓰는 gateway 내장 프롬프트</td>
               <td class="muted">-</td>
               <td>{list.live.isDefault && <Badge tone="green">배포 중</Badge>}</td>
             </tr>
             {list.prompts.map((p) => (
-              <tr key={p.name} class="clickable" onClick={() => setSelection({ kind: "prompt", name: p.name })}>
+              <tr key={p.name} {...rowAction(() => setSelection({ kind: "prompt", name: p.name }))}>
                 <td class="mono">{p.name}</td>
                 <td class="clip muted" title={p.description}>
                   {p.description}
@@ -330,7 +330,9 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
                 <td class="clip" title={v.message}>
                   {v.message || <span class="muted">-</span>}
                 </td>
-                <td>{formatTime(v.createdAt)}</td>
+                <td>
+                  <Time at={v.createdAt} />
+                </td>
                 <td class="actions">
                   <button class="small" onClick={() => setShown(v.version)}>
                     보기
@@ -353,13 +355,10 @@ function PromptEditor(props: { name: string; list: PromptList; onChanged: () => 
   );
 }
 
+/** 배포 이력 (한 페이지씩). 배포본이 바뀌면 다시 읽는다. */
 function Deployments(props: { revision: string }) {
-  const [items, setItems] = useState<PromptDeployment[]>([]);
-  useEffect(() => {
-    api<{ deployments: PromptDeployment[] }>("GET", "/prompt-deployments?limit=30")
-      .then((r) => setItems(r.deployments))
-      .catch(() => setItems([]));
-  }, [props.revision]);
+  const { data, pager } = usePaged<{ items: PromptDeployment[]; total: number; pageSize: number }>("/prompt-deployments", props.revision);
+  const items = data?.items ?? [];
   if (items.length === 0) return null;
   const label = { deploy: "배포", rollback: "롤백", reset: "기본으로" } as const;
   return (
@@ -377,7 +376,9 @@ function Deployments(props: { revision: string }) {
         <tbody>
           {items.map((d) => (
             <tr key={d.id}>
-              <td>{formatTime(d.at)}</td>
+              <td>
+                <Time at={d.at} />
+              </td>
               <td>
                 <Badge tone={d.action === "rollback" ? "amber" : d.action === "reset" ? "gray" : "blue"}>{label[d.action]}</Badge>
               </td>
@@ -390,6 +391,7 @@ function Deployments(props: { revision: string }) {
           ))}
         </tbody>
       </table>
+      {pager}
     </Section>
   );
 }

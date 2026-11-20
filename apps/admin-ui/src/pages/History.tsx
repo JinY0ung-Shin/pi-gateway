@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, duration, enc, formatTime } from "../api";
-import { EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
+import { EmptyRow, Modal, Notice, Pager, rowAction, Section, Time, useAction, useLoad } from "../components";
 import { newTurn, type ToolCall, type Turn, TurnView } from "./Chat";
 
 /** 서버에 저장된 대화 기록 (읽기 전용)과 보관 기간 */
@@ -145,17 +145,22 @@ function RetentionSection() {
 
 function SessionList() {
   const [user, setUser] = useState("");
-  const [list, setList] = useState<{ items: SessionSummary[]; limit: number } | null>(null);
+  const [list, setList] = useState<{ items: SessionSummary[]; total: number; pageSize: number } | null>(null);
+  const [page, setPage] = useState(1);
   const action = useAction();
 
-  const load = () =>
-    action.run(async () => setList(await api<{ items: SessionSummary[]; limit: number }>("GET", `/history${user.trim() ? `?user=${enc(user.trim())}` : ""}`)));
+  /** 조회를 누르면 첫 페이지부터 */
+  const load = (to = 1) =>
+    action.run(async () => {
+      setList(await api("GET", `/history?page=${to}${user.trim() ? `&user=${enc(user.trim())}` : ""}`));
+      setPage(to);
+    });
   useEffect(() => {
     void load();
   }, []);
 
   return (
-    <Section title="세션" actions={list && <span class="muted small-text">최근 활동 순, 최대 {list.limit}개</span>}>
+    <Section title="세션" actions={list && <span class="muted small-text">{list.total.toLocaleString()}개 · 최근 활동 순</span>}>
       {action.view}
       <div class="row">
         <input
@@ -182,8 +187,10 @@ function SessionList() {
         <tbody>
           {list?.items.length === 0 && <EmptyRow cols={5}>저장된 세션이 없습니다.</EmptyRow>}
           {list?.items.map((s) => (
-            <tr key={s.id} class="clickable" onClick={() => (location.hash = `#/history/${enc(s.id)}`)}>
-              <td>{formatTime(s.lastActiveAt)}</td>
+            <tr key={s.id} {...rowAction(() => (location.hash = `#/history/${enc(s.id)}`))}>
+              <td>
+                <Time at={s.lastActiveAt} />
+              </td>
               <td class="mono">{s.user}</td>
               <td class="mono">{s.model}</td>
               <td class="num">{s.turn}</td>
@@ -192,6 +199,7 @@ function SessionList() {
           ))}
         </tbody>
       </table>
+      {list && <Pager page={page} pageSize={list.pageSize} total={list.total} disabled={action.busy} onPage={(to) => void load(to)} />}
     </Section>
   );
 }

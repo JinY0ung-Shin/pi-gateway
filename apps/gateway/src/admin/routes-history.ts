@@ -2,10 +2,10 @@ import type { FastifyInstance } from "fastify";
 import type { SessionRecord } from "../sessions/store.js";
 import { readTranscript } from "../sessions/transcript.js";
 import type { AdminContext } from "./context.js";
-import { PlatformError } from "./errors.js";
+import { pageOf, PlatformError } from "./errors.js";
 import { sessionTraces, traceStats } from "./traces.js";
 
-const LIST_LIMIT = 200;
+const PAGE_SIZE = 50;
 const MAX_RETENTION_DAYS = 3650;
 
 /** 서버에 저장된 대화 기록 보기(읽기 전용)와 보관 기간. 보관 기간이 지난 세션은 SessionHub가 지운다. */
@@ -34,10 +34,11 @@ export function registerHistoryRoutes(app: FastifyInstance, ctx: AdminContext): 
     return sessions.setRetention(days);
   });
 
-  app.get<{ Querystring: { user?: string } }>("/history", async (req) => ({
-    items: sessions.list(req.query.user || undefined, LIST_LIMIT).map(summary),
-    limit: LIST_LIMIT,
-  }));
+  /** 최근 활동 순으로 한 페이지. total: 조건에 맞는 세션 전부의 수 */
+  app.get<{ Querystring: { user?: string; page?: string } }>("/history", async (req) => {
+    const user = req.query.user || undefined;
+    return { items: sessions.list(user, PAGE_SIZE, (pageOf(req.query.page) - 1) * PAGE_SIZE).map(summary), total: sessions.count(user), pageSize: PAGE_SIZE };
+  });
 
   app.get<{ Params: { id: string } }>("/history/:id", async (req) => {
     const record = session(req.params.id);

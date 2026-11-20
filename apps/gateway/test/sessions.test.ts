@@ -55,7 +55,7 @@ describe("session lifecycle", () => {
 
   it("a failed first turn leaves no session behind", async () => {
     h.llm.enqueue({ error: { status: 500, body: { error: { message: "down" } } } });
-    const count = () => h.gateway.store.list("alice", 1000).length;
+    const count = () => h.gateway.store.count("alice");
     const before = count();
     const res = await h.post({ input: "first" });
     expect(res.status).toBe(502);

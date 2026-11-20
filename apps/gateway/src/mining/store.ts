@@ -76,17 +76,33 @@ const MIGRATIONS = [
      reason TEXT
    );
    CREATE INDEX label_revisions_run ON label_revisions(run_id)`,
+  `ALTER TABLE runs ADD COLUMN stage TEXT;
+   ALTER TABLE runs ADD COLUMN stage_done INTEGER;
+   ALTER TABLE runs ADD COLUMN stage_total INTEGER;
+   ALTER TABLE runs ADD COLUMN progress_at TEXT;
+   ALTER TABLE runs ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0`,
 ];
 
-/** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다. */
+/**
+ * 실행이 지금 하는 일. extract(세션을 읽어 에피소드를 뽑음) → assign(배정) · discover(발견) · merge(병합)를 몇 번 →
+ * review(검토) · reassign(바뀐 라벨로 다시 배정) → flows(대표 흐름)
+ */
+export type Stage = "extract" | "assign" | "discover" | "merge" | "review" | "reassign" | "flows";
+
+/** 한 실행이 LLM을 동시에 부르는 수의 상한 */
+export const MAX_CONCURRENCY = 16;
+
+/** 실행 하나. requested(요청됨) → running(실행 중) → 나머지는 끝난 상태다 (stopped: 사람이 중지했다). */
 export interface Run {
   id: number;
   trigger: "manual" | "schedule";
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
-  status: "requested" | "running" | "completed" | "time_limit" | "aborted" | "failed";
-  /** 끝까지 읽은 세션, 읽다 실패한 세션, 남은 세션, 만들거나 고친 에피소드 수. 끝나기 전이나 시작하지 못했으면 null */
+  status: "requested" | "running" | "completed" | "time_limit" | "aborted" | "stopped" | "failed";
+  /** 사람이 중지를 요청했다 (실행은 하던 LLM 호출을 마치고 멈춘다) */
+  stopRequested: boolean;
+  /** 끝까지 읽은 세션, 읽다 실패한 세션, 남은 세션, 만들거나 고친 에피소드 수. 실행 중에는 그때까지의 수이고, 시작하지 못했으면 null */
   processed: number | null;
   failed: number | null;
   remaining: number | null;
@@ -94,8 +110,25 @@ export interface Run {
   model: string | null;
   /** 시작하지 못했거나 도중에 죽은 이유 */
   error: string | null;
+  /** 지금 하는 단계와 그 단계에서 마친 수 / 할 수 (셀 것이 없는 단계는 0 / 0). 끝난 실행에는 마지막 단계가 남는다 */
+  stage: Stage | null;
+  stageDone: number | null;
+  stageTotal: number | null;
+  /** 진행 상황을 마지막으로 적은 때 */
+  progressAt: string | null;
   /** 이 실행이 라벨에 한 변경 수 (생김, 고침, 나뉨, 합쳐짐) */
   changes: number;
+}
+
+/** 실행 중에 적는 진행 상황 */
+export interface Progress {
+  stage: Stage;
+  done: number;
+  total: number;
+  processed: number;
+  failed: number;
+  remaining: number;
+  episodes: number;
 }
 
 export interface RunOutcome {
@@ -117,8 +150,10 @@ export function cameDue(time: string, after: number, now: number): boolean {
 }
 
 const RUN = `SELECT id, trigger, requested_at AS requestedAt, started_at AS startedAt, finished_at AS finishedAt, status, processed, failed, remaining, episodes, model, error,
+  stage, stage_done AS stageDone, stage_total AS stageTotal, progress_at AS progressAt, stop_requested AS stopRequested,
   (SELECT COUNT(*) FROM label_revisions r WHERE r.run_id = runs.id) AS changes FROM runs`;
 const DAILY_AT = "daily_at";
+const CONCURRENCY = "concurrency";
 
 export interface Episode {
   id: number;
@@ -418,18 +453,44 @@ export class MiningStore {
       .run(revision.at, revision.runId, revision.labelId, revision.kind, revision.name, revision.before ?? null, revision.after ?? null, revision.reason ?? null);
   }
 
-  /** 최근 변경부터 limit건 */
-  revisions(limit: number): Revision[] {
+  /** 최근 변경부터 offset번째부터 limit건. labelId를 주면 그 라벨의 것만 */
+  revisions(limit: number, offset = 0, labelId?: number): Revision[] {
     return this.db
-      .prepare("SELECT id, at, run_id AS runId, label_id AS labelId, kind, name, before, after, reason FROM label_revisions ORDER BY id DESC LIMIT ?")
-      .all(limit) as Revision[];
+      .prepare(
+        `SELECT id, at, run_id AS runId, label_id AS labelId, kind, name, before, after, reason FROM label_revisions
+         WHERE ? IS NULL OR label_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
+      )
+      .all(labelId ?? null, labelId ?? null, limit, offset) as Revision[];
+  }
+
+  /** 변경 수. labelId를 주면 그 라벨의 것만 */
+  revisionCount(labelId?: number): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM label_revisions WHERE ? IS NULL OR label_id = ?").get(labelId ?? null, labelId ?? null) as { n: number }).n;
   }
 
   // ── 실행 ────────────────────────────────────────────────────────────
 
-  /** 최근 실행부터 limit건 */
-  runs(limit: number): Run[] {
-    return this.db.prepare(`${RUN} ORDER BY id DESC LIMIT ?`).all(limit) as Run[];
+  #runs(rest: string, ...params: unknown[]): Run[] {
+    return (this.db.prepare(`${RUN} ${rest}`).all(...params) as Run[]).map((r) => ({ ...r, stopRequested: Boolean(r.stopRequested) }));
+  }
+
+  /** 최근 실행부터 offset번째부터 limit건 */
+  runs(limit: number, offset = 0): Run[] {
+    return this.#runs("ORDER BY id DESC LIMIT ? OFFSET ?", limit, offset);
+  }
+
+  runCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
+  }
+
+  /** 요청됐거나 실행 중인 실행 (많아야 하나다) */
+  activeRun(): Run | undefined {
+    return this.#runs("WHERE status IN ('requested', 'running')")[0];
+  }
+
+  /** 가장 최근에 끝난 실행 */
+  lastRun(): Run | undefined {
+    return this.#runs("WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1")[0];
   }
 
   /** 실행을 요청한다. 이미 요청됐거나 실행 중이면 만들지 않고 undefined를 돌려준다. */
@@ -453,11 +514,45 @@ export class MiningStore {
       .immediate();
   }
 
-  /** 실행 중인 실행을 끝낸다. id를 주지 않으면 실행 중인 것 전부 (서비스가 죽었다 살아났을 때). 이미 끝난 것은 건드리지 않는다. */
+  /**
+   * 요청됐거나 실행 중인 실행을 멈춘다. 아직 시작하지 않았으면 바로 닫고, 실행 중이면 표시만 한다 (실행이 다음 LLM 호출 앞에서 보고 멈춘다).
+   * 멈출 실행이 없으면 false.
+   */
+  requestStop(at: string): boolean {
+    return this.db
+      .transaction(() => {
+        const run = this.db.prepare("SELECT id, status FROM runs WHERE status IN ('requested', 'running')").get() as { id: number; status: string } | undefined;
+        if (!run) return false;
+        if (run.status === "requested") this.db.prepare("UPDATE runs SET status = 'stopped', finished_at = ? WHERE id = ?").run(at, run.id);
+        else this.db.prepare("UPDATE runs SET stop_requested = 1 WHERE id = ?").run(run.id);
+        return true;
+      })
+      .immediate();
+  }
+
+  stopRequested(id: number): boolean {
+    return Boolean((this.db.prepare("SELECT stop_requested FROM runs WHERE id = ?").get(id) as { stop_requested: number } | undefined)?.stop_requested);
+  }
+
+  /** 실행 중인 실행의 진행 상황을 적는다 (관리 화면이 읽는다). */
+  progress(id: number, p: Progress, at: string): void {
+    this.db
+      .prepare(
+        `UPDATE runs SET stage = ?, stage_done = ?, stage_total = ?, processed = ?, failed = ?, remaining = ?, episodes = ?, progress_at = ?
+         WHERE id = ? AND status = 'running'`,
+      )
+      .run(p.stage, p.done, p.total, p.processed, p.failed, p.remaining, p.episodes, at, id);
+  }
+
+  /**
+   * 실행 중인 실행을 끝낸다. id를 주지 않으면 실행 중인 것 전부 (서비스가 죽었다 살아났을 때). 이미 끝난 것은 건드리지 않는다.
+   * 수를 주지 않으면 (결과를 남기지 못하고 죽었다) 진행 상황으로 적어 둔 수가 남는다.
+   */
   finishRun(id: number | undefined, outcome: RunOutcome, at: string): void {
     this.db
       .prepare(
-        `UPDATE runs SET status = ?, finished_at = ?, processed = ?, failed = ?, remaining = ?, episodes = ?, model = ?, error = ?
+        `UPDATE runs SET status = ?, finished_at = ?, processed = COALESCE(?, processed), failed = COALESCE(?, failed), remaining = COALESCE(?, remaining),
+           episodes = COALESCE(?, episodes), model = ?, error = ?
          WHERE status = 'running' AND (? IS NULL OR id = ?)`,
       )
       .run(outcome.status, at, outcome.processed ?? null, outcome.failed ?? null, outcome.remaining ?? null, outcome.episodes ?? null, outcome.model ?? null, outcome.error ?? null, id ?? null, id ?? null);
@@ -465,11 +560,28 @@ export class MiningStore {
 
   /** 매일 자동으로 실행하는 시각 ("HH:MM", UTC). 없으면 자동으로 실행하지 않는다. */
   dailyAt(): string | null {
-    return (this.db.prepare("SELECT value FROM settings WHERE key = ?").get(DAILY_AT) as { value: string } | undefined)?.value ?? null;
+    return this.#setting(DAILY_AT);
   }
 
   setDailyAt(time: string | null): void {
     if (time === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(DAILY_AT);
-    else this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(DAILY_AT, time);
+    else this.#set(DAILY_AT, time);
+  }
+
+  /** 한 실행이 LLM을 동시에 부르는 수 (1 ~ MAX_CONCURRENCY). 정한 적이 없으면 1: 한 번에 하나씩 부른다. */
+  concurrency(): number {
+    return Number(this.#setting(CONCURRENCY) ?? 1);
+  }
+
+  setConcurrency(value: number): void {
+    this.#set(CONCURRENCY, String(value));
+  }
+
+  #setting(key: string): string | null {
+    return (this.db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value ?? null;
+  }
+
+  #set(key: string, value: string): void {
+    this.db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 }

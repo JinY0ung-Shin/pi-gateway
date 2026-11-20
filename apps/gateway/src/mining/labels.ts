@@ -5,6 +5,9 @@ import type { Caller } from "./llm.js";
 import { mask } from "./mask.js";
 import type { Episode, Label, MiningStore } from "./store.js";
 
+/** 단계가 진행 상황을 알리는 길: 마친 수와 할 수 */
+type Tick = (done: number, total: number) => void;
+
 /**
  * 라벨(작업 유형)에 관한 단계들. 모두 에피소드 요약만 읽고, 세션 원문은 보지 않는다.
  * ② 배정 → ③ 발견 → ④ 병합 → ⑤ 검토 → ⑥ 흐름 합성 (docs/process-mining-design.md 5절)
@@ -63,23 +66,27 @@ const ASSIGN_TOOL: Tool = {
   }),
 };
 
-/** 배정 전인 에피소드에 라벨을 붙인다. 분명히 맞을 때만 붙이고, 애매하거나 없으면 미분류로 둔다. */
-export async function assign(store: MiningStore, caller: Caller, at: string): Promise<void> {
+/** 배정 전인 에피소드에 라벨을 붙인다 (여러 건을 동시에). 분명히 맞을 때만 붙이고, 애매하거나 없으면 미분류로 둔다. */
+export async function assign(store: MiningStore, caller: Caller, at: string, tick?: Tick): Promise<void> {
   const labels = store.labels();
   const pending = store.pending();
   // 라벨이 아직 없으면 (첫 실행) 물어볼 것이 없다.
   if (labels.length === 0) return store.assign(pending.map((e) => e.id), null, at);
   // 라벨 목록을 system 쪽에 두어, 에피소드마다 바뀌는 것은 맨 끝의 user 메시지뿐이게 한다 (LLM 서버의 prefix cache).
   const system = `${ASSIGN_PROMPT}\n\nLabels:\n${labels.map(labelLine).join("\n")}`;
-  for (const episode of pending) {
+  let done = 0;
+  if (pending.length > 0) tick?.(0, pending.length);
+  await caller.each(pending, async (episode) => {
     const out = await caller.call<{ label: number; fit: string }>(ASSIGN_TOOL, system, episodeText(episode), { episode: episode.id });
     if (caller.stopped) return;
-    if (!out) continue;
-    const known = labels.some((l) => l.id === out.label);
-    const matched = out.fit === "match" && known;
-    // 가깝지만 분명하지 않았던 것은 그 라벨을 적어 둔다. 쌓이면 검토가 기준을 다시 본다.
-    store.assign([episode.id], matched ? out.label : null, at, !matched && out.fit === "unsure" && known ? out.label : null);
-  }
+    if (out) {
+      const known = labels.some((l) => l.id === out.label);
+      const matched = out.fit === "match" && known;
+      // 가깝지만 분명하지 않았던 것은 그 라벨을 적어 둔다. 쌓이면 검토가 기준을 다시 본다.
+      store.assign([episode.id], matched ? out.label : null, at, !matched && out.fit === "unsure" && known ? out.label : null);
+    }
+    tick?.(++done, pending.length);
+  });
 }
 
 // ── ③ 발견 ────────────────────────────────────────────────────────────
@@ -274,6 +281,7 @@ export async function review(
   since: string,
   at: string,
   runId: number | null = null,
+  tick?: Tick,
 ): Promise<number> {
   const evidence = (l: Label) => l.count - l.reviewedCount + l.near;
   const due = store
@@ -282,7 +290,8 @@ export async function review(
     .sort((a, b) => evidence(b) - evidence(a) || a.id - b.id)
     .slice(0, REVIEW_MAX);
   let changed = 0;
-  for (const label of due) {
+  for (const [done, label] of due.entries()) {
+    tick?.(done, due.length);
     const members = store.latestOf(label.id, REVIEW_EPISODES);
     const near = store.nearOf(label.id, REVIEW_NEAR_SHOWN);
     const others = store.labels().filter((l) => l.id !== label.id);
@@ -348,15 +357,18 @@ const FLOW_TOOL: Tool = {
   parameters: Type.Object({ steps: Type.Array(Type.String()) }),
 };
 
-/** 대표 흐름이 없거나 에피소드가 많이 늘어난 라벨의 대표 흐름을 쓴다. */
-export async function synthesizeFlows(store: MiningStore, caller: Caller): Promise<void> {
-  for (const label of store.labels()) {
-    if (label.count === 0 || (label.flow && label.count - label.flowCount < FLOW_GROWTH)) continue;
+/** 대표 흐름이 없거나 에피소드가 많이 늘어난 라벨의 대표 흐름을 쓴다 (여러 라벨을 동시에). */
+export async function synthesizeFlows(store: MiningStore, caller: Caller, tick?: Tick): Promise<void> {
+  const due = store.labels().filter((l) => l.count > 0 && !(l.flow && l.count - l.flowCount < FLOW_GROWTH));
+  let done = 0;
+  if (due.length > 0) tick?.(0, due.length);
+  await caller.each(due, async (label) => {
     const episodes = store.latestOf(label.id, FLOW_EPISODES);
     const input = `Task: ${label.name} — ${label.criteria}\n\nEpisodes:\n${episodes.map((e, i) => `[E${i + 1}] ${e.steps.join(" → ")}`).join("\n")}`;
     const out = await caller.call<{ steps: string[] }>(FLOW_TOOL, FLOW_PROMPT, input, { label: label.id });
     if (caller.stopped) return;
     const steps = (out?.steps ?? []).map((s) => oneLine(s).slice(0, STEP_CHARS)).filter(Boolean).slice(0, FLOW_MAX_STEPS);
     if (steps.length > 0) store.setFlow(label.id, steps, label.count);
-  }
+    tick?.(++done, due.length);
+  });
 }

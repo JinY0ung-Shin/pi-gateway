@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, errorText, formatTime } from "../api";
-import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, SaveBar, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, SaveBar, Section, Time, useAction, useLoad } from "../components";
 
 /**
  * System One 설정. mcp_search가 도구를 고를 때 묻는 decision model 서버 하나를 둔다. 저장하면 다음 검색부터 적용된다.
@@ -275,7 +275,9 @@ function RecentCalls() {
           {items.length === 0 && <EmptyRow cols={5}>아직 보낸 요청이 없습니다.</EmptyRow>}
           {items.map((c) => (
             <tr key={c.at}>
-              <td>{formatTime(c.at)}</td>
+              <td>
+                <Time at={c.at} />
+              </td>
               <td class="clip" title={stateText(c.request)}>
                 {stateText(c.request)}
               </td>

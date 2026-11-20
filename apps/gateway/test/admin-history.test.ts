@@ -30,16 +30,26 @@ describe("admin mining", () => {
   it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
     expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
-    expect((await h.admin("GET", "/mining")).json).toEqual({ runs: [], dailyAt: null, labels: [], revisions: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, dailyAt: null, concurrency: 1, labels: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining/runs")).json).toEqual({ items: [], total: 0, pageSize: 10 });
 
     // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
     const store = new MiningStore(openDatabase(miningDbFile));
     const at = new Date().toISOString();
 
-    const requested = await h.admin("POST", "/mining/run");
-    expect(requested.status).toBe(200);
+    expect((await h.admin("POST", "/mining/run/stop")).json.error.code).toBe("mining_idle");
+    const first = await h.admin("POST", "/mining/run");
+    expect(first.status).toBe(200);
     expect((await h.admin("POST", "/mining/run")).json.error.code).toBe("mining_busy");
-    expect((await h.admin("GET", "/mining")).json.runs).toMatchObject([{ id: requested.json.id, trigger: "manual", status: "requested" }]);
+    expect((await h.admin("GET", "/mining")).json).toMatchObject({ active: { id: first.json.id, trigger: "manual", status: "requested" }, last: null });
+    // 시작하기 전에 중지하면 바로 닫히고, 다시 요청할 수 있다
+    expect((await h.admin("POST", "/mining/run/stop")).status).toBe(200);
+    expect((await h.admin("GET", "/mining")).json).toMatchObject({ active: null, last: { id: first.json.id, status: "stopped" } });
+    expect((await h.admin("POST", "/mining/run")).status).toBe(200);
+
+    expect((await h.admin("PUT", "/mining/concurrency", { value: 0 })).json.error.code).toBe("invalid_concurrency");
+    expect((await h.admin("PUT", "/mining/concurrency", { value: 4 })).json).toEqual({ value: 4 });
+    expect(store.concurrency()).toBe(4);
 
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "25:00" })).json.error.code).toBe("invalid_schedule");
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "18:00" })).json).toEqual({ dailyAt: "18:00" });
@@ -64,6 +74,9 @@ describe("admin mining", () => {
     const goals = async (query: string) => ((await h.admin("GET", `/mining/episodes${query}`)).json.items as { goal: string; user: string | null }[]).map((e) => [e.goal, e.user]);
     expect((await goals(`?label=${label}`)).sort()).toEqual([["auth 배포", null], ["billing 배포", "alice"]]);
     expect(await goals("?label=none")).toEqual([["로그 확인", "alice"]]);
+    // 조건에 맞는 것 전부의 수와 라벨별 수를 같이 준다 (목록은 한 페이지씩)
+    expect((await h.admin("GET", "/mining/episodes?page=1")).json).toMatchObject({ total: 3, pageSize: 20, counts: [{ labelId: label, count: 2 }, { labelId: null, count: 1 }] });
+    expect((await h.admin("GET", "/mining/episodes?page=2")).json).toMatchObject({ items: [], total: 3 });
     expect((await goals("?user=alice")).sort()).toEqual([["billing 배포", "alice"], ["로그 확인", "alice"]]);
 
     // 라벨 수정: 이름·기준은 배정 프롬프트에 들어가므로 마크업을 받지 않는다
@@ -77,6 +90,13 @@ describe("admin mining", () => {
     // 실행 중에는 고치지 못한다
     const run = store.startRun(at)!;
     expect((await h.admin("DELETE", `/mining/labels/${other}`)).json.error.code).toBe("mining_running");
+    // 실행 중에 중지하면 표시만 하고, 실행이 보고 멈춘다
+    expect((await h.admin("POST", "/mining/run/stop")).status).toBe(200);
+    expect(store.stopRequested(run)).toBe(true);
+    expect((await h.admin("GET", "/mining")).json.active).toMatchObject({ id: run, status: "running", stopRequested: true });
+    // 실행 이력은 최근 것부터 한 페이지씩
+    expect((await h.admin("GET", "/mining/runs")).json).toMatchObject({ items: [{ id: run }, { id: first.json.id, status: "stopped" }], total: 2 });
+    expect((await h.admin("GET", "/mining/runs?page=2")).json).toMatchObject({ items: [], total: 2 });
     store.finishRun(run, { status: "completed", processed: 1, failed: 0, remaining: 0, episodes: 3, model: "m" }, at);
 
     expect((await h.admin("POST", `/mining/labels/${label}/merge`, { into: label })).json.error.code).toBe("invalid_merge");
@@ -86,7 +106,11 @@ describe("admin mining", () => {
     expect(store.labels()).toEqual([]);
     expect(store.pending().length).toBe(3);
     // 사람이 한 변경도 이력에 남는다 (최근 것부터)
-    expect((await h.admin("GET", "/mining")).json.revisions).toMatchObject([
+    const revisions = (await h.admin("GET", "/mining/revisions")).json;
+    expect(revisions).toMatchObject({ total: 3, pageSize: 10 });
+    // 한 프로세스의 것만 볼 수 있다
+    expect((await h.admin("GET", `/mining/revisions?label=${other}`)).json).toMatchObject({ items: [{ kind: "deleted", name: "로그 조사" }], total: 1 });
+    expect(revisions.items).toMatchObject([
       { runId: null, labelId: other, kind: "deleted", name: "로그 조사" },
       { runId: null, labelId: label, kind: "merged", name: "운영 배포", after: "로그 조사" },
       { runId: null, labelId: label, kind: "refined", name: "운영 배포", before: "서비스 배포 — 서비스를 운영에 올리는 작업", after: "운영 배포 — 새 기준" },
@@ -105,7 +129,10 @@ describe("admin history", () => {
     const list = await h.admin("GET", "/history?user=alice");
     expect(list.status).toBe(200);
     expect(list.json.items[0]).toMatchObject({ id: sid, user: "alice", turn: 2 });
-    expect((await h.admin("GET", "/history?user=nobody")).json.items).toEqual([]);
+    // 한 페이지씩 준다: 전체 수는 따로 세고, 끝을 넘긴 페이지는 비어 있다
+    expect(list.json).toMatchObject({ total: list.json.items.length, pageSize: 50 });
+    expect((await h.admin("GET", "/history?user=alice&page=2")).json).toMatchObject({ items: [], total: list.json.total });
+    expect((await h.admin("GET", "/history?user=nobody")).json).toMatchObject({ items: [], total: 0 });
 
     const detail = await h.admin("GET", `/history/${sid}`);
     expect(detail.status).toBe(200);

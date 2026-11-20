@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { AdminContext } from "./context.js";
+import { pageOf } from "./errors.js";
 
 const BODY_LIMIT = 4 * 1024 * 1024;
+const DEPLOYMENT_PAGE = 10;
 
 type NameParams = { Params: { name: string } };
 
@@ -25,8 +27,11 @@ export function registerPromptRoutes(app: FastifyInstance, ctx: AdminContext): v
 
   app.post<{ Body: unknown }>("/prompt-live/reset", async (req) => prompts.reset(req.body));
 
-  app.get<{ Querystring: { limit?: string } }>("/prompt-deployments", async (req) => ({
-    deployments: prompts.deployments(Number(req.query.limit ?? 50) || 50),
+  /** 배포 이력, 최근 것부터 한 페이지 */
+  app.get<{ Querystring: { page?: string } }>("/prompt-deployments", async (req) => ({
+    items: prompts.deployments(DEPLOYMENT_PAGE, (pageOf(req.query.page) - 1) * DEPLOYMENT_PAGE),
+    total: prompts.deploymentCount(),
+    pageSize: DEPLOYMENT_PAGE,
   }));
 
   app.post<{ Body: unknown }>("/prompt-render", { bodyLimit: BODY_LIMIT }, async (req) => prompts.render(req.body));

@@ -1,8 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { duration, enc, formatTime, percent } from "../api";
-import { Badge, Notice, Section, useLoad } from "../components";
-import { Ranked, Stat } from "./Status";
+import { Badge, Bar, Notice, Ranked, rowAction, Section, Stat, Time, useLoad } from "../components";
 
 /** 최근 턴들의 trace로 낸 시간 통계 (gateway의 admin/traces.ts traceStats) */
 
@@ -149,8 +148,10 @@ export function TimingPage() {
           </thead>
           <tbody>
             {data.slowest.map((t) => (
-              <tr key={`${t.sessionId} ${t.startedAt}`} class="clickable" onClick={() => (location.hash = `#/history/${enc(t.sessionId)}`)}>
-                <td>{formatTime(t.startedAt)}</td>
+              <tr key={`${t.sessionId} ${t.startedAt}`} {...rowAction(() => (location.hash = `#/history/${enc(t.sessionId)}`))}>
+                <td>
+                  <Time at={t.startedAt} />
+                </td>
                 <td class="num">{t.turn ?? "-"}</td>
                 <Bar kind="other" value={t.durationMs} max={slowestMax} />
                 <td class="num">{duration(t.durationMs)}</td>
@@ -262,19 +263,6 @@ function Trend(props: { timeline: Timeline }) {
         </div>
       </div>
     </>
-  );
-}
-
-/** 표의 막대 칸. 길이는 그 열의 가장 큰 값(max)에 대한 value이고, upTo가 있으면 거기까지 가는 선이 이어진다 (중앙값 뒤의 p95). 값은 옆 칸에 적는다. */
-function Bar(props: { kind: Kind; value: number; upTo?: number; max: number }) {
-  const width = (value: number) => `${props.max > 0 ? (value / props.max) * 100 : 0}%`;
-  return (
-    <td class="bar-cell" aria-hidden="true">
-      <span class={`bar k-${props.kind}`}>
-        {props.upTo !== undefined && props.upTo > 0 && <i class="upto" style={{ width: width(props.upTo) }} />}
-        {props.value > 0 && <i style={{ width: width(props.value) }} />}
-      </span>
-    </td>
   );
 }
 

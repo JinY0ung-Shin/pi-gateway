@@ -469,6 +469,20 @@ a:focus-visible,
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* 처리할 것이 남은 메뉴의 건수 */
+.rail-count {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
 button.rail-logout {
   margin-top: auto;
   align-self: flex-start;
@@ -547,6 +561,10 @@ button.rail-logout:hover:not(:disabled) {
   flex: 3 1 18rem;
 }
 
+.row > input[type="time"] {
+  flex: 0 0 auto;
+}
+
 .row > input.days {
   flex: 0 0 6rem;
   text-align: right;
@@ -623,6 +641,10 @@ button.rail-logout:hover:not(:disabled) {
   background: var(--bg);
   color: var(--text);
   box-shadow: var(--shadow);
+}
+
+.modal.wide {
+  width: min(1200px, calc(100% - 32px));
 }
 
 .modal[open] {
@@ -761,8 +783,56 @@ button.modal-close:hover:not(:disabled) {
   cursor: pointer;
 }
 
+/* 줄을 눌러 펼친 내용: 눌린 줄과 한 덩어리로 보인다 */
+.table tr.open > td,
+.table td.detail {
+  background: var(--surface-2);
+}
+
+.table tr.open > td {
+  border-bottom-color: transparent;
+}
+
+.table td.detail {
+  padding: 4px 14px 16px;
+}
+
+.table td.detail > :last-child {
+  margin-bottom: 0;
+}
+
+/* 이름 → 값 (펼친 줄의 전·뒤·이유) */
+.pairs {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.pairs dt {
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pairs dd {
+  margin: 0;
+}
+
+/* 차례가 있는 목록 (대표 흐름, 작업의 단계) */
+ol.flow {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+
 .table tr.clickable:hover > td {
   background: var(--surface-2);
+}
+
+.table tr.clickable:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
 }
 
 .table .num {
@@ -780,6 +850,12 @@ button.modal-close:hover:not(:disabled) {
 
 .table td.actions .toggle {
   vertical-align: middle;
+}
+
+.pager-at {
+  min-width: 4.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 표시 ── */
@@ -1169,17 +1245,18 @@ button.thumb-button {
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1px;
   margin-bottom: 44px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--line);
   overflow: hidden;
 }
 
+/* 칸 사이의 선은 칸이 오른쪽·아래에 긋는다 (줄이 덜 찬 자리는 비어 보인다). 바깥쪽 선은 틀에 잘린다. */
 .stat {
   padding: 14px 16px 13px;
-  background: var(--bg);
+  box-shadow:
+    1px 0 var(--line),
+    0 1px var(--line);
   white-space: nowrap;
 }
 
@@ -1197,6 +1274,180 @@ button.thumb-button {
   font-weight: 500;
   letter-spacing: 0;
   color: var(--muted);
+}
+
+/* ── 실행 중인 일: 어느 단계인지(메뉴와 같은 신호선), 그 단계를 얼마나 했는지, 지금까지의 수 ── */
+
+.run-live {
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.run-live > p {
+  margin: 10px 0 0;
+}
+
+.run-live-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.run-live-head strong::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.run-live-head button {
+  margin-left: auto;
+  align-self: center;
+}
+
+.run-live-head + .meter {
+  margin-top: 14px;
+}
+
+.phases {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 20px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.phases li {
+  position: relative;
+  padding: 18px 12px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 다음 단계로 가는 선 */
+.phases li::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.phases li:last-child::before {
+  display: none;
+}
+
+/* 노드 */
+.phases li::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1.5px solid var(--line-strong);
+}
+
+.phases li.done {
+  color: var(--text);
+}
+
+.phases li.done::before,
+.phases li.done::after {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.phases li.now {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.phases li.now::after {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.run-live-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+}
+
+.run-live-now b {
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* 셀 수 없는 일: 끝을 모르는 채로 움직이기만 한다 */
+.meter.busy i {
+  width: 30%;
+  animation: meter-busy 1.4s linear infinite;
+}
+
+@keyframes meter-busy {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(334%);
+  }
+}
+
+.run-live-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  margin: 14px 0 0;
+}
+
+.run-live-counts div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.run-live-counts dt {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.run-live-counts dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 차트: 실행 시간 화면의 막대. 값은 늘 옆에 글자로도 적는다 ── */
@@ -1414,6 +1665,16 @@ button.thumb-button {
   padding-right: 0;
 }
 
+/* 글이 주인이고 막대는 곁들이는 표: 막대 칸을 좁게 두고 남는 폭은 글이 갖는다 */
+.table.chart.slim td.clip {
+  width: 100%;
+}
+
+.table.chart.slim td.bar-cell {
+  width: 120px;
+  min-width: 120px;
+}
+
 .bar {
   position: relative;
   display: block;
@@ -1586,6 +1847,11 @@ button.thumb-button {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .phases {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 14px;
+  }
+
   .section-head {
     flex-wrap: wrap;
   }
@@ -1612,5 +1878,11 @@ button.thumb-button {
   *::before,
   *::after {
     transition: none !important;
+  }
+
+  .meter.busy i {
+    width: 100%;
+    opacity: 0.35;
+    animation: none;
   }
 }

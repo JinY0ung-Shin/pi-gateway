@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText, formatTime } from "../api";
-import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, Section, Toggle, useAction } from "../components";
+import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, rowAction, Section, Time, Toggle, useAction } from "../components";
 import type { CatalogEntry, MarketplaceView, McpServerList, PluginView } from "../types";
 
 const MCP_STATUS_LABEL: Record<string, string> = {
@@ -106,7 +106,7 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
         <tbody>
           {props.marketplaces.length === 0 && <EmptyRow cols={6}>추가된 marketplace가 없습니다.</EmptyRow>}
           {props.marketplaces.map((m) => (
-            <tr key={m.name} class="clickable" title="눌러서 plugin을 설치합니다" onClick={() => props.onSelect(m.name)}>
+            <tr key={m.name} {...rowAction(() => props.onSelect(m.name))} title="눌러서 plugin을 설치합니다">
               <td>
                 {m.name} {m.owner && <span class="muted small-text">{m.owner}</span>}
               </td>
@@ -118,7 +118,9 @@ function Marketplaces(props: { marketplaces: MarketplaceView[]; onSelect: (name:
               <td>
                 {m.pluginCount}개 {m.invalidEntries > 0 && <Badge tone="amber">{`읽지 못한 항목 ${m.invalidEntries}`}</Badge>}
               </td>
-              <td>{formatTime(m.refreshedAt)}</td>
+              <td>
+                <Time at={m.refreshedAt} />
+              </td>
               <td class="actions" onClick={(e) => e.stopPropagation()}>
                 <button class="small" disabled={action.busy} onClick={() => void refresh(m.name)}>
                   새로고침
@@ -276,7 +278,7 @@ function Installed(props: { plugins: PluginView[]; missingSecrets: Map<string, s
             const failed = p.mcp.filter((m) => m.status !== "registered").length;
             const notes = c.unsupported.length + c.warnings.length + c.copySkipped.length;
             return (
-              <tr key={p.id} class="clickable" onClick={() => setOpenId(p.id)}>
+              <tr key={p.id} {...rowAction(() => setOpenId(p.id))}>
                 <td>
                   <span class="mono">{p.id}</span> <Badge>{p.version}</Badge>
                   {p.update && <Badge tone="blue">{`업데이트 있음 v${p.update.version}`}</Badge>}

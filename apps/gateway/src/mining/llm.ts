@@ -56,11 +56,11 @@ export function createLlm(runtime: ModelRuntime, model: Model<Api>, maxTokens: n
 }
 
 /**
- * 한 번의 실행이 쓰는 LLM 호출 창구. 시간 상한이 지났거나 연달아 실패했으면 더 부르지 않는다.
+ * 한 번의 실행이 쓰는 LLM 호출 창구. 시간 상한이 지났거나, 연달아 실패했거나, 사람이 중지했으면 더 부르지 않는다.
  * 실패는 던지지 않고 undefined로 돌려준다: 부른 쪽은 그 일을 건너뛰고, stopped가 있으면 단계를 끝낸다.
  */
 export class Caller {
-  stopped: "time_limit" | "aborted" | undefined;
+  stopped: "time_limit" | "aborted" | "stopped" | undefined;
   #failures = 0;
 
   constructor(
@@ -68,11 +68,26 @@ export class Caller {
     private readonly deadline: number,
     private readonly now: () => number,
     private readonly log: Logger,
+    /** concurrency: each가 동시에 돌리는 수. stop: 사람이 중지를 요청했는가 (호출 앞에서 묻는다) */
+    private readonly limits: { concurrency?: number; stop?: () => boolean } = {},
   ) {}
+
+  /** items를 동시에 concurrency개씩 처리한다. 멈춘 뒤에는 남은 것을 시작하지 않는다. */
+  async each<T>(items: readonly T[], fn: (item: T) => Promise<void>): Promise<void> {
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length && !this.stopped) await fn(items[next++]!);
+    };
+    await Promise.all(Array.from({ length: Math.min(this.limits.concurrency ?? 1, items.length) }, worker));
+  }
 
   /** about: 실패했을 때 로그에 남길 것 (세션·에피소드·라벨 id). 대화 내용은 넣지 않는다. */
   async call<T>(tool: Tool, system: string, user: string, about: Record<string, unknown>): Promise<T | undefined> {
     if (this.stopped) return undefined;
+    if (this.limits.stop?.()) {
+      this.stopped = "stopped";
+      return undefined;
+    }
     if (this.now() >= this.deadline) {
       this.stopped = "time_limit";
       return undefined;

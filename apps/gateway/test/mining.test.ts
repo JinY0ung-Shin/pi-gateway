@@ -231,6 +231,34 @@ describe("mining: run", () => {
     expect(sessions.map((s) => store.cursor(s.id))).toEqual([undefined, undefined, undefined, undefined]);
   });
 
+  it("reads several sessions at once up to the concurrency, and stops before the next call when asked to", async () => {
+    const store = newStore();
+    const sessions = [1, 2, 3, 4, 5].map((i) => {
+      const t = new Transcript();
+      t.user(`작업 ${i}`);
+      t.tool("bash", { command: "ls" });
+      return target(`c${i}`, t);
+    });
+    let calls = 0;
+    let inFlight = 0;
+    let most = 0;
+    const llm: Llm = {
+      model: "test-model",
+      async call<T>() {
+        calls++;
+        most = Math.max(most, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { episodes: [episode("작업", 1, 1)] } as T;
+      },
+    };
+    // 세 번째 호출을 보낸 뒤 사람이 중지했다: 보낸 호출은 마치고, 남은 두 세션은 읽지 않고, 라벨 단계는 하지 않는다
+    const result = await run({ targets: targetsOf(...sessions), store, llm, log, concurrency: 2, stopRequested: () => calls >= 3 });
+    expect(most).toBe(2);
+    expect(result).toMatchObject({ status: "stopped", processed: 3, failed: 0, remaining: 2 });
+    expect(store.pending()).toHaveLength(3);
+  });
+
   it("stops sending LLM calls once the time limit has passed", async () => {
     const store = newStore();
     const t = new Transcript();
@@ -382,7 +410,11 @@ describe("mining: labels", () => {
       },
       write_flow: () => ({ steps: ["빌드", "배포", "상태 확인"] }),
     });
-    await run({ targets: noSessions(users), store, llm, log, now: () => NOW, runId });
+    const progress: string[] = [];
+    await run({ targets: noSessions(users), store, llm, log, now: () => NOW, runId, onProgress: (p) => progress.push(`${p.stage} ${p.done}/${p.total}`) });
+    // 단계가 바뀔 때와 한 건을 마칠 때마다 진행 상황을 알린다
+    expect([...new Set(progress.map((p) => p.split(" ")[0]))]).toEqual(["extract", "discover", "merge", "assign", "review", "flows"]);
+    expect(progress).toContain("assign 17/18");
     // 라벨이 없을 때는 배정을 묻지 않는다. 라벨이 생기면 남은 18건을 다시 붙이고, 미분류가 12건뿐이라 더 찾지 않는다.
     // 12건이 붙은 라벨은 검토를 받는다.
     expect(llm.calls).toEqual(["propose_labels", ...Array(18).fill("assign_label"), "review_label", "write_flow"]);
@@ -533,14 +565,17 @@ describe("mining: runs and label edits", () => {
     // 이미 끝난 실행은 다시 닫히지 않는다 (서비스가 자식 프로세스가 끝난 뒤 한 번 더 부른다)
     store.finishRun(id, { status: "failed", error: "exit 0" }, "2026-11-19T00:06:00.000Z");
     expect(store.runs(10)).toEqual([
-      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null, changes: 0 },
+      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null, stage: null, stageDone: null, stageTotal: null, progressAt: null, stopRequested: false, changes: 0 },
     ]);
 
     // 서비스가 내려가 실행 중으로 남은 것은 다음에 뜰 때 실패로 닫는다
     const second = store.requestRun("schedule", at)!;
     store.startRun(at);
+    // 실행 중에 적은 진행 상황은 결과를 남기지 못하고 죽어도 남는다
+    store.progress(second, { stage: "assign", done: 2, total: 9, processed: 4, failed: 0, remaining: 1, episodes: 6 }, at);
+    expect(store.runs(1)[0]).toMatchObject({ status: "running", stage: "assign", stageDone: 2, stageTotal: 9, processed: 4, episodes: 6, progressAt: at });
     store.finishRun(undefined, { status: "failed", error: "내려갔다" }, at);
-    expect(store.runs(1)[0]).toMatchObject({ id: second, trigger: "schedule", status: "failed", error: "내려갔다" });
+    expect(store.runs(1)[0]).toMatchObject({ id: second, trigger: "schedule", status: "failed", error: "내려갔다", stage: "assign", processed: 4, remaining: 1 });
   });
 
   it("refuses label edits while a run is in progress", () => {

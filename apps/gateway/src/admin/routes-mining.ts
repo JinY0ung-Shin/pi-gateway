@@ -1,19 +1,19 @@
 import type { FastifyInstance } from "fastify";
 import { openDatabase } from "../db.js";
 import { CRITERIA_CHARS, labelText, NAME_CHARS } from "../mining/labels.js";
-import { type Label, MiningStore } from "../mining/store.js";
+import { type Label, MAX_CONCURRENCY, MiningStore } from "../mining/store.js";
 import type { AdminContext } from "./context.js";
-import { PlatformError } from "./errors.js";
+import { pageOf, PlatformError } from "./errors.js";
 
-const RUN_LIMIT = 30;
-const REVISION_LIMIT = 100;
-const EPISODE_LIMIT = 500;
+const RUN_PAGE = 10;
+const REVISION_PAGE = 10;
+const EPISODE_PAGE = 20;
 const DAY_MS = 86_400_000;
 
 /**
- * 프로세스 마이닝 관리 (docs/process-mining-design.md): 실행 이력과 "지금 실행", 매일 자동 실행 시각,
+ * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수,
  * 프로세스(라벨) 목록과 그 작업(에피소드), 라벨 변경 이력, 사람이 하는 라벨 수정.
- * 실행은 mining 서비스가 한다. gateway는 mining.db에 요청과 설정, 라벨 수정만 쓴다.
+ * 실행은 mining 서비스가 한다. gateway는 mining.db에 실행·중지 요청과 설정, 라벨 수정만 쓴다.
  */
 export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): void {
   let opened: MiningStore | undefined;
@@ -51,18 +51,32 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       if (user) s.users.add(user);
     }
     return {
-      runs: store.runs(RUN_LIMIT),
+      /** 요청됐거나 실행 중인 실행 (진행 상황이 들어 있다)과, 가장 최근에 끝난 실행 */
+      active: store.activeRun() ?? null,
+      last: store.lastRun() ?? null,
       dailyAt: store.dailyAt(),
+      concurrency: store.concurrency(),
       labels: store.labels().map((l) => {
         const s = stats.get(l.id);
         return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, editedAt: l.editedAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
       }),
-      /** 라벨에 일어난 변경 (자동 실행과 사람), 최근 것부터 */
-      revisions: store.revisions(REVISION_LIMIT),
       /** 최근 30일에 끝난 에피소드 수와, 그중 라벨이 없는 것 */
       recent30: recent.length,
       unlabeled30: recent.filter((e) => e.labelId === null).length,
     };
+  });
+
+  /** 실행 이력, 최근 것부터 한 페이지 */
+  app.get<{ Querystring: { page?: string } }>("/mining/runs", async (req) => {
+    const store = mining();
+    return { items: store.runs(RUN_PAGE, (pageOf(req.query.page) - 1) * RUN_PAGE), total: store.runCount(), pageSize: RUN_PAGE };
+  });
+
+  /** 라벨에 일어난 변경 (자동 실행과 사람), 최근 것부터 한 페이지. label: 그 라벨의 것만 */
+  app.get<{ Querystring: { page?: string; label?: string } }>("/mining/revisions", async (req) => {
+    const store = mining();
+    const label = req.query.label ? Number(req.query.label) : undefined;
+    return { items: store.revisions(REVISION_PAGE, (pageOf(req.query.page) - 1) * REVISION_PAGE, label), total: store.revisionCount(label), pageSize: REVISION_PAGE };
   });
 
   app.post("/mining/run", async () => {
@@ -70,6 +84,22 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     if (id === undefined) throw new PlatformError(409, "mining_busy", "a run is already requested or in progress");
     ctx.log.info({ run: id }, "mining run requested");
     return { id };
+  });
+
+  app.post("/mining/run/stop", async () => {
+    if (!mining().requestStop(new Date().toISOString())) throw new PlatformError(409, "mining_idle", "no run is requested or in progress");
+    ctx.log.info("mining run stop requested");
+    return { ok: true };
+  });
+
+  app.put<{ Body: { value?: unknown } | null }>("/mining/concurrency", async (req) => {
+    const value = req.body?.value;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_CONCURRENCY) {
+      throw new PlatformError(400, "invalid_concurrency", `value must be an integer from 1 to ${MAX_CONCURRENCY}`);
+    }
+    mining().setConcurrency(value);
+    ctx.log.info({ concurrency: value }, "mining concurrency updated");
+    return { value };
   });
 
   app.put<{ Body: { dailyAt?: unknown } | null }>("/mining/schedule", async (req) => {
@@ -82,15 +112,26 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     return { dailyAt };
   });
 
-  /** 최근에 끝난 것부터. label: 라벨 id, 또는 "none"(라벨 없음). user: 그 사용자의 것만 */
-  app.get<{ Querystring: { label?: string; user?: string } }>("/mining/episodes", async (req) => {
+  /**
+   * 최근에 끝난 것부터 한 페이지. label: 라벨 id, 또는 "none"(라벨 없음). user: 그 사용자의 것만.
+   * total과 counts(라벨별 수, 많은 순. labelId가 null이면 라벨 없음)는 조건에 맞는 것 전부를 센다.
+   */
+  app.get<{ Querystring: { label?: string; user?: string; page?: string } }>("/mining/episodes", async (req) => {
     const { label, user } = req.query;
     const userOf = userLookup();
     const items = mining()
       .browse(label ? (label === "none" ? null : Number(label)) : undefined)
       .map((e) => ({ ...e, user: userOf(e.sessionId) }))
       .filter((e) => !user || e.user === user);
-    return { items: items.slice(0, EPISODE_LIMIT), total: items.length };
+    const counts = new Map<number | null, number>();
+    for (const e of items) counts.set(e.labelId, (counts.get(e.labelId) ?? 0) + 1);
+    const start = (pageOf(req.query.page) - 1) * EPISODE_PAGE;
+    return {
+      items: items.slice(start, start + EPISODE_PAGE),
+      total: items.length,
+      pageSize: EPISODE_PAGE,
+      counts: [...counts].map(([labelId, count]) => ({ labelId, count })).sort((a, b) => b.count - a.count),
+    };
   });
 
   // ── 라벨 수정 ───────────────────────────────────────────────────────

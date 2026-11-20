@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, duration, errorText, formatTime } from "../api";
-import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, SaveBar, Section, useAction, useLoad } from "../components";
+import { ApiKeyField, Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, rowAction, SaveBar, Section, useAction, useLoad } from "../components";
 
 /**
  * LLM 연결 설정. 서버마다 주소·키·모델을 두고, 저장하면 바로 적용된다 (진행 중인 턴은 끝난 뒤, 다음 턴부터).
@@ -486,7 +486,7 @@ function ServerCard(props: {
           {s.models.map((m, i) => {
             const t = tests[m.id];
             return (
-              <tr key={i} class="clickable" title="눌러서 고칩니다" onClick={() => setEditing(i)}>
+              <tr key={i} {...rowAction(() => setEditing(i))} title="눌러서 고칩니다">
                 <td onClick={(e) => e.stopPropagation()}>
                   <input
                     type="radio"

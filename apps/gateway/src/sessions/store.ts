@@ -223,12 +223,18 @@ export class SessionStore {
     this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
-  /** 최근 활동 순 (user를 주면 그 사용자의 세션만) */
-  list(user: string | undefined, limit: number): SessionRecord[] {
+  /** 최근 활동 순으로 offset번째부터 limit개 (user를 주면 그 사용자의 세션만) */
+  list(user: string | undefined, limit: number, offset: number): SessionRecord[] {
     const rows = user
-      ? this.db.prepare("SELECT * FROM sessions WHERE principal = ? ORDER BY last_active_at DESC LIMIT ?").all(user, limit)
-      : this.db.prepare("SELECT * FROM sessions ORDER BY last_active_at DESC LIMIT ?").all(limit);
+      ? this.db.prepare("SELECT * FROM sessions WHERE principal = ? ORDER BY last_active_at DESC LIMIT ? OFFSET ?").all(user, limit, offset)
+      : this.db.prepare("SELECT * FROM sessions ORDER BY last_active_at DESC LIMIT ? OFFSET ?").all(limit, offset);
     return (rows as Row[]).map(fromRow);
+  }
+
+  /** 세션 수 (user를 주면 그 사용자의 세션만) */
+  count(user: string | undefined): number {
+    const row = user ? this.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE principal = ?").get(user) : this.db.prepare("SELECT COUNT(*) AS n FROM sessions").get();
+    return (row as { n: number }).n;
   }
 
   /** 마지막 활동이 before보다 이른 세션 id */

@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { api, enc, formatTime } from "../api";
-import { EmptyRow, Modal, Notice, Section, useAction, useLoad } from "../components";
+import { EmptyRow, Modal, Notice, rowAction, Section, Time, useAction, useLoad } from "../components";
 
 /** agent가 request_admin으로 남긴 요청. 처리하면 지운다. */
 
@@ -31,11 +31,13 @@ export function RequestsPage() {
         <tbody>
           {data?.items.length === 0 && <EmptyRow cols={3}>남은 요청이 없습니다.</EmptyRow>}
           {data?.items.map((r) => (
-            <tr key={r.id} class="clickable" onClick={() => setOpen(r)}>
-              <td>{formatTime(r.createdAt)}</td>
+            <tr key={r.id} {...rowAction(() => setOpen(r))}>
+              <td>
+                <Time at={r.createdAt} />
+              </td>
               <td class="mono">{r.user}</td>
               <td class="clip" title={r.title}>
-                {r.title}
+                {r.title} <span class="muted">{r.detail.trim().split("\n")[0]}</span>
               </td>
             </tr>
           ))}
@@ -48,6 +50,8 @@ export function RequestsPage() {
           onDeleted={async () => {
             setOpen(null);
             await reload();
+            // 메뉴의 건수를 다시 읽게 한다
+            dispatchEvent(new Event("requests-changed"));
           }}
         />
       )}

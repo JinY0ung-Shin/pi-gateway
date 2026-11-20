@@ -20,6 +20,9 @@ export const badRequest = (message: string) => new PlatformError(400, "invalid_r
 export const notFound = (message: string) => new PlatformError(404, "not_found", message);
 export const conflict = (code: string, message: string) => new PlatformError(409, code, message);
 
+/** 목록의 `page` 질의 (1부터). 없거나 수가 아니면 1 */
+export const pageOf = (page: string | undefined) => Math.max(1, Math.floor(Number(page)) || 1);
+
 /** zod 오류를 `<경로>: <이유>; …`로 쓴다. 경로가 없으면(최상위) root를 쓴다. */
 export function issueList(error: z.ZodError, root: string): string[] {
   return error.issues.map((i) => `${i.path.join(".") || root}: ${i.message}`);

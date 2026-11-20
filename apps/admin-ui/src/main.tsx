@@ -47,6 +47,8 @@ function parseHash(): { page: string; arg?: string } {
 function App() {
   const [auth, setAuth] = useState<"checking" | "in" | "out" | "disabled">("checking");
   const [route, setRoute] = useState(parseHash());
+  /** agent가 남기고 아직 처리하지 않은 요청 수 (메뉴에 보인다) */
+  const [requests, setRequests] = useState(0);
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -57,6 +59,15 @@ function App() {
       .catch((error) => setAuth(error instanceof ApiError && error.code === "admin_disabled" ? "disabled" : "out"));
     return () => removeEventListener("hashchange", onHash);
   }, []);
+
+  // 화면을 옮길 때와 요청을 처리했을 때 다시 센다
+  useEffect(() => {
+    if (auth !== "in") return;
+    const count = () => api<{ items: unknown[] }>("GET", "/requests").then((r) => setRequests(r.items.length), () => undefined);
+    void count();
+    addEventListener("requests-changed", count);
+    return () => removeEventListener("requests-changed", count);
+  }, [auth, route.page]);
 
   if (auth === "checking") return <p class="center muted">불러오는 중…</p>;
   if (auth === "disabled") {
@@ -69,6 +80,8 @@ function App() {
   if (auth === "out") return <Login onLogin={() => setAuth("in")} />;
 
   const current = PAGES.find((p) => p.id === route.page)!;
+  // 탭 제목에 지금 화면을 적는다
+  document.title = `${current.label} · pi-gateway 관리`;
   return (
     <div class="layout">
       <aside class="rail">
@@ -82,6 +95,9 @@ function App() {
                   <li key={p.id}>
                     <a href={`#/${p.id}`} class={route.page === p.id ? "active" : ""} aria-current={route.page === p.id ? "page" : undefined}>
                       {p.label}
+                      {p.id === "requests" && requests > 0 && (
+                        <span class="rail-count">{requests}</span>
+                      )}
                     </a>
                   </li>
                 ))}

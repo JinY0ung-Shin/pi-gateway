@@ -79,7 +79,7 @@ describe("PromptManager", () => {
 
     const reset = h.prompts.reset({});
     expect(reset.live.isDefault).toBe(true);
-    expect(h.prompts.deployments().map((d) => d.action)).toEqual(["reset", "rollback", "deploy"]);
+    expect(h.prompts.deployments(10).map((d) => d.action)).toEqual(["reset", "rollback", "deploy"]);
     expect(() => h.prompts.deploy("ops", { version: 9 })).toThrow(expect.objectContaining({ status: 404 }));
   });
 
@@ -124,7 +124,7 @@ describe("prompt admin API", () => {
     expect(res.json().text).toBe("B preview-user");
 
     res = await h.app.inject({ method: "GET", url: "/admin/api/prompt-deployments", headers: { cookie } });
-    expect(res.json().deployments).toHaveLength(1);
+    expect(res.json()).toMatchObject({ items: [{ action: "deploy" }], total: 1, pageSize: 10 });
 
     res = await h.app.inject({ method: "POST", url: "/admin/api/prompt-live/reset", headers, payload: {} });
     expect(res.json().live.isDefault).toBe(true);

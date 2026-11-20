@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api, enc, errorText } from "../api";
-import { Badge, EmptyRow, Modal, Notice, RunsInBadge, Section, Toggle, useAction, useLoad } from "../components";
+import { Badge, EmptyRow, Modal, Notice, rowAction, RunsInBadge, Section, Toggle, useAction, useLoad } from "../components";
 import type { AgentToolset, PluginView, ToolInfo } from "../types";
 
 // 도구·skill·agent 탭: 목록을 누르면 정의가 창으로 뜬다. 연 항목은 주소(#/<탭>/<이름>)에 남겨 plugin 탭에서 바로 연다.
@@ -46,7 +46,7 @@ function Explorer(props: {
         <tbody>
           {props.items.length === 0 && <EmptyRow cols={3}>{props.empty}</EmptyRow>}
           {props.items.map((i) => (
-            <tr key={i.name} class="clickable" onClick={() => (location.hash = `#/${props.page}/${enc(i.name)}`)}>
+            <tr key={i.name} {...rowAction(() => (location.hash = `#/${props.page}/${enc(i.name)}`))}>
               <td>
                 <span class="mono">{i.name}</span> {i.badge}
               </td>

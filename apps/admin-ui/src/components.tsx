@@ -1,6 +1,6 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { api, errorText } from "./api";
+import { api, errorText, formatTime, timeAgo } from "./api";
 
 /** 메뉴·로그인 화면 상단의 이름 */
 export function Brand() {
@@ -71,6 +71,129 @@ export function Section(props: { title: string; actions?: ComponentChildren; chi
   );
 }
 
+/** 목록의 시각. 하루 안이면 얼마 전인지로 보이고, 올려 두면 정확한 시각이 나온다. */
+export function Time(props: { at: string | null | undefined }) {
+  return <time title={formatTime(props.at)}>{timeAgo(props.at)}</time>;
+}
+
+/** 지금 수치 하나. of는 전체 크기 (heap 사용량 / 전체), note는 값 옆의 작은 글, tone은 눈에 띄어야 할 때의 색. */
+export function Stat(props: { label: string; value: ComponentChildren; of?: string; note?: ComponentChildren; tone?: "warn" | "err" }) {
+  return (
+    <div class="stat">
+      <div class="muted small-text">{props.label}</div>
+      <div class={`stat-value${props.tone ? ` ${props.tone}-text` : ""}`}>
+        {props.value}
+        {props.of && <small> / {props.of}</small>}
+        {props.note && <small> {props.note}</small>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 표의 막대 칸 (`table.chart` 안에서 쓴다). 길이는 그 열의 가장 큰 값(max)에 대한 value이고, upTo가 있으면 거기까지 가는 선이 이어진다
+ * (중앙값 뒤의 p95). 값은 옆 칸에 적는다. kind는 색: LLM 호출, 도구 실행, 둘 다 아닌 것.
+ */
+export function Bar(props: { kind?: "llm" | "tool" | "other"; value: number; upTo?: number; max: number }) {
+  const width = (value: number) => `${props.max > 0 ? (value / props.max) * 100 : 0}%`;
+  return (
+    <td class="bar-cell" aria-hidden="true">
+      <span class={`bar k-${props.kind ?? "other"}`}>
+        {props.upTo !== undefined && props.upTo > 0 && <i class="upto" style={{ width: width(props.upTo) }} />}
+        {props.value > 0 && <i style={{ width: width(props.value) }} />}
+      </span>
+    </td>
+  );
+}
+
+/** 순위 표가 든 구역 (서버가 전부 준 통계). 위 10줄만 보이고 나머지는 전체 보기 창에서 본다. */
+export function Ranked<T>(props: { title: string; rows: T[]; table: (rows: T[]) => JSX.Element; children?: ComponentChildren }) {
+  const TOP = 10;
+  const [all, setAll] = useState(false);
+  const more = props.rows.length > TOP && (
+    <button class="small" onClick={() => setAll(true)}>
+      전체 {props.rows.length}개 보기
+    </button>
+  );
+  return (
+    <Section title={props.title} actions={more}>
+      {props.children}
+      {props.table(props.rows.slice(0, TOP))}
+      {all && (
+        <Modal title={props.title} wide onClose={() => setAll(false)}>
+          {props.table(props.rows)}
+        </Modal>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * 한 페이지씩 받는 목록 (`?page=N` → `{ items, total, pageSize, … }`). 페이지를 넘기는 동안 앞 페이지를 그대로 둔다 (표가 비었다 차지 않게).
+ * refresh가 바뀌면 지금 페이지를 다시 읽는다. path가 바뀌는 목록은 key로 다시 만들어 첫 페이지부터 보게 한다.
+ */
+export function usePaged<P extends { total: number; pageSize: number }>(path: string, refresh?: unknown): { data: P | null; error: string | null; pager: ComponentChildren } {
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<P | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api<P>("GET", `${path}${path.includes("?") ? "&" : "?"}page=${page}`).then(
+      (next) => {
+        if (!alive) return;
+        setData(next);
+        setError(null);
+      },
+      (err) => alive && setError(errorText(err)),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [path, page, refresh]);
+  return { data, error, pager: data && <Pager page={page} pageSize={data.pageSize} total={data.total} onPage={setPage} /> };
+}
+
+/** 누르는 표 줄: 마우스로 누르거나, Tab으로 가서 Enter·Space를 누르면 같은 일을 한다 (줄 안의 버튼에서 누른 키는 그 버튼의 것이다). */
+export const rowAction = (run: () => void) => ({
+  class: "clickable",
+  tabIndex: 0,
+  onClick: run,
+  onKeyDown: (e: KeyboardEvent) => {
+    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    run();
+  },
+});
+
+/** 표 아래의 페이지 줄: 지금 보이는 범위와 전체 수, 처음·이전·다음·끝. 한 페이지에 다 들어가면 수만 적는다. */
+export function Pager(props: { page: number; pageSize: number; total: number; disabled?: boolean; onPage: (page: number) => void }) {
+  const { page, pageSize, total } = props;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const go = (to: number, label: string) => (
+    <button class="small" disabled={props.disabled || to === page || to < 1 || to > pages} onClick={() => props.onPage(to)}>
+      {label}
+    </button>
+  );
+  return (
+    <nav class="row wrap pager" aria-label="페이지">
+      <span class="muted small-text grow">
+        {pages === 1 ? `${total.toLocaleString()}개` : `${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} / 전체 ${total.toLocaleString()}개`}
+      </span>
+      {pages > 1 && (
+        <>
+          {go(1, "처음")}
+          {go(page - 1, "이전")}
+          <span class="small-text pager-at">
+            {page} / {pages}
+          </span>
+          {go(page + 1, "다음")}
+          {go(pages, "끝")}
+        </>
+      )}
+    </nav>
+  );
+}
+
 /** 빈 표의 안내 줄 */
 export function EmptyRow(props: { cols: number; children: ComponentChildren }) {
   return (
@@ -82,15 +205,15 @@ export function EmptyRow(props: { cols: number; children: ComponentChildren }) {
   );
 }
 
-/** 목록 위에 뜨는 편집·상세 창. ×나 Esc로 닫으면 onClose가 불린다. 머리는 두고 본문만 스크롤한다. */
-export function Modal(props: { title: ComponentChildren; actions?: ComponentChildren; onClose: () => void; children: ComponentChildren }) {
+/** 목록 위에 뜨는 편집·상세 창. ×나 Esc로 닫으면 onClose가 불린다. 머리는 두고 본문만 스크롤한다. wide: 칸이 많은 표를 담는 넓은 창 */
+export function Modal(props: { title: ComponentChildren; actions?: ComponentChildren; wide?: boolean; onClose: () => void; children: ComponentChildren }) {
   const ref = useRef<HTMLDialogElement>(null);
   // 그리기 전에 열어야 key가 바뀌어 다시 만들어질 때 깜빡이지 않는다
   useLayoutEffect(() => {
     ref.current?.showModal();
   }, []);
   return (
-    <dialog ref={ref} class="modal" onClose={props.onClose}>
+    <dialog ref={ref} class={props.wide ? "modal wide" : "modal"} onClose={props.onClose}>
       <header class="section-head">
         <h2>{props.title}</h2>
         <div class="row">
@@ -109,7 +232,7 @@ export function Modal(props: { title: ComponentChildren; actions?: ComponentChil
 }
 
 /**
- * 관리 API GET 결과. path가 바뀌면 비우고 다시 부르고, everyMs를 주면 그 간격으로 다시 부른다.
+ * 관리 API GET 결과. path가 바뀌면 비우고 다시 부르고, everyMs를 주면 그 간격으로 다시 부른다 (간격은 도중에 바꿀 수 있다).
  * 실패하면 error에 담고, 이전 data는 그대로 둔다 (새로고침 실패를 경고로만 보일 수 있게).
  */
 export function useLoad<T>(path: string, everyMs?: number) {
@@ -124,6 +247,11 @@ export function useLoad<T>(path: string, everyMs?: number) {
     }
   };
   useEffect(() => {
+    setData(null);
+    setError(null);
+  }, [path]);
+  // 간격만 바뀌면 data는 두고 바로 한 번 다시 부른다
+  useEffect(() => {
     let alive = true;
     const load = () =>
       api<T>("GET", path).then(
@@ -134,15 +262,13 @@ export function useLoad<T>(path: string, everyMs?: number) {
         },
         (err) => alive && setError(errorText(err)),
       );
-    setData(null);
-    setError(null);
     void load();
     const timer = everyMs ? setInterval(load, everyMs) : undefined;
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [path]);
+  }, [path, everyMs]);
   return { data, error, reload };
 }
 

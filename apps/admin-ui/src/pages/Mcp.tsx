@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, enc, errorText, formatTime } from "../api";
-import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, RunsInBadge, Section, useAction } from "../components";
+import { api, enc, errorText, formatTime, timeAgo } from "../api";
+import { Badge, EmptyRow, linesToRecord, Modal, Notice, recordToLines, rowAction, RunsInBadge, Section, useAction } from "../components";
 import type { McpScope, McpServerConfig, McpServerEntry, McpServerList, ToolSummary } from "../types";
 
 /** 연결 확인 결과. broker 서버는 실제로 연결해 도구 목록을 받고, sandbox 서버는 설정과 파일만 본다. */
@@ -106,7 +106,7 @@ export function McpPage(props: { focus?: string }) {
           <tbody>
             {list.servers.length === 0 && <EmptyRow cols={7}>등록된 서버가 없습니다.</EmptyRow>}
             {list.servers.map((s) => (
-              <tr key={s.config.id} class="clickable" onClick={() => setEditing(s)}>
+              <tr key={s.config.id} {...rowAction(() => setEditing(s))}>
                 <td class="mono" title={s.config.displayName}>
                   {s.config.id}
                 </td>
@@ -223,9 +223,9 @@ function ServerState(props: { entry: McpServerEntry; check: TestResult | "checki
       )}
       {!check && entry.config.enabled && missing === 0 && <span class="muted small-text">확인 전</span>}
       {lastError && (
-        <span class="small-text err-text" title={lastError}>
+        <span class="small-text err-text" title={`${formatTime(entry.status?.lastErrorAt)} ${lastError}`}>
           {" "}
-          최근 오류 {formatTime(entry.status?.lastErrorAt)}: {lastError}
+          최근 오류 {timeAgo(entry.status?.lastErrorAt)}: {lastError}
         </span>
       )}
     </>

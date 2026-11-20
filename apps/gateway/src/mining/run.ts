@@ -5,7 +5,7 @@ import { chunks, compress } from "./compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted, extractInput, toEpisodes } from "./extract.js";
 import { assign, discover, merge, review, synthesizeFlows } from "./labels.js";
 import { Caller, type Llm } from "./llm.js";
-import type { MiningStore } from "./store.js";
+import type { MiningStore, Progress, Stage } from "./store.js";
 
 /**
  * 한 번의 mining 실행 (docs/process-mining-design.md):
@@ -52,7 +52,8 @@ export function loadTargets(gatewayDb: Db, now = Date.now()): Targets {
 }
 
 export interface RunResult {
-  status: "completed" | "time_limit" | "aborted";
+  /** stopped: 사람이 중지했다 */
+  status: "completed" | "time_limit" | "aborted" | "stopped";
   /** 끝까지 읽은 세션 수 */
   processed: number;
   /** 읽다가 실패해 다음 실행으로 넘긴 세션 수 */
@@ -63,19 +64,36 @@ export interface RunResult {
   episodeIds: number[];
 }
 
-/** runId: 이 실행의 id (라벨 변경 이력에 적는다) */
-export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm; log: Logger; now?: () => number; runId?: number }): Promise<RunResult> {
+/**
+ * runId: 이 실행의 id (라벨 변경 이력에 적는다). onProgress: 단계가 바뀌거나 한 건을 마칠 때마다 불린다.
+ * concurrency: LLM을 동시에 부르는 수 (세션 읽기, 배정, 대표 흐름. 한 세션 안의 묶음과 검토는 차례로 한다). stopRequested: 사람이 중지를 요청했는가
+ */
+export async function run(deps: {
+  targets: Targets;
+  store: MiningStore;
+  llm: Llm;
+  log: Logger;
+  now?: () => number;
+  runId?: number;
+  onProgress?: (progress: Progress) => void;
+  concurrency?: number;
+  stopRequested?: () => boolean;
+}): Promise<RunResult> {
   const { targets, store, log } = deps;
   const now = deps.now ?? Date.now;
   const runId = deps.runId ?? null;
   const started = now();
-  const caller = new Caller(deps.llm, started + EXTRACT_LIMIT_MS, now, log);
+  const limits = { concurrency: deps.concurrency, stop: deps.stopRequested };
+  const caller = new Caller(deps.llm, started + EXTRACT_LIMIT_MS, now, log, limits);
   store.prune(targets.users);
 
   const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
   const touched = new Set<number>();
   let processed = 0;
   let failed = 0;
+  const report = (stage: Stage, done = 0, total = 0) =>
+    deps.onProgress?.({ stage, done, total, processed, failed, remaining: pending.length - processed - failed, episodes: touched.size });
+  const tick = (stage: Stage) => (done: number, total: number) => report(stage, done, total);
 
   /** 세션 하나를 읽는다. 끝까지 읽었으면 true, LLM을 부르지 못해 멈췄으면 false (그때까지 읽은 묶음은 저장되어 있다). */
   const mine = async (target: Target): Promise<boolean> => {
@@ -108,15 +126,16 @@ export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm
       const out = await caller.call<Extracted>(EXTRACT_TOOL, EXTRACT_PROMPT, extractInput(previous, chunk), { session: target.id });
       if (!out) return false;
       for (const id of store.save(target.id, toEpisodes(chunk, out, previous !== undefined), end)) touched.add(id);
+      report("extract", processed + failed, pending.length);
     }
     // 메시지가 없는 새 부분(수동 compaction 등)도 읽은 것으로 표시한다.
     store.save(target.id, [], target.leafId);
     return true;
   };
 
-  // ① 추출
-  for (const target of pending) {
-    if (caller.stopped) break;
+  // ① 추출 (여러 세션을 동시에)
+  report("extract", 0, pending.length);
+  await caller.each(pending, async (target) => {
     let done = false;
     try {
       done = await mine(target);
@@ -124,30 +143,33 @@ export async function run(deps: { targets: Targets; store: MiningStore; llm: Llm
       log.warn({ session: target.id, err: err instanceof Error ? err.message : String(err) }, "session could not be read");
     }
     if (done) processed++;
-    // 시간이 다 되어 멈춘 세션은 실패가 아니라 남은 것이다.
-    else if (caller.stopped !== "time_limit") failed++;
-  }
+    // 시간이 다 됐거나 사람이 중지해서 멈춘 세션은 실패가 아니라 남은 것이다.
+    else if (caller.stopped !== "time_limit" && caller.stopped !== "stopped") failed++;
+    report("extract", processed + failed, pending.length);
+  });
 
-  // ②~⑥ 라벨. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다. LLM 장애로 멈췄으면 하지 않는다.
+  // ②~⑥ 라벨. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다. LLM 장애로 멈췄거나 사람이 중지했으면 하지 않는다.
   // 한 단계가 멈추면 labeling이 더 부르지 않으므로, 뒤 단계는 아무 일도 하지 않고 지나간다.
-  const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log);
-  if (caller.stopped !== "aborted") {
+  const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log, limits);
+  if (caller.stopped !== "aborted" && caller.stopped !== "stopped") {
     const at = new Date(now()).toISOString();
     const since = new Date(now() - RECENT_MS).toISOString();
     // 붙이고 → 남은 미분류에서 찾고 → 새 라벨이 생겼으면 다시 붙이고 또 찾는다.
     let created: number[] = [];
     for (let round = 0; round < DISCOVER_ROUNDS; round++) {
-      await assign(store, labeling, at);
+      await assign(store, labeling, at, tick("assign"));
+      report("discover");
       created = await discover(store, labeling, targets.users, since, at, runId);
       if (created.length === 0) break;
+      report("merge");
       await merge(store, labeling, created, at, log, runId);
     }
     // 고치거나 나눈 라벨의 에피소드는 새 기준으로 다시 붙인다.
-    const changed = await review(store, labeling, targets.users, since, at, runId);
-    if (created.length > 0 || changed > 0) await assign(store, labeling, at);
-    await synthesizeFlows(store, labeling);
+    const changed = await review(store, labeling, targets.users, since, at, runId, tick("review"));
+    if (created.length > 0 || changed > 0) await assign(store, labeling, at, tick("reassign"));
+    await synthesizeFlows(store, labeling, tick("flows"));
   }
 
-  const stopped = caller.stopped === "aborted" || labeling.stopped === "aborted" ? "aborted" : (caller.stopped ?? labeling.stopped);
+  const stopped = (["aborted", "stopped", "time_limit"] as const).find((why) => caller.stopped === why || labeling.stopped === why);
   return { status: stopped ?? "completed", processed, failed, remaining: pending.length - processed - failed, episodeIds: [...touched] };
 }
