@@ -442,6 +442,28 @@ describe("mining: labels", () => {
     expect(quiet.calls).toEqual([]);
   });
 
+  it("draws another sample when the first one yields no label", async () => {
+    const store = newStore();
+    const alive = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      alive.add(`s${i}`);
+      seed(store, `s${i}`, i < 5 ? `서비스 ${i} 배포` : `기타 ${i}`);
+    }
+    let asked = 0;
+    const llm = scripted({
+      propose_labels: (user) =>
+        ++asked === 1
+          ? { groups: [] }
+          : { groups: [{ name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", episodes: [...user.matchAll(/\[E(\d+)\] goal: 서비스/g)].map((m) => Number(m[1])) }] },
+      assign_label: () => ({ label: 0, fit: "none" }),
+      write_flow: () => ({ steps: ["빌드", "배포"] }),
+    });
+    await run({ targets: noSessions(alive), store, llm, log, now: () => NOW });
+    // 두 번째 표본에서 라벨이 생기면 남은 15건을 다시 붙여 본다. 미분류가 15건뿐이라 세 번째는 찾지 않는다.
+    expect(llm.calls).toEqual(["propose_labels", "propose_labels", ...Array(15).fill("assign_label"), "write_flow"]);
+    expect(store.labels()).toMatchObject([{ name: "서비스 배포", count: 5 }]);
+  });
+
   it("rewords a label when the review says so, and sorts its episodes again under the new criteria", async () => {
     const store = newStore();
     const alive = new Set<string>();

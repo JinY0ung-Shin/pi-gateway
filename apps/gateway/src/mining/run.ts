@@ -11,7 +11,7 @@ import { IDLE_MS, type MiningStore, type Progress, RECENT_MS, type Stage } from 
  * 한 번의 mining 실행 (docs/process-mining-design.md):
  * ① 새 내용이 있는 세션을 에피소드로 요약한다 — 세션 원문은 여기서 한 번만 읽는다.
  * ②~⑥ 에피소드에 라벨을 붙이고, 새 라벨을 찾고, 겹치는 라벨을 합치고, 쌓인 근거로 라벨을 다시 검토하고, 대표 흐름을 쓴다.
- *    새 라벨이 생기거나 라벨이 바뀌면 다시 붙이고 또 찾는다 (한 실행 안에서 몇 번 돈다).
+ *    붙이고 찾기는 한 실행 안에서 몇 번 되풀이한다 (찾을 때마다 미분류에서 새로 뽑는다).
  */
 
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */
@@ -165,15 +165,16 @@ export async function run(deps: {
   if (caller.stopped !== "aborted" && caller.stopped !== "stopped") {
     const at = new Date(now()).toISOString();
     const since = new Date(now() - RECENT_MS).toISOString();
-    // 붙이고 → 남은 미분류에서 찾고 → 새 라벨이 생겼으면 다시 붙이고 또 찾는다.
+    // 붙이고 → 남은 미분류에서 찾기를 되풀이한다. 새 라벨이 안 생겨도 다음에는 다른 표본을 본다.
     let created: number[] = [];
     for (let round = 0; round < DISCOVER_ROUNDS; round++) {
       await assign(store, labeling, at, tick("assign"));
       report("discover");
       created = await discover(store, labeling, since, at, runId);
-      if (created.length === 0) break;
-      report("merge");
-      await merge(store, labeling, created, at, log, runId);
+      if (created.length > 0) {
+        report("merge");
+        await merge(store, labeling, created, at, log, runId);
+      }
     }
     // 고치거나 나눈 라벨의 에피소드는 새 기준으로 다시 붙인다.
     const changed = await review(store, labeling, since, at, runId, tick("review"));
