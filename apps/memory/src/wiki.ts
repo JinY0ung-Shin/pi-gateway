@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidUserId, searchTerms, userKey } from "@pi-gateway/shared";
+import { History } from "./history.js";
 import { type SearchResult, searchNotes } from "./search.js";
 
 /**
@@ -10,6 +11,7 @@ import { type SearchResult, searchNotes } from "./search.js";
  * - 이 서비스만 쓴다. sandbox workspace가 아니고, 실행하지 않는다.
  * - 경로는 `.md`로 끝나는 상대 경로만 받고, 링크는 따라가지 않는다.
  * - 있는 노트를 바꾸거나 지우려면 읽을 때 받은 hash를 내야 한다. 그 사이 바뀐 노트는 덮어쓰지 않고 거절한다.
+ * - 바뀔 때마다 wiki의 로컬 git 저장소에 커밋 하나를 남긴다 (history.ts).
  */
 
 /** 노트 하나의 최대 크기. Noah의 노트 한도(512KiB)보다 작으면 안 된다 (기존 vault를 옮겨 온다). */
@@ -221,6 +223,7 @@ export class WikiStore {
    * 쓰다 실패하면 버리고 다음에 다시 센다.
    */
   private readonly usage = new Map<string, { notes: number; bytes: number }>();
+  private readonly history = new History();
 
   constructor(
     private readonly dataDir: string,
@@ -334,8 +337,8 @@ export class WikiStore {
     return used;
   }
 
-  /** 한도를 확인하고 쓴다 (주인의 lock 안에서 부른다). `previous`는 바꾸기 전 크기 (새 노트면 null). */
-  private async put(owner: string, root: string, rel: string, bytes: Buffer, previous: number | null): Promise<string> {
+  /** 한도를 확인하고 쓴 뒤 `change`를 이력에 남긴다 (주인의 lock 안에서 부른다). `previous`는 바꾸기 전 크기 (새 노트면 null). */
+  private async put(owner: string, root: string, rel: string, bytes: Buffer, previous: number | null, change: string): Promise<string> {
     const used = await this.usageOf(owner, root);
     const { maxNotes, maxWikiBytes } = this.limits;
     if (previous === null && used.notes >= maxNotes) throw new WikiError("wiki_full", `this wiki already holds ${maxNotes} notes; delete or merge notes first`);
@@ -343,7 +346,10 @@ export class WikiStore {
     if (total > maxWikiBytes) throw new WikiError("wiki_full", `this wiki would exceed ${maxWikiBytes} bytes; delete or shorten notes first`);
     const abs = join(root, rel);
     try {
-      const made = await mkdir(dirname(abs), { recursive: true, mode: 0o700 });
+      const madeRoot = await mkdir(root, { recursive: true, mode: 0o700 });
+      await this.history.begin(root, owner);
+      const made = madeRoot ?? (await mkdir(dirname(abs), { recursive: true, mode: 0o700 }));
+      if (madeRoot) await mkdir(dirname(abs), { recursive: true, mode: 0o700 });
       await writeFile(join(root, OWNER_FILE), owner, { flag: "wx", mode: 0o600 }).catch((err: NodeJS.ErrnoException) => {
         if (err.code !== "EEXIST") throw err;
       });
@@ -359,6 +365,7 @@ export class WikiStore {
       throw err;
     }
     this.usage.set(owner, { notes: used.notes + (previous === null ? 1 : 0), bytes: total });
+    await this.history.record(root, owner, `${change} ${rel}`);
     return sha256(bytes);
   }
 
@@ -379,12 +386,12 @@ export class WikiStore {
             `${rel} is ${before.length} bytes, more than one read returns (${READ_PAGE_BYTES}), so write cannot replace it as a whole: the part that was not read would be lost. Change it with edit, or delete it and write the new note`,
           );
         }
-        return { path: rel, hash: await this.put(owner, root, rel, bytes, before.length), created: false };
+        return { path: rel, hash: await this.put(owner, root, rel, bytes, before.length, "replace"), created: false };
       }
       if ((await locate(root, rel)).size !== null) {
         throw new WikiError("exists", `${rel} already exists. Read it and pass its hash to replace it, or use edit to change part of it`);
       }
-      return { path: rel, hash: await this.put(owner, root, rel, bytes, null), created: true };
+      return { path: rel, hash: await this.put(owner, root, rel, bytes, null, "create"), created: true };
     });
   }
 
@@ -401,7 +408,7 @@ export class WikiStore {
       if (count === 0) throw new WikiError("no_match", `old_text does not occur in ${rel}. Copy it exactly from the note, including whitespace`);
       if (count > 1) throw new WikiError("ambiguous", `old_text occurs ${count} times in ${rel}. Include more surrounding text so it matches once`);
       const bytes = encode(text.replace(oldText, () => newText));
-      return { path: rel, hash: await this.put(owner, root, rel, bytes, before.length) };
+      return { path: rel, hash: await this.put(owner, root, rel, bytes, before.length, "edit") };
     });
   }
 
@@ -411,6 +418,7 @@ export class WikiStore {
       const root = this.root(owner);
       // 이미 없는 노트를 지우는 것은 충돌이 아니라 "없음"이다 (응답을 잃고 다시 보낸 삭제가 not_found로 끝난다).
       const before = await this.matching(root, rel, hash);
+      await this.history.begin(root, owner);
       const abs = join(root, rel);
       const used = this.usage.get(owner);
       this.usage.delete(owner);
@@ -420,17 +428,19 @@ export class WikiStore {
       for (let dir = dirname(abs); dir !== root; dir = dirname(dir)) {
         if (!(await rmdir(dir).then(() => true, () => false))) break;
       }
+      await this.history.record(root, owner, `delete ${rel}`);
       return { path: rel };
     });
   }
 
   /**
-   * 주인의 wiki를 통째로 지운다 (그 사용자가 지워질 때). 없는 wiki를 지워도 된다.
+   * 주인의 wiki를 이력과 함께 통째로 지운다 (그 사용자가 지워질 때). 없는 wiki를 지워도 된다.
    * 지웠다는 표시는 남기지 않는다: 그 뒤에 온 쓰기는 wiki를 다시 만든다. 부르는 쪽이 그 주인의 쓰기를 먼저 멈춘다.
    */
   async deleteAll(owner: string): Promise<void> {
     return this.locked(owner, async () => {
       this.usage.delete(owner);
+      this.history.forget(this.root(owner));
       await rm(this.root(owner), { recursive: true, force: true });
       // "지웠다"고 답한 wiki가 전원이 나가도 되살아나지 않게 한다. wiki가 하나도 없었으면 내릴 디렉토리도 없다.
       await syncDir(join(this.dataDir, "wikis")).catch(missingAsNull);

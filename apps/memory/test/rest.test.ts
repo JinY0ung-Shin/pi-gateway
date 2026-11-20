@@ -67,7 +67,10 @@ describe("프로그램용 API (/wiki/<owner>)", () => {
 
   it("목록은 자르지 않고 전부 주고, 폴더로 좁히고, 검색한다", async () => {
     const folder = "folder-with-a-long-name/".repeat(10);
-    for (let i = 0; i < 300; i++) await call("PUT", "/wiki/carol/note", { path: `${folder}note-${String(i).padStart(3, "0")}.md`, content: i === 7 ? "needle" : "hay" });
+    // 노트 300개는 볼륨에 직접 놓는다 (하나씩 쓰면 쓰기마다 커밋이 하나씩 생겨 오래 걸린다).
+    const dir = join(dataDir, "wikis", userKey("carol"), folder);
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 300; i++) writeFileSync(join(dir, `note-${String(i).padStart(3, "0")}.md`), i === 7 ? "needle" : "hay");
     await call("PUT", "/wiki/carol/note", { path: "other/a.md", content: "---\ntitle: Needle case\n---\nbody" });
     const all = await call("GET", "/wiki/carol/notes");
     expect(all.json.notes).toHaveLength(301);

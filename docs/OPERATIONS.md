@@ -12,7 +12,7 @@
 | `gateway` | `pi-gateway/gateway` (uid 10001) | edge(포트 공개, 기본 127.0.0.1), control | `/v1/responses`, 인증, pi 세션(agent loop), plugin 설치, 프롬프트, 관리 화면 | LLM 키, 내부 JWT 키, 관리 키 |
 | `sandboxd` | `pi-gateway/sandboxd` (uid 1000 + docker 그룹) | control | 사용자 sandbox 컨테이너 관리, 명령·파일 실행 | docker.sock, sandboxd JWT 키 |
 | `mcp-broker` | `pi-gateway/mcp-broker` (root, capability 없음) | control, broker-egress | 원격 MCP 서버 등록·프록시. 비밀키가 필요한 원격 HTTP 서버만 맡고 프로세스(stdio 서버)는 실행하지 않는다 | MCP 비밀키, KEK |
-| `memory` | `pi-gateway/memory` (uid 10002) | control | 사용자별 장기 메모리(markdown wiki)를 MCP로 내놓는다. MCP 페이지에 등록해야 agent가 쓴다 ([§9](#9-운영-메모) "장기 메모리") | memory 키 |
+| `memory` | `pi-gateway/memory` (uid 10002) | control | 사용자별 장기 메모리(markdown wiki)를 MCP로 내놓고, 변경 이력을 wiki마다 로컬 git에 남긴다. MCP 페이지에 등록해야 agent가 쓴다 ([§9](#9-운영-메모) "장기 메모리") | memory 키 |
 | `egress-proxy` | `pi-gateway/egress-proxy` (uid 65532, Smokescreen) | proxy-egress | sandbox의 유일한 바깥 출구. 허용 목록의 도메인·IP만 연다 | 없음 |
 | `jaeger` | `jaegertracing/jaeger` (root, capability 없음) | control | trace 저장소. 포트를 공개하지 않는다 | 없음 |
 | `sandbox-image` | `pi-gateway/sandbox` | 없음 | sandbox 이미지 빌드만 하고 끝난다 | 없음 |
@@ -404,6 +404,12 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
 - 관리 화면 **장기 메모리**에서 메모리를 가진 사용자와 사용량(노트 수·크기)을 보고, 사용자를 눌러 노트 목록·검색·전문을 본다 (읽기 전용). 열 때마다 memory 서비스에서 읽는다.
   - 누구의 wiki인지는 wiki 폴더의 `.owner` 파일(사용자 id)로 안다. 노트를 쓸 때 없으면 만든다. 이 파일이 생기기 전에 만들어졌거나 볼륨에 직접 놓은 wiki는 폴더 이름과 "주인 기록 없음"으로 보이고 열리지 않는다. 그 사용자가 다음에 노트를 쓰면 이름이 보이고, 바로 보려면 `.owner`에 사용자 id를 적어 둔다 (줄바꿈 없이, uid 10002 소유).
 - 위치: `memory-data` 볼륨의 `wikis/u-<sha256(user)[:24]>/` (디렉토리 이름을 구하는 방법은 위 workspace와 같다). 백업은 이 볼륨을 대상으로 한다.
+- 변경 이력: wiki마다 로컬 git 저장소(`<wiki>/.git`)가 있고, 노트를 만들거나 바꾸거나 지울 때마다 커밋 하나가 남는다. 제목은 `create`·`replace`·`edit`·`delete`와 노트 경로이고, 작성자는 그 wiki의 주인 id다.
+  - 밖으로 보내지 않는다 (remote가 없다). 이력도 `memory-data` 볼륨에만 있어서, 볼륨을 잃으면 노트와 이력이 함께 사라진다. 이 볼륨을 백업한다.
+  - 이력을 보거나 되돌리는 화면과 API는 없다. 볼륨에서 git으로 본다: `docker compose exec memory git --git-dir=/data/wikis/u-<키>/.git log --oneline`, 예전 내용은 `… show <커밋>:<노트 경로>`.
+  - 이력이 생기기 전에 있던 노트는 그 wiki가 처음 바뀌기 직전에 한 번 커밋된다 (`notes from before history began`). 노트가 수천 개면 그 첫 변경이 몇 초 걸린다.
+  - 이력을 남기지 못한 변경은 500으로 답한다 (노트는 이미 바뀌어 있을 수 있다). 그 변경과 볼륨에 직접 놓은 노트는 다음 커밋에 함께 들어간다.
+  - 이력의 크기는 wiki 한도에 들지 않는다. 오래된 object는 git이 스스로 묶어 줄인다.
 - 볼륨에 노트를 직접 놓을 때는 파일·폴더 이름이 NFC여야 한다 (macOS에서 복사한 한글 이름은 NFD일 수 있다). NFC가 아닌 이름의 노트는 목록과 검색에는 나오지만 열리지 않는다.
 - 한도: 노트 하나 512KiB, wiki 하나에 노트 10,000개·256MiB. 검색은 한 번에 노트 2,000개까지 읽고, 넘으면 읽지 않은 수를 결과에 알린다. 검색어는 낱말이 통째로 맞아야 하고(`deploy`는 `deployment`를 찾지 못한다), 한글은 조사가 달라도 맞는다. 순위는 BM25다 (제목·별칭, 태그, 본문 순으로 무겁다).
 - 도구 결과는 gateway가 자르는 크기(50KB)보다 작게 나눠 준다. 32KiB가 넘는 노트는 여러 번에 나눠 읽고, 통째로 바꾸지 못하고 `edit`로만 고친다 (모델이 보지 못한 뒷부분이 덮어써지지 않게). 나눠 읽는 사이에 바뀐 노트는 이어 읽지 못하고 처음부터 다시 읽는다.

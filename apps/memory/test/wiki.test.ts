@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,14 +106,14 @@ describe("쓰기와 hash", () => {
     await store.delete("alice", "deep/er/a.md", a.hash);
     expect(readdirSync(join(ownerRoot("alice"), "deep"))).toEqual(["b.md"]);
     await store.delete("alice", "deep/b.md", b.hash);
-    expect(readdirSync(ownerRoot("alice"))).toEqual([".owner"]);
+    expect(readdirSync(ownerRoot("alice"))).toEqual([".git", ".owner"]);
   });
 
   it("쓰다가 죽어 남은 임시 파일은 다음 쓰기 때 지운다", async () => {
     mkdirSync(ownerRoot("alice"), { recursive: true });
     writeFileSync(join(ownerRoot("alice"), ".0123456789abcdef.tmp"), "half written");
     await store.write("alice", "a.md", "x");
-    expect(readdirSync(ownerRoot("alice"))).toEqual([".owner", "a.md"]);
+    expect(readdirSync(ownerRoot("alice"))).toEqual([".git", ".owner", "a.md"]);
   });
 
   it("노트 크기 한도(512KiB)까지 받고, 넘으면 거절한다", async () => {
@@ -284,7 +285,13 @@ describe("목록과 검색", () => {
   });
 
   it("목록·검색 도중 노트가 지워져도 실패하지 않는다", async () => {
-    const saved = await Promise.all(Array.from({ length: 200 }, (_, i) => store.write("alice", `n/${i}.md`, "needle")));
+    // 노트 200개는 볼륨에 직접 놓는다 (하나씩 쓰면 쓰기마다 커밋이 하나씩 생겨 오래 걸린다). 지우는 것은 저장소를 거친다.
+    mkdirSync(join(ownerRoot("alice"), "n"), { recursive: true });
+    const hash = createHash("sha256").update("needle").digest("hex");
+    const saved = Array.from({ length: 200 }, (_, i) => {
+      writeFileSync(join(ownerRoot("alice"), "n", `${i}.md`), "needle");
+      return { path: `n/${i}.md`, hash };
+    });
     const deletes = saved.map((s) => store.delete("alice", s.path, s.hash));
     const reads = Array.from({ length: 20 }, (_, i) => (i % 2 ? store.list("alice") : store.search("alice", "needle")));
     // 읽기는 지워지기 전이면 되고, 지워진 뒤면 없는 노트다 (저장소 실패가 아니다).

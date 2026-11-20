@@ -1,11 +1,13 @@
 import { createLogger, createMemoryService } from "./app.js";
 import { loadMemoryConfig } from "./config.js";
+import { assertGit } from "./history.js";
 
 // 이 서비스가 만드는 파일(노트)은 이 서비스의 uid만 읽을 수 있게 한다.
 process.umask(0o077);
 
 const log = createLogger(process.env.LOG_LEVEL ?? "info");
 const config = loadMemoryConfig();
+await assertGit();
 const app = createMemoryService(config, { log });
 
 await app.listen({ host: config.host, port: config.port });

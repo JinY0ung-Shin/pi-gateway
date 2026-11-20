@@ -157,7 +157,10 @@ describe("memory 서비스 (MCP)", () => {
     expect(replaced.isError).toBe(true);
     expect(textOf(replaced)).toMatch(/^too_large: /);
 
-    for (let i = 0; i < 150; i++) await client.callTool("write", { path: `${"folder-with-a-long-name/".repeat(12)}note-${i}.md`, content: "x" });
+    // 노트 150개는 볼륨에 직접 놓는다 (하나씩 쓰면 쓰기마다 커밋이 하나씩 생겨 오래 걸린다).
+    const dir = join(dataDir, "wikis", userKey("frank"), "folder-with-a-long-name/".repeat(12));
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 150; i++) writeFileSync(join(dir, `note-${i}.md`), "x");
     const listed = textOf(await client.callTool("list", {}));
     expect(Buffer.byteLength(listed)).toBeLessThan(50 * 1024);
     expect(listed).toMatch(/^151 note\(s\):/);

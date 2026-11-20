@@ -120,11 +120,16 @@ CMD ["node", "apps/mcp-broker/dist/main.js"]
 
 # ── memory ──────────────────────────────────────────────────────────
 # 사용자별 장기 메모리(markdown wiki)를 MCP로 내놓는다. 노트는 /data 볼륨에만 있고, 실행하지 않는다.
+# git: wiki마다 변경 이력을 로컬 저장소에 남긴다 (밖으로 보내지 않는다. hook과 시스템·사용자 설정은 쓰지 않는다).
 FROM runtime AS memory
-RUN groupadd -g 10002 memory \
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && groupadd -g 10002 memory \
  && useradd -u 10002 -g 10002 -M -d /nonexistent -s /usr/sbin/nologin memory \
  && mkdir -m 0700 /data \
- && chown 10002:10002 /data
+ && chown 10002:10002 /data \
+ && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=manifests /app ./
 RUN --mount=type=cache,id=npm,target=/tmp/.npm npm ci --omit=dev --ignore-scripts --workspace @pi-gateway/memory \
  && rm -rf /tmp/node-compile-cache
