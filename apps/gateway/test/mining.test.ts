@@ -253,8 +253,20 @@ describe("mining: run", () => {
       },
     };
     // 세 번째 호출을 보낸 뒤 사람이 중지했다: 보낸 호출은 마치고, 남은 두 세션은 읽지 않고, 라벨 단계는 하지 않는다
-    const result = await run({ targets: targetsOf(...sessions), store, llm, log, concurrency: 2, stopRequested: () => calls >= 3 });
+    const sent: string[] = [];
+    const result = await run({
+      targets: targetsOf(...sessions),
+      store,
+      llm,
+      log,
+      concurrency: 2,
+      stopRequested: () => calls >= 3,
+      onProgress: (p) => sent.push(p.working.map((w) => w.session).join("+")),
+    });
     expect(most).toBe(2);
+    // 호출을 보낼 때마다 지금 무엇을 보냈는지 알린다: 두 세션을 같이 읽다가, 마지막에는 하나만 남는다
+    expect(sent).toContain("c1+c2");
+    expect(sent.at(-1)).toBe("");
     expect(result).toMatchObject({ status: "stopped", processed: 3, failed: 0, remaining: 2 });
     expect(store.pending()).toHaveLength(3);
   });
@@ -565,17 +577,17 @@ describe("mining: runs and label edits", () => {
     // 이미 끝난 실행은 다시 닫히지 않는다 (서비스가 자식 프로세스가 끝난 뒤 한 번 더 부른다)
     store.finishRun(id, { status: "failed", error: "exit 0" }, "2026-11-19T00:06:00.000Z");
     expect(store.runs(10)).toEqual([
-      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null, stage: null, stageDone: null, stageTotal: null, progressAt: null, stopRequested: false, changes: 0 },
+      { id, trigger: "manual", requestedAt: at, startedAt: at, finishedAt: "2026-11-19T00:05:00.000Z", status: "completed", processed: 3, failed: 1, remaining: 0, episodes: 4, model: "test-model", error: null, stage: null, stageDone: null, stageTotal: null, progressAt: null, stopRequested: false, working: [], changes: 0 },
     ]);
 
     // 서비스가 내려가 실행 중으로 남은 것은 다음에 뜰 때 실패로 닫는다
     const second = store.requestRun("schedule", at)!;
     store.startRun(at);
     // 실행 중에 적은 진행 상황은 결과를 남기지 못하고 죽어도 남는다
-    store.progress(second, { stage: "assign", done: 2, total: 9, processed: 4, failed: 0, remaining: 1, episodes: 6 }, at);
-    expect(store.runs(1)[0]).toMatchObject({ status: "running", stage: "assign", stageDone: 2, stageTotal: 9, processed: 4, episodes: 6, progressAt: at });
+    store.progress(second, { stage: "assign", done: 2, total: 9, processed: 4, failed: 0, remaining: 1, episodes: 6, working: [{ episode: 7 }] }, at);
+    expect(store.runs(1)[0]).toMatchObject({ status: "running", stage: "assign", stageDone: 2, stageTotal: 9, processed: 4, episodes: 6, working: [{ episode: 7 }], progressAt: at });
     store.finishRun(undefined, { status: "failed", error: "내려갔다" }, at);
-    expect(store.runs(1)[0]).toMatchObject({ id: second, trigger: "schedule", status: "failed", error: "내려갔다", stage: "assign", processed: 4, remaining: 1 });
+    expect(store.runs(1)[0]).toMatchObject({ id: second, trigger: "schedule", status: "failed", error: "내려갔다", stage: "assign", processed: 4, remaining: 1, working: [] });
   });
 
   it("refuses label edits while a run is in progress", () => {

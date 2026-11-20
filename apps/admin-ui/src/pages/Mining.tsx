@@ -30,9 +30,13 @@ interface Run {
   stageTotal: number | null;
   /** 진행 상황을 마지막으로 적은 때 */
   progressAt: string | null;
+  working: unknown[];
   /** 이 실행이 프로세스에 한 변경 수 */
   changes: number;
 }
+
+/** 지금 LLM에 보내 둔 호출 하나가 다루는 것: 읽는 세션, 붙이는 작업(목표), 검토하거나 흐름을 쓰는 프로세스(이름) */
+type Working = { kind: "session"; sessionId: string; user: string | null } | { kind: "episode" | "label"; text: string };
 
 interface Revision {
   id: number;
@@ -62,9 +66,11 @@ interface Label {
 }
 
 interface Overview {
-  /** 요청됐거나 실행 중인 실행과, 가장 최근에 끝난 실행 */
-  active: Run | null;
+  /** 요청됐거나 실행 중인 실행(지금 보낸 호출이 붙어 있다)과, 가장 최근에 끝난 실행 */
+  active: (Omit<Run, "working"> & { working: Working[] }) | null;
   last: Run | null;
+  /** 지금 실행하면 할 일: 읽을 세션 수와 프로세스에 붙여 볼 작업 수 */
+  next: { sessions: number; episodes: number };
   /** "HH:MM" (UTC) */
   dailyAt: string | null;
   /** 한 실행이 LLM을 동시에 부르는 수 */
@@ -206,7 +212,7 @@ export function MiningPage() {
 }
 
 /** 기다리거나 실행 중인 실행: 어느 단계인지, 그 단계에서 얼마나 했는지, 지금까지의 수 */
-function LiveRun(props: { run: Run; busy: boolean; onStop: () => void }) {
+function LiveRun(props: { run: NonNullable<Overview["active"]>; busy: boolean; onStop: () => void }) {
   const r = props.run;
   const now = Date.now();
   const stop = (
@@ -279,6 +285,24 @@ function LiveRun(props: { run: Run; busy: boolean; onStop: () => void }) {
       >
         <i style={total > 0 ? { width: `${(done / total) * 100}%` } : undefined} />
       </div>
+      {r.working.length > 0 && (
+        <>
+          <h3>지금 LLM에 보낸 것 {r.working.length}건</h3>
+          <ul class="plain-list working">
+            {r.working.map((w, i) =>
+              w.kind === "session" ? (
+                <li key={i}>
+                  <span class="muted">세션 읽기</span> <span class="mono">{w.user ?? "-"}</span> <a class="mono muted" href={`#/history/${enc(w.sessionId)}`}>{w.sessionId}</a>
+                </li>
+              ) : (
+                <li key={i}>
+                  <span class="muted">{w.kind === "episode" ? "작업" : "프로세스"}</span> {w.text}
+                </li>
+              ),
+            )}
+          </ul>
+        </>
+      )}
       <dl class="run-live-counts">
         <Count label="읽은 세션" value={r.processed} />
         <Count label="읽지 못한 세션" value={r.failed} tone="err" />
@@ -305,8 +329,9 @@ function Num(props: { value: number | null; tone?: "warn" | "err" }) {
   return <td class={`num ${value ? (props.tone ? `${props.tone}-text` : "") : "muted"}`}>{value === null ? "-" : value.toLocaleString()}</td>;
 }
 
-function RunSection(props: { data: Overview; active: Run | undefined; saved: string; reload: () => Promise<void> }) {
+function RunSection(props: { data: Overview; active: Overview["active"] | undefined; saved: string; reload: () => Promise<void> }) {
   const { active, saved } = props;
+  const { next } = props.data;
   const [time, setTime] = useState(saved);
   const action = useAction();
 
@@ -347,7 +372,15 @@ function RunSection(props: { data: Overview; active: Run | undefined; saved: str
       }
     >
       {action.view}
-      {active && <LiveRun run={active} busy={action.busy} onStop={stop} />}
+      {active ? (
+        <LiveRun run={active} busy={action.busy} onStop={stop} />
+      ) : (
+        <p>
+          {next.sessions + next.episodes === 0
+            ? "지금 실행해도 읽을 새 세션이 없습니다 (마지막 활동 뒤 30분 넘게 쉰 세션만 읽습니다)."
+            : `지금 실행하면 세션 ${next.sessions.toLocaleString()}개를 읽고, 뽑아 둔 작업 ${next.episodes.toLocaleString()}건과 새로 뽑는 작업을 프로세스에 붙입니다.`}
+        </p>
+      )}
       <div class="row wrap">
         <span>매일</span>
         <input type="time" value={time} aria-label="자동 실행 시각" onInput={(e) => setTime(e.currentTarget.value)} />

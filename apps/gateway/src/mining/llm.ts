@@ -1,6 +1,7 @@
 import { type Api, type Model, type Tool, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Logger } from "pino";
+import type { Working } from "./store.js";
 
 /**
  * mining의 LLM 호출: 도구 하나를 주고 그 도구를 부르게 지정한 뒤, 인자를 schema로 검증해서 돌려준다.
@@ -61,6 +62,8 @@ export function createLlm(runtime: ModelRuntime, model: Model<Api>, maxTokens: n
  */
 export class Caller {
   stopped: "time_limit" | "aborted" | "stopped" | undefined;
+  /** 지금 보내 둔 호출들이 다루는 것 */
+  readonly working = new Set<Working>();
   #failures = 0;
 
   constructor(
@@ -68,8 +71,8 @@ export class Caller {
     private readonly deadline: number,
     private readonly now: () => number,
     private readonly log: Logger,
-    /** concurrency: each가 동시에 돌리는 수. stop: 사람이 중지를 요청했는가 (호출 앞에서 묻는다) */
-    private readonly limits: { concurrency?: number; stop?: () => boolean } = {},
+    /** concurrency: each가 동시에 돌리는 수. stop: 사람이 중지를 요청했는가 (호출 앞에서 묻는다). onCall: 호출을 보낼 때마다 불린다 */
+    private readonly limits: { concurrency?: number; stop?: () => boolean; onCall?: () => void } = {},
   ) {}
 
   /** items를 동시에 concurrency개씩 처리한다. 멈춘 뒤에는 남은 것을 시작하지 않는다. */
@@ -81,8 +84,8 @@ export class Caller {
     await Promise.all(Array.from({ length: Math.min(this.limits.concurrency ?? 1, items.length) }, worker));
   }
 
-  /** about: 실패했을 때 로그에 남길 것 (세션·에피소드·라벨 id). 대화 내용은 넣지 않는다. */
-  async call<T>(tool: Tool, system: string, user: string, about: Record<string, unknown>): Promise<T | undefined> {
+  /** about: 이 호출이 다루는 것 (세션·에피소드·라벨 id). 진행 상황과 실패 로그에 쓴다. 대화 내용은 넣지 않는다. */
+  async call<T>(tool: Tool, system: string, user: string, about: Working): Promise<T | undefined> {
     if (this.stopped) return undefined;
     if (this.limits.stop?.()) {
       this.stopped = "stopped";
@@ -92,6 +95,8 @@ export class Caller {
       this.stopped = "time_limit";
       return undefined;
     }
+    this.working.add(about);
+    this.limits.onCall?.();
     try {
       const out = await this.llm.call<T>(tool, system, user);
       this.#failures = 0;
@@ -100,6 +105,8 @@ export class Caller {
       this.log.warn({ ...about, tool: tool.name, err: err instanceof Error ? err.message : String(err) }, "LLM call failed");
       if (++this.#failures >= MAX_CONSECUTIVE_FAILURES) this.stopped = "aborted";
       return undefined;
+    } finally {
+      this.working.delete(about);
     }
   }
 }

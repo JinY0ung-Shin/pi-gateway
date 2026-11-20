@@ -1426,6 +1426,22 @@ button.thumb-button {
   }
 }
 
+/* 지금 보낸 호출: 한 줄에 하나, 길면 말줄임 */
+.run-live h3 {
+  margin: 16px 0 6px;
+}
+
+.working {
+  margin: 0;
+  font-size: 13px;
+}
+
+.working li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .run-live-counts {
   display: flex;
   flex-wrap: wrap;

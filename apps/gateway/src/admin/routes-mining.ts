@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { openDatabase } from "../db.js";
 import { CRITERIA_CHARS, labelText, NAME_CHARS } from "../mining/labels.js";
-import { type Label, MAX_CONCURRENCY, MiningStore } from "../mining/store.js";
+import { IDLE_MS, type Label, MAX_CONCURRENCY, MiningStore, RECENT_MS, type Working } from "../mining/store.js";
 import type { AdminContext } from "./context.js";
 import { pageOf, PlatformError } from "./errors.js";
 
@@ -34,9 +34,25 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     };
   };
 
+  /** 지금 LLM에 보내 둔 호출이 다루는 것을 화면에 보일 말로: 세션은 그 사용자, 에피소드는 목표, 라벨은 이름 */
+  const shown = (store: MiningStore, working: Working[]) => {
+    const userOf = userLookup();
+    const labels = store.labels();
+    return working.flatMap((w): ({ kind: "session"; sessionId: string; user: string | null } | { kind: "episode" | "label"; text: string })[] => {
+      if (w.session) return [{ kind: "session", sessionId: w.session, user: userOf(w.session) }];
+      if (w.episode !== undefined) return [{ kind: "episode", text: store.goalOf(w.episode) ?? `작업 ${w.episode}` }];
+      if (w.label !== undefined) return [{ kind: "label", text: labels.find((l) => l.id === w.label)?.name ?? `프로세스 ${w.label}` }];
+      return [];
+    });
+  };
+
   app.get("/mining", async () => {
     const store = mining();
     const now = Date.now();
+    const active = store.activeRun();
+    // 지금 실행하면 읽을 세션: 실행과 같은 기준 (최근 30일, 30분 넘게 쉼, 읽은 뒤로 새 내용이 있음)
+    const cursors = store.cursors();
+    const unread = ctx.sessions.leaves(new Date(now - RECENT_MS).toISOString(), new Date(now - IDLE_MS).toISOString()).filter((s) => cursors.get(s.id) !== s.leafId).length;
     const weekAgo = new Date(now - 7 * DAY_MS).toISOString();
     const recent = store.recent(new Date(now - 30 * DAY_MS).toISOString());
     const userOf = userLookup();
@@ -52,8 +68,10 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     }
     return {
       /** 요청됐거나 실행 중인 실행 (진행 상황이 들어 있다)과, 가장 최근에 끝난 실행 */
-      active: store.activeRun() ?? null,
+      active: active ? { ...active, working: shown(store, active.working) } : null,
       last: store.lastRun() ?? null,
+      /** 지금 실행하면 할 일: 읽을 세션 수와, 프로세스에 붙여 볼 작업 수 (읽으면서 더 생긴다) */
+      next: { sessions: unread, episodes: store.pendingCount() },
       dailyAt: store.dailyAt(),
       concurrency: store.concurrency(),
       labels: store.labels().map((l) => {

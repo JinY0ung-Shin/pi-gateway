@@ -30,7 +30,7 @@ describe("admin mining", () => {
   it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
     expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
-    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, dailyAt: null, concurrency: 1, labels: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, next: { sessions: 0, episodes: 0 }, dailyAt: null, concurrency: 1, labels: [], recent30: 0, unlabeled30: 0 });
     expect((await h.admin("GET", "/mining/runs")).json).toEqual({ items: [], total: 0, pageSize: 10 });
 
     // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
@@ -66,6 +66,8 @@ describe("admin mining", () => {
     const other = store.createLabel("로그 조사", "로그를 읽어 원인을 찾는 작업", [], at);
 
     const overview = (await h.admin("GET", "/mining")).json;
+    // 아직 프로세스에 붙여 보지 않은 작업이 하나 있다. 방금 쓴 세션은 30분을 쉬지 않아 읽을 대상이 아니다
+    expect(overview.next).toEqual({ sessions: 0, episodes: 1 });
     expect(overview).toMatchObject({ recent30: 3, unlabeled30: 1 });
     expect(overview.labels).toMatchObject([
       { id: label, name: "서비스 배포", total: 2, recent7: 2, recent30: 2, users: 1, flow: null },
@@ -94,6 +96,13 @@ describe("admin mining", () => {
     expect((await h.admin("POST", "/mining/run/stop")).status).toBe(200);
     expect(store.stopRequested(run)).toBe(true);
     expect((await h.admin("GET", "/mining")).json.active).toMatchObject({ id: run, status: "running", stopRequested: true });
+    // 실행이 적어 둔 "지금 보낸 것"은 사용자·목표·프로세스 이름으로 풀어 준다
+    store.progress(run, { stage: "assign", done: 0, total: 3, processed: 1, failed: 0, remaining: 0, episodes: 3, working: [{ session: sid }, { episode: deploy! }, { label: other }, { stage: "merge" }] }, at);
+    expect((await h.admin("GET", "/mining")).json.active.working).toEqual([
+      { kind: "session", sessionId: sid, user: "alice" },
+      { kind: "episode", text: "billing 배포" },
+      { kind: "label", text: "로그 조사" },
+    ]);
     // 실행 이력은 최근 것부터 한 페이지씩
     expect((await h.admin("GET", "/mining/runs")).json).toMatchObject({ items: [{ id: run }, { id: first.json.id, status: "stopped" }], total: 2 });
     expect((await h.admin("GET", "/mining/runs?page=2")).json).toMatchObject({ items: [], total: 2 });

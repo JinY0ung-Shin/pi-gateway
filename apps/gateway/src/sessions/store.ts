@@ -237,6 +237,13 @@ export class SessionStore {
     return (row as { n: number }).n;
   }
 
+  /** 마지막 활동이 since 이후 before 전인 세션의 id와 마지막 commit의 leaf (기록이 있는 것만) */
+  leaves(since: string, before: string): { id: string; leafId: string }[] {
+    return this.db
+      .prepare("SELECT id, leaf_id AS leafId FROM sessions WHERE session_file IS NOT NULL AND leaf_id IS NOT NULL AND last_active_at >= ? AND last_active_at < ?")
+      .all(since, before) as { id: string; leafId: string }[];
+  }
+
   /** 마지막 활동이 before보다 이른 세션 id */
   inactiveSince(before: string): string[] {
     return (this.db.prepare("SELECT id FROM sessions WHERE last_active_at < ?").all(before) as { id: string }[]).map((r) => r.id);

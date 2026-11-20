@@ -81,7 +81,20 @@ const MIGRATIONS = [
    ALTER TABLE runs ADD COLUMN stage_total INTEGER;
    ALTER TABLE runs ADD COLUMN progress_at TEXT;
    ALTER TABLE runs ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE runs ADD COLUMN working TEXT`,
 ];
+
+/** 실행이 보는 세션: 마지막 활동이 이 기간 안이고, 그 뒤 이만큼은 쉬었어야 한다 (진행 중인 대화를 읽지 않게) */
+export const RECENT_MS = 30 * 86_400_000;
+export const IDLE_MS = 30 * 60_000;
+
+/** LLM 호출 하나가 다루는 것: 세션(추출), 에피소드(배정), 라벨(검토·대표 흐름), 또는 통째로 한 번 부르는 단계(발견·병합) */
+export interface Working {
+  session?: string;
+  episode?: number;
+  label?: number;
+  stage?: string;
+}
 
 /**
  * 실행이 지금 하는 일. extract(세션을 읽어 에피소드를 뽑음) → assign(배정) · discover(발견) · merge(병합)를 몇 번 →
@@ -116,6 +129,8 @@ export interface Run {
   stageTotal: number | null;
   /** 진행 상황을 마지막으로 적은 때 */
   progressAt: string | null;
+  /** 지금 LLM에 보내 둔 호출들이 다루는 것. 실행 중이 아니면 비어 있다 */
+  working: Working[];
   /** 이 실행이 라벨에 한 변경 수 (생김, 고침, 나뉨, 합쳐짐) */
   changes: number;
 }
@@ -129,6 +144,7 @@ export interface Progress {
   failed: number;
   remaining: number;
   episodes: number;
+  working: Working[];
 }
 
 export interface RunOutcome {
@@ -150,7 +166,7 @@ export function cameDue(time: string, after: number, now: number): boolean {
 }
 
 const RUN = `SELECT id, trigger, requested_at AS requestedAt, started_at AS startedAt, finished_at AS finishedAt, status, processed, failed, remaining, episodes, model, error,
-  stage, stage_done AS stageDone, stage_total AS stageTotal, progress_at AS progressAt, stop_requested AS stopRequested,
+  stage, stage_done AS stageDone, stage_total AS stageTotal, progress_at AS progressAt, stop_requested AS stopRequested, working,
   (SELECT COUNT(*) FROM label_revisions r WHERE r.run_id = runs.id) AS changes FROM runs`;
 const DAILY_AT = "daily_at";
 const CONCURRENCY = "concurrency";
@@ -302,6 +318,21 @@ export class MiningStore {
   }
 
   // ── 배정 ────────────────────────────────────────────────────────────
+
+  /** 세션 id → 분석을 마친 마지막 엔트리 id (전부) */
+  cursors(): Map<string, string> {
+    const rows = this.db.prepare("SELECT session_id, entry_id FROM session_cursor").all() as { session_id: string; entry_id: string }[];
+    return new Map(rows.map((r) => [r.session_id, r.entry_id]));
+  }
+
+  /** 에피소드의 목표 (지워졌으면 undefined) */
+  goalOf(episodeId: number): string | undefined {
+    return (this.db.prepare("SELECT goal FROM episodes WHERE id = ?").get(episodeId) as { goal: string } | undefined)?.goal;
+  }
+
+  pendingCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM episodes WHERE label_id IS NULL AND assigned_at IS NULL").get() as { n: number }).n;
+  }
 
   /** 배정 전인 에피소드 */
   pending(): Episode[] {
@@ -471,7 +502,8 @@ export class MiningStore {
   // ── 실행 ────────────────────────────────────────────────────────────
 
   #runs(rest: string, ...params: unknown[]): Run[] {
-    return (this.db.prepare(`${RUN} ${rest}`).all(...params) as Run[]).map((r) => ({ ...r, stopRequested: Boolean(r.stopRequested) }));
+    const rows = this.db.prepare(`${RUN} ${rest}`).all(...params) as (Omit<Run, "working"> & { working: string | null })[];
+    return rows.map((r) => ({ ...r, stopRequested: Boolean(r.stopRequested), working: r.working ? (JSON.parse(r.working) as Working[]) : [] }));
   }
 
   /** 최근 실행부터 offset번째부터 limit건 */
@@ -538,10 +570,10 @@ export class MiningStore {
   progress(id: number, p: Progress, at: string): void {
     this.db
       .prepare(
-        `UPDATE runs SET stage = ?, stage_done = ?, stage_total = ?, processed = ?, failed = ?, remaining = ?, episodes = ?, progress_at = ?
+        `UPDATE runs SET stage = ?, stage_done = ?, stage_total = ?, processed = ?, failed = ?, remaining = ?, episodes = ?, working = ?, progress_at = ?
          WHERE id = ? AND status = 'running'`,
       )
-      .run(p.stage, p.done, p.total, p.processed, p.failed, p.remaining, p.episodes, at, id);
+      .run(p.stage, p.done, p.total, p.processed, p.failed, p.remaining, p.episodes, JSON.stringify(p.working), at, id);
   }
 
   /**
@@ -552,7 +584,7 @@ export class MiningStore {
     this.db
       .prepare(
         `UPDATE runs SET status = ?, finished_at = ?, processed = COALESCE(?, processed), failed = COALESCE(?, failed), remaining = COALESCE(?, remaining),
-           episodes = COALESCE(?, episodes), model = ?, error = ?
+           episodes = COALESCE(?, episodes), model = ?, error = ?, working = NULL
          WHERE status = 'running' AND (? IS NULL OR id = ?)`,
       )
       .run(outcome.status, at, outcome.processed ?? null, outcome.failed ?? null, outcome.remaining ?? null, outcome.episodes ?? null, outcome.model ?? null, outcome.error ?? null, id ?? null, id ?? null);

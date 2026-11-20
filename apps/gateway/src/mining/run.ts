@@ -5,7 +5,7 @@ import { chunks, compress } from "./compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted, extractInput, toEpisodes } from "./extract.js";
 import { assign, discover, merge, review, synthesizeFlows } from "./labels.js";
 import { Caller, type Llm } from "./llm.js";
-import type { MiningStore, Progress, Stage } from "./store.js";
+import { IDLE_MS, type MiningStore, type Progress, RECENT_MS, type Stage } from "./store.js";
 
 /**
  * 한 번의 mining 실행 (docs/process-mining-design.md):
@@ -14,10 +14,6 @@ import type { MiningStore, Progress, Stage } from "./store.js";
  *    새 라벨이 생기거나 라벨이 바뀌면 다시 붙이고 또 찾는다 (한 실행 안에서 몇 번 돈다).
  */
 
-/** 마지막 활동이 이보다 오래된 세션은 보지 않는다. 라벨을 찾을 때 보는 미분류의 기간이기도 하다. */
-const RECENT_MS = 30 * 86_400_000;
-/** 마지막 활동 뒤 이만큼 지나야 본다 (진행 중인 대화를 읽지 않게) */
-const IDLE_MS = 30 * 60_000;
 /** 시작한 뒤 이만큼 지나면 새 LLM 호출을 보내지 않는다 */
 const RUN_LIMIT_MS = 3 * 3_600_000;
 /** 추출은 이만큼까지만 쓴다. 읽을 세션이 밀려 있어도 남은 시간에 라벨 단계가 돈다 */
@@ -65,7 +61,7 @@ export interface RunResult {
 }
 
 /**
- * runId: 이 실행의 id (라벨 변경 이력에 적는다). onProgress: 단계가 바뀌거나 한 건을 마칠 때마다 불린다.
+ * runId: 이 실행의 id (라벨 변경 이력에 적는다). onProgress: 단계가 바뀌거나, LLM 호출을 보내거나, 한 건을 마칠 때마다 불린다.
  * concurrency: LLM을 동시에 부르는 수 (세션 읽기, 배정, 대표 흐름. 한 세션 안의 묶음과 검토는 차례로 한다). stopRequested: 사람이 중지를 요청했는가
  */
 export async function run(deps: {
@@ -83,16 +79,32 @@ export async function run(deps: {
   const now = deps.now ?? Date.now;
   const runId = deps.runId ?? null;
   const started = now();
-  const limits = { concurrency: deps.concurrency, stop: deps.stopRequested };
+  // 호출을 보낼 때마다 진행 상황을 다시 알린다 (지금 무엇을 보냈는지가 바뀌었다)
+  const limits = { concurrency: deps.concurrency, stop: deps.stopRequested, onCall: () => send() };
   const caller = new Caller(deps.llm, started + EXTRACT_LIMIT_MS, now, log, limits);
+  /** 라벨 단계의 창구. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다 */
+  const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log, limits);
   store.prune(targets.users);
 
   const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
   const touched = new Set<number>();
   let processed = 0;
   let failed = 0;
-  const report = (stage: Stage, done = 0, total = 0) =>
-    deps.onProgress?.({ stage, done, total, processed, failed, remaining: pending.length - processed - failed, episodes: touched.size });
+  let at: { stage: Stage; done: number; total: number } | undefined;
+  const send = () =>
+    at &&
+    deps.onProgress?.({
+      ...at,
+      processed,
+      failed,
+      remaining: pending.length - processed - failed,
+      episodes: touched.size,
+      working: [...caller.working, ...labeling.working],
+    });
+  const report = (stage: Stage, done = 0, total = 0) => {
+    at = { stage, done, total };
+    send();
+  };
   const tick = (stage: Stage) => (done: number, total: number) => report(stage, done, total);
 
   /** 세션 하나를 읽는다. 끝까지 읽었으면 true, LLM을 부르지 못해 멈췄으면 false (그때까지 읽은 묶음은 저장되어 있다). */
@@ -148,9 +160,8 @@ export async function run(deps: {
     report("extract", processed + failed, pending.length);
   });
 
-  // ②~⑥ 라벨. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다. LLM 장애로 멈췄거나 사람이 중지했으면 하지 않는다.
+  // ②~⑥ 라벨. LLM 장애로 멈췄거나 사람이 중지했으면 하지 않는다.
   // 한 단계가 멈추면 labeling이 더 부르지 않으므로, 뒤 단계는 아무 일도 하지 않고 지나간다.
-  const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log, limits);
   if (caller.stopped !== "aborted" && caller.stopped !== "stopped") {
     const at = new Date(now()).toISOString();
     const since = new Date(now() - RECENT_MS).toISOString();

@@ -130,7 +130,7 @@ export interface AdminDeps {
     forwardHeaders: () => Promise<string[]>;
   };
   /** 대화 기록 보기와 보관 기간 */
-  sessions: Pick<SessionStore, "list" | "count" | "get" | "retention" | "setRetention">;
+  sessions: Pick<SessionStore, "list" | "count" | "leaves" | "get" | "retention" | "setRetention">;
   /** mining.db 파일 (관리 화면의 프로세스 마이닝). 처음 쓸 때 연다. */
   miningDbFile: string;
   /** agent가 request_admin으로 남긴 요청 */
