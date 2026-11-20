@@ -158,7 +158,7 @@ docker rm -f $(docker ps -aq --filter label=pi-gateway.sandbox=1)   # 모든 san
 | `gateway/sandboxd_jwt_secret`, `sandboxd/sandboxd_jwt_secret` | 10001 / 1000 | gateway / sandboxd | gateway→sandboxd 내부 JWT (HS256, 32바이트 이상). **두 사본이 같은 값이어야 한다** |
 | `gateway/broker_jwt_secret`, `broker/broker_jwt_secret` | 10001 / root | gateway / mcp-broker | gateway→broker 내부 JWT (MCP 호출과 관리 API 모두). 두 사본이 같은 값 |
 | `broker/broker_kek` | root | mcp-broker | MCP 비밀키 암호화 키. 정확히 32바이트를 base64로 |
-| `memory/api_key` | 10002 | memory | memory 서비스를 부르는 키 (32자 이상). MCP 페이지에 등록할 때 비밀값으로 같은 값을 넣는다. 바꾸면 그 비밀값도 다시 넣는다 |
+| `memory/api_key`, `gateway/memory_api_key` | 10002 / 10001 | memory / gateway | memory 서비스를 부르는 키 (32자 이상). 두 사본이 같은 값. gateway는 관리 화면 "장기 메모리"에서 쓴다. MCP 페이지에 등록할 때 비밀값으로 같은 값을 넣는다. 바꾸면 그 비밀값도 다시 넣는다 |
 
 **교체**
 - 같이 쓰는 값은 두 사본을 모두 바꾸고, 쓰는 서비스를 모두 다시 시작한다. 예: `docker compose up -d --force-recreate gateway sandboxd`
@@ -400,7 +400,9 @@ echo $?    # 0 = 실패 없음, 1 = FAIL/INVALID/WARN 있음, 2 = 실행 실패
   - 거절은 `{"error":{"code","message"}}`와 상태 코드로 답한다: 없는 노트 404 `not_found`(이미 지운 노트를 다시 지워도 같다), 그 사이 바뀜 409 `stale`, 이미 있음 409 `exists`, 한도 413·507, 잘못된 경로·요청 400, 키 없음 401, 저장소 실패 500 `internal`. 없는 라우트는 404 `no_route`라서 없는 노트와 구분된다.
   - wiki를 통째로 지운 뒤에 온 쓰기는 wiki를 다시 만든다. 지우기 전에 그 주인의 실행을 먼저 멈춘다.
   - memory는 포트를 공개하지 않고 control 네트워크에만 있다. 직접 부르려면 BFF가 같은 compose 스택에 있어야 하고, compose override로 memory와 BFF만 있는 internal 네트워크를 하나 더 붙인다 (BFF를 control에 넣으면 sandboxd와 broker까지 닿는다).
-  - 키 파일은 memory uid(10002) 소유의 사본 하나뿐이다. BFF 컨테이너는 같은 값의 사본을 자기 uid 소유로 따로 둔다 ([§4](#4-비밀값)의 다른 값들처럼).
+  - 키 파일은 memory(uid 10002)와 gateway(uid 10001)의 사본뿐이다. BFF 컨테이너는 같은 값의 사본을 자기 uid 소유로 따로 둔다 ([§4](#4-비밀값)의 다른 값들처럼).
+- 관리 화면 **장기 메모리**에서 메모리를 가진 사용자와 사용량(노트 수·크기)을 보고, 사용자를 눌러 노트 목록·검색·전문을 본다 (읽기 전용). 열 때마다 memory 서비스에서 읽는다.
+  - 누구의 wiki인지는 wiki 폴더의 `.owner` 파일(사용자 id)로 안다. 노트를 쓸 때 없으면 만든다. 이 파일이 생기기 전에 만들어졌거나 볼륨에 직접 놓은 wiki는 폴더 이름과 "주인 기록 없음"으로 보이고 열리지 않는다. 그 사용자가 다음에 노트를 쓰면 이름이 보이고, 바로 보려면 `.owner`에 사용자 id를 적어 둔다 (줄바꿈 없이, uid 10002 소유).
 - 위치: `memory-data` 볼륨의 `wikis/u-<sha256(user)[:24]>/` (디렉토리 이름을 구하는 방법은 위 workspace와 같다). 백업은 이 볼륨을 대상으로 한다.
 - 볼륨에 노트를 직접 놓을 때는 파일·폴더 이름이 NFC여야 한다 (macOS에서 복사한 한글 이름은 NFD일 수 있다). NFC가 아닌 이름의 노트는 목록과 검색에는 나오지만 열리지 않는다.
 - 한도: 노트 하나 512KiB, wiki 하나에 노트 10,000개·256MiB. 검색은 한 번에 노트 2,000개까지 읽고, 넘으면 읽지 않은 수를 결과에 알린다. 검색어는 낱말이 통째로 맞아야 하고(`deploy`는 `deployment`를 찾지 못한다), 한글은 조사가 달라도 맞는다. 순위는 BM25다 (제목·별칭, 태그, 본문 순으로 무겁다).
