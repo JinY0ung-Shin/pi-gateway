@@ -19,9 +19,8 @@ type Tick = (done: number, total: number) => void;
 const DISCOVER_MIN_POOL = 20;
 /** 발견: 한 번에 보여 주는 미분류 수 */
 const DISCOVER_SAMPLE = 60;
-/** 새 라벨이 되려면 필요한 에피소드 수와 서로 다른 사용자 수 */
+/** 새 라벨이 되려면 필요한 에피소드 수 */
 const LABEL_MIN_EPISODES = 5;
-const LABEL_MIN_USERS = 2;
 export const NAME_CHARS = 60;
 export const CRITERIA_CHARS = 300;
 /** 흐름 합성: 에피소드가 이만큼 늘면 대표 흐름을 다시 쓴다 */
@@ -132,36 +131,25 @@ interface Group {
 }
 
 /**
- * 모델이 제안한 묶음 중 라벨이 될 수 있는 것만 고른다: 이름·기준이 글로 쓸 만하고, 에피소드가 충분하고,
- * 두 사람 이상이 한 작업이어야 한다. 한 에피소드는 한 묶음에만 든다.
+ * 모델이 제안한 묶음 중 라벨이 될 수 있는 것만 고른다: 이름·기준이 글로 쓸 만하고, 에피소드가 충분해야 한다.
+ * 한 에피소드는 한 묶음에만 든다.
  */
-function accept(groups: readonly Group[], shown: readonly Episode[], users: ReadonlyMap<string, string>): { name: string; criteria: string; members: Episode[] }[] {
+function accept(groups: readonly Group[], shown: readonly Episode[]): { name: string; criteria: string; members: Episode[] }[] {
   const taken = new Set<number>();
   const accepted: { name: string; criteria: string; members: Episode[] }[] = [];
   for (const group of groups) {
     const name = labelText(group.name, NAME_CHARS);
     const criteria = labelText(group.criteria, CRITERIA_CHARS);
     const members = [...new Set(group.episodes)].filter((n) => n >= 1 && n <= shown.length && !taken.has(n)).map((n) => shown[n - 1]!);
-    const people = new Set(members.flatMap((e) => users.get(e.sessionId) ?? []));
-    if (!name || !criteria || members.length < LABEL_MIN_EPISODES || people.size < LABEL_MIN_USERS) continue;
+    if (!name || !criteria || members.length < LABEL_MIN_EPISODES) continue;
     for (const n of group.episodes) taken.add(n);
     accepted.push({ name, criteria, members });
   }
   return accepted;
 }
 
-/**
- * 미분류가 충분히 쌓였으면 새 라벨을 찾는다. 만든 라벨 id를 돌려준다.
- * users: 세션 id → 사용자. 한 사람만 하는 작업은 라벨이 되지 않는다.
- */
-export async function discover(
-  store: MiningStore,
-  caller: Caller,
-  users: ReadonlyMap<string, string>,
-  since: string,
-  at: string,
-  runId: number | null = null,
-): Promise<number[]> {
+/** 미분류가 충분히 쌓였으면 새 라벨을 찾는다. 만든 라벨 id를 돌려준다. */
+export async function discover(store: MiningStore, caller: Caller, since: string, at: string, runId: number | null = null): Promise<number[]> {
   if (store.unlabeledCount(since) < DISCOVER_MIN_POOL) return [];
   const sample = store.unlabeledSample(since, DISCOVER_SAMPLE);
   const labels = store.labels();
@@ -173,7 +161,7 @@ export async function discover(
   if (!out) return [];
 
   const created: number[] = [];
-  for (const group of accept(out.groups, sample, users)) {
+  for (const group of accept(out.groups, sample)) {
     store.atomic(() => {
       const id = store.createLabel(group.name, group.criteria, group.members.map((e) => e.id), at);
       store.revise({ at, runId, labelId: id, kind: "created", name: group.name, after: described(group) });
@@ -274,15 +262,7 @@ interface Review {
  * 고치거나 나눈 라벨의 에피소드는 배정 전으로 돌아가, 이어지는 배정이 새 기준으로 다시 붙인다. 바꾼 라벨 수를 돌려준다.
  * 사람이 고친 라벨은 보지 않는다.
  */
-export async function review(
-  store: MiningStore,
-  caller: Caller,
-  users: ReadonlyMap<string, string>,
-  since: string,
-  at: string,
-  runId: number | null = null,
-  tick?: Tick,
-): Promise<number> {
+export async function review(store: MiningStore, caller: Caller, since: string, at: string, runId: number | null = null, tick?: Tick): Promise<number> {
   const evidence = (l: Label) => l.count - l.reviewedCount + l.near;
   const due = store
     .labels()
@@ -309,7 +289,7 @@ export async function review(
     if (!out) continue;
     const reason = oneLine(out.reason).slice(0, REASON_CHARS);
 
-    const parts = out.decision === "split" ? accept(out.parts ?? [], members, users) : [];
+    const parts = out.decision === "split" ? accept(out.parts ?? [], members) : [];
     if (parts.length >= 2) {
       store.atomic(() => {
         for (const part of parts) {

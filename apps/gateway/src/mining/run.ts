@@ -30,8 +30,8 @@ export interface Target {
 export interface Targets {
   /** 살펴볼 세션, 최근에 쓴 것부터 */
   recent: Target[];
-  /** gateway에 있는 모든 세션: 세션 id → 사용자 */
-  users: Map<string, string>;
+  /** gateway에 있는 모든 세션의 id */
+  alive: Set<string>;
 }
 
 /** gateway DB에서 대상을 읽는다. 실행 내내 읽기 트랜잭션을 잡고 있지 않도록 시작할 때 한 번만 부른다. */
@@ -43,8 +43,8 @@ export function loadTargets(gatewayDb: Db, now = Date.now()): Targets {
        ORDER BY last_active_at DESC`,
     )
     .all(new Date(now - RECENT_MS).toISOString(), new Date(now - IDLE_MS).toISOString()) as Target[];
-  const all = gatewayDb.prepare("SELECT id, principal FROM sessions").all() as { id: string; principal: string }[];
-  return { recent, users: new Map(all.map((r) => [r.id, r.principal])) };
+  const all = gatewayDb.prepare("SELECT id FROM sessions").all() as { id: string }[];
+  return { recent, alive: new Set(all.map((r) => r.id)) };
 }
 
 export interface RunResult {
@@ -84,7 +84,7 @@ export async function run(deps: {
   const caller = new Caller(deps.llm, started + EXTRACT_LIMIT_MS, now, log, limits);
   /** 라벨 단계의 창구. 추출이 시간을 다 썼어도 남겨 둔 시간에 돈다 */
   const labeling = new Caller(deps.llm, started + RUN_LIMIT_MS, now, log, limits);
-  store.prune(targets.users);
+  store.prune(targets.alive);
 
   const pending = targets.recent.filter((t) => store.cursor(t.id) !== t.leafId);
   const touched = new Set<number>();
@@ -170,13 +170,13 @@ export async function run(deps: {
     for (let round = 0; round < DISCOVER_ROUNDS; round++) {
       await assign(store, labeling, at, tick("assign"));
       report("discover");
-      created = await discover(store, labeling, targets.users, since, at, runId);
+      created = await discover(store, labeling, since, at, runId);
       if (created.length === 0) break;
       report("merge");
       await merge(store, labeling, created, at, log, runId);
     }
     // 고치거나 나눈 라벨의 에피소드는 새 기준으로 다시 붙인다.
-    const changed = await review(store, labeling, targets.users, since, at, runId, tick("review"));
+    const changed = await review(store, labeling, since, at, runId, tick("review"));
     if (created.length > 0 || changed > 0) await assign(store, labeling, at, tick("reassign"));
     await synthesizeFlows(store, labeling, tick("flows"));
   }

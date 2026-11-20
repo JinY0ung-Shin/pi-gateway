@@ -130,7 +130,7 @@ describe("mining: run", () => {
   let n = 0;
   const newStore = () => new MiningStore(openDatabase(join(dir, `mining-${++n}.db`)));
   const target = (id: string, t: Transcript): Target => ({ id, sessionFile: t.write(id), leafId: t.leaf });
-  const targetsOf = (...recent: Target[]) => ({ recent, users: new Map(recent.map((r) => [r.id, "alice"])) });
+  const targetsOf = (...recent: Target[]) => ({ recent, alive: new Set(recent.map((r) => r.id)) });
 
   /** 미리 정한 답을 차례로 돌려주는 LLM. 답이 Error면 던진다. */
   function fakeLlm(...answers: (Extracted["episodes"] | Error)[]): Llm & { inputs: string[] } {
@@ -306,7 +306,7 @@ describe("mining: run", () => {
         return { steps: ["빌드", "배포"] } as T;
       },
     };
-    const targets = { recent: [first!, second!], users: new Map([["t1", "alice"], ["t2", "alice"], ["old", "bob"]]) };
+    const targets = { recent: [first!, second!], alive: new Set(["t1", "t2", "old"]) };
     const result = await run({ targets, store, llm, log, now: () => clock });
     expect(result).toMatchObject({ status: "time_limit", processed: 1, remaining: 1 });
     expect(calls).toEqual([EXTRACT_TOOL.name, "assign_label", "write_flow"]);
@@ -380,16 +380,15 @@ describe("mining: labels", () => {
   /** 세션 하나에 에피소드 하나를 넣는다. */
   const seed = (store: MiningStore, sessionId: string, goal: string) =>
     store.save(sessionId, [{ continues: false, startedAt: "2026-11-18T00:00:00.000Z", endedAt: "2026-11-18T01:00:00.000Z", goal, steps: ["로그 확인", "설정 수정"] }], "e1")[0]!;
-  const noSessions = (users: Map<string, string>) => ({ recent: [], users });
+  const noSessions = (alive: Set<string>) => ({ recent: [], alive });
 
   it("finds a label from unlabeled episodes, assigns the rest to it in the same run, and records the change", async () => {
     const store = newStore();
-    const users = new Map<string, string>();
-    // 배포 12건(alice·bob 번갈아), carol 혼자 한 정리 6건, 그 밖의 6건
+    const alive = new Set<string>();
+    // 배포 12건, 정리 6건, 그 밖의 6건
     const ids: number[] = [];
     for (let i = 0; i < 24; i++) {
-      const user = i < 12 ? (i % 2 ? "alice" : "bob") : i < 18 ? "carol" : "dave";
-      users.set(`s${i}`, user);
+      alive.add(`s${i}`);
       ids.push(seed(store, `s${i}`, i < 12 ? `서비스 ${i} 배포` : i < 18 ? `디스크 ${i} 정리` : `기타 ${i}`));
     }
     const numberOf = (user: string, goal: string) => Number(new RegExp(`\\[E(\\d+)\\] goal: ${goal}`).exec(user)![1]);
@@ -399,10 +398,10 @@ describe("mining: labels", () => {
     const llm = scripted({
       propose_labels: (user) => ({
         groups: [
-          // 두 사람이 한 배포 6건: 채택
+          // 배포 6건: 채택
           { name: "서비스 배포", criteria: "서비스를 운영에 올리는 작업", episodes: [0, 1, 2, 3, 4, 5].map((i) => numberOf(user, `서비스 ${i} 배포`)) },
-          // 한 사람만 한 작업: 버린다
-          { name: "디스크 정리", criteria: "디스크를 비우는 작업", episodes: [12, 13, 14, 15, 16, 17].map((i) => numberOf(user, `디스크 ${i} 정리`)) },
+          // 4건뿐: 버린다
+          { name: "디스크 정리", criteria: "디스크를 비우는 작업", episodes: [12, 13, 14, 15].map((i) => numberOf(user, `디스크 ${i} 정리`)) },
           // 이름에 링크: 버린다
           { name: "보기 http://evil.example", criteria: "x", episodes: [6, 7, 8, 9, 10, 11].map((i) => numberOf(user, `서비스 ${i} 배포`)) },
         ],
@@ -423,7 +422,7 @@ describe("mining: labels", () => {
       write_flow: () => ({ steps: ["빌드", "배포", "상태 확인"] }),
     });
     const progress: string[] = [];
-    await run({ targets: noSessions(users), store, llm, log, now: () => NOW, runId, onProgress: (p) => progress.push(`${p.stage} ${p.done}/${p.total}`) });
+    await run({ targets: noSessions(alive), store, llm, log, now: () => NOW, runId, onProgress: (p) => progress.push(`${p.stage} ${p.done}/${p.total}`) });
     // 단계가 바뀔 때와 한 건을 마칠 때마다 진행 상황을 알린다
     expect([...new Set(progress.map((p) => p.split(" ")[0]))]).toEqual(["extract", "discover", "merge", "assign", "review", "flows"]);
     expect(progress).toContain("assign 17/18");
@@ -439,21 +438,21 @@ describe("mining: labels", () => {
 
     // 근거가 더 쌓이지 않았으면 다음 실행은 아무것도 묻지 않는다
     const quiet = scripted({});
-    await run({ targets: noSessions(users), store, llm: quiet, log, now: () => NOW });
+    await run({ targets: noSessions(alive), store, llm: quiet, log, now: () => NOW });
     expect(quiet.calls).toEqual([]);
   });
 
   it("rewords a label when the review says so, and sorts its episodes again under the new criteria", async () => {
     const store = newStore();
-    const users = new Map<string, string>();
+    const alive = new Set<string>();
     const members = Array.from({ length: 10 }, (_, i) => {
-      users.set(`m${i}`, i % 2 ? "alice" : "bob");
+      alive.add(`m${i}`);
       return seed(store, `m${i}`, `서비스 ${i} 배포`);
     });
     const label = store.createLabel("배포", "배포하는 작업", members, at);
     // 가까웠지만 붙지 않은 롤백 5건
     const near = Array.from({ length: 5 }, (_, i) => {
-      users.set(`n${i}`, "carol");
+      alive.add(`n${i}`);
       return seed(store, `n${i}`, `서비스 ${i} 롤백`);
     });
     store.assign(near, null, at, label);
@@ -466,7 +465,7 @@ describe("mining: labels", () => {
       },
       write_flow: () => ({ steps: ["빌드", "배포", "확인"] }),
     });
-    await run({ targets: noSessions(users), store, llm, log, now: () => NOW });
+    await run({ targets: noSessions(alive), store, llm, log, now: () => NOW });
     expect(llm.calls).toEqual(["review_label", ...Array(15).fill("assign_label"), "write_flow"]);
     expect(store.labels()).toMatchObject([{ id: label, name: "서비스 배포와 롤백", count: 15, reviewedCount: 10, near: 0, editedAt: null }]);
     expect(store.revisions(10)).toMatchObject([
@@ -474,16 +473,11 @@ describe("mining: labels", () => {
     ]);
   });
 
-  it("splits a label into parts that each have enough work by two people, and leaves it alone otherwise", async () => {
+  it("splits a label into parts that each have enough work, and leaves it alone otherwise", async () => {
     const store = newStore();
-    const users = new Map<string, string>();
-    const seedMany = (prefix: string, goal: string, people: string[]) =>
-      Array.from({ length: 6 }, (_, i) => {
-        users.set(`${prefix}${i}`, people[i % people.length]!);
-        return seed(store, `${prefix}${i}`, `${goal} ${i}`);
-      });
-    const deploys = seedMany("d", "서비스 배포", ["alice", "bob"]);
-    const cleanups = seedMany("c", "디스크 정리", ["alice", "bob"]);
+    const seedMany = (prefix: string, goal: string) => Array.from({ length: 6 }, (_, i) => seed(store, `${prefix}${i}`, `${goal} ${i}`));
+    const deploys = seedMany("d", "서비스 배포");
+    const cleanups = seedMany("c", "디스크 정리");
     const mixed = store.createLabel("운영 작업", "운영에서 하는 작업", [...deploys, ...cleanups], at);
     const numbers = (user: string, goal: string) => [...user.matchAll(new RegExp(`\\[E(\\d+)\\] goal: ${goal}`, "g"))].map((m) => Number(m[1]));
     const caller = (llm: Llm) => new Caller(llm, NOW + 1, () => NOW, log);
@@ -500,7 +494,7 @@ describe("mining: labels", () => {
         ],
       }),
     });
-    expect(await review(store, caller(lopsided), users, since, at)).toBe(0);
+    expect(await review(store, caller(lopsided), since, at)).toBe(0);
     expect(store.labels()).toMatchObject([{ id: mixed, count: 12, reviewedCount: 12 }]);
 
     // 다시 근거가 쌓인 뒤
@@ -515,7 +509,7 @@ describe("mining: labels", () => {
         ],
       }),
     });
-    expect(await review(store, caller(split), users, since, at, 7)).toBe(1);
+    expect(await review(store, caller(split), since, at, 7)).toBe(1);
     expect(store.labels().map((l) => [l.name, l.count])).toEqual([["서비스 배포", 6], ["디스크 정리", 6]]);
     expect(store.revisions(10).map((r) => [r.runId, r.kind, r.name, r.before, r.after, r.reason])).toEqual([
       [7, "split", "운영 작업", "운영 작업 — 운영에서 하는 작업", "서비스 배포, 디스크 정리", "배포와 디스크 정리는 목적이 다르다"],
@@ -530,7 +524,7 @@ describe("mining: labels", () => {
     const label = store.createLabel("배포", "배포하는 작업", members, at);
     store.renameLabel(label, "운영 배포", "사람이 정한 기준", at);
     const llm = scripted({});
-    expect(await review(store, new Caller(llm, NOW + 1, () => NOW, log), new Map(), "2026-10-20T00:00:00.000Z", at)).toBe(0);
+    expect(await review(store, new Caller(llm, NOW + 1, () => NOW, log), "2026-10-20T00:00:00.000Z", at)).toBe(0);
     expect(llm.calls).toEqual([]);
     expect(store.labels()).toMatchObject([{ name: "운영 배포", criteria: "사람이 정한 기준", editedAt: at }]);
   });

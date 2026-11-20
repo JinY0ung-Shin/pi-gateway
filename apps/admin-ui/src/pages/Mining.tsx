@@ -377,8 +377,9 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
       ) : (
         <p>
           {next.sessions + next.episodes === 0
-            ? "지금 실행해도 읽을 새 세션이 없습니다 (마지막 활동 뒤 30분 넘게 쉰 세션만 읽습니다)."
+            ? "읽을 새 세션은 없습니다 (마지막 활동 뒤 30분 넘게 쉰 세션만 읽습니다)."
             : `지금 실행하면 세션 ${next.sessions.toLocaleString()}개를 읽고, 뽑아 둔 작업 ${next.episodes.toLocaleString()}건과 새로 뽑는 작업을 프로세스에 붙입니다.`}
+          {props.data.unlabeled30 >= 20 && ` 실행할 때마다 ${UNLABELED} ${props.data.unlabeled30.toLocaleString()}건에서 무작위로 60건을 뽑아 새 프로세스를 찾습니다.`}
         </p>
       )}
       <div class="row wrap">
