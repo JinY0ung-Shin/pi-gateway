@@ -9,7 +9,6 @@ import type { Working } from "./store.js";
  */
 
 const TIMEOUT_MS = 120_000;
-const MAX_OUTPUT_TOKENS = 2_000;
 /** LLM 호출이 이만큼 연달아 실패하면 실행을 끝낸다 (LLM 서버 장애) */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -23,7 +22,7 @@ export interface Llm {
 /** message에는 모델이 쓴 글을 넣지 않는다 (로그에 남는다). */
 export class LlmError extends Error {}
 
-export function createLlm(runtime: ModelRuntime, model: Model<Api>, maxTokens: number): Llm {
+export function createLlm(runtime: ModelRuntime, model: Model<Api>): Llm {
   // 이름을 지정한 tool choice는 API마다 모양이 다르다.
   const toolChoice = (name: string) => (model.api === "anthropic-messages" ? { type: "tool", name } : { type: "function", function: { name } });
 
@@ -32,7 +31,7 @@ export function createLlm(runtime: ModelRuntime, model: Model<Api>, maxTokens: n
     const reply = await runtime.complete(
       model,
       { systemPrompt: system, messages: [{ role: "user", content: user, timestamp: Date.now() }], tools: [tool] },
-      { toolChoice: toolChoice(tool.name), maxTokens: Math.min(maxTokens, MAX_OUTPUT_TOKENS), signal: AbortSignal.timeout(TIMEOUT_MS) } as never,
+      { toolChoice: toolChoice(tool.name), maxTokens: model.maxTokens, signal: AbortSignal.timeout(TIMEOUT_MS) } as never,
     );
     if (reply.stopReason === "error" || reply.stopReason === "aborted") throw new LlmError(`llm_error: ${reply.errorMessage ?? reply.stopReason}`);
     const call = reply.content.find((c) => c.type === "toolCall" && c.name === tool.name);

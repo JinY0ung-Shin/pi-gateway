@@ -170,6 +170,7 @@ const RUN = `SELECT id, trigger, requested_at AS requestedAt, started_at AS star
   (SELECT COUNT(*) FROM label_revisions r WHERE r.run_id = runs.id) AS changes FROM runs`;
 const DAILY_AT = "daily_at";
 const CONCURRENCY = "concurrency";
+const MODEL = "model";
 
 export interface Episode {
   id: number;
@@ -607,6 +608,16 @@ export class MiningStore {
 
   setConcurrency(value: number): void {
     this.#set(CONCURRENCY, String(value));
+  }
+
+  /** 실행이 쓰는 모델 (모델 id나 티어). 고른 적이 없으면 null: gateway의 기본 모델을 쓴다. */
+  model(): string | null {
+    return this.#setting(MODEL);
+  }
+
+  setModel(model: string | null): void {
+    if (model === null) this.db.prepare("DELETE FROM settings WHERE key = ?").run(MODEL);
+    else this.#set(MODEL, model);
   }
 
   #setting(key: string): string | null {

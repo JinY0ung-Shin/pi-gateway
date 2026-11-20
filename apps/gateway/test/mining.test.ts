@@ -4,7 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import pino from "pino";
 import { afterAll, describe, expect, it } from "vitest";
-import { createModelRuntime, LlmSettings, openDefaultModel } from "../src/agent/runtime.js";
+import { createModelRuntime, LlmSettings, openModel } from "../src/agent/runtime.js";
 import { openDatabase } from "../src/db.js";
 import { chunks, compress, render } from "../src/mining/compress.js";
 import { EXTRACT_PROMPT, EXTRACT_TOOL, type Extracted } from "../src/mining/extract.js";
@@ -324,7 +324,7 @@ describe("mining: LLM call", () => {
       const models = await createModelRuntime(writable);
       await models.update(
         LlmSettings.parse({
-          servers: [{ id: "test", api: "openai-completions", baseUrl: server.url, apiKey: "", models: [{ id: "test-model", contextWindow: 32000, maxTokens: 4096 }] }],
+          servers: [{ id: "test", api: "openai-completions", baseUrl: server.url, apiKey: "", models: [{ id: "test-model", contextWindow: 32000, maxTokens: 4096 }, { id: "other-model", contextWindow: 32000, maxTokens: 1000 }] }],
           defaultModel: "swift",
           tiers: { swift: "test-model" },
         }),
@@ -332,18 +332,23 @@ describe("mining: LLM call", () => {
       writable.close();
 
       const readonly = new Database(file, { readonly: true, fileMustExist: true });
-      const opened = (await openDefaultModel(readonly))!;
+      const opened = (await openModel(readonly))!;
+      // 마이닝 화면에서 고른 모델이 있으면 그것을 연다. 설정에 없는 모델이면 열지 않는다.
+      expect((await openModel(readonly, "other-model"))!.model.id).toBe("other-model");
+      expect(await openModel(readonly, "gone-model")).toBeUndefined();
       readonly.close();
       expect(opened.model.id).toBe("test-model");
 
       const answer = { episodes: [{ continues_previous: false, first_message: 1, last_message: 1, goal: "배포", steps: ["빌드", "배포"] }] };
       server.enqueue({ text: "I will not call the tool." }, { toolCalls: [{ name: EXTRACT_TOOL.name, arguments: answer }] });
-      const llm = createLlm(opened.runtime, opened.model, opened.config.maxTokens);
+      const llm = createLlm(opened.runtime, opened.model);
       expect(await llm.call<Extracted>(EXTRACT_TOOL, EXTRACT_PROMPT, "Log:\n[U1] 배포해줘")).toEqual(answer);
 
       expect(server.requests).toHaveLength(2);
       const request = server.requests[1]!;
       expect(request.tool_choice).toEqual({ type: "function", function: { name: EXTRACT_TOOL.name } });
+      // 출력 한도는 모델에 설정한 maxTokens 그대로다
+      expect(request.max_tokens).toBe(4096);
       expect(request.tools!.map((t) => t.function.name)).toEqual([EXTRACT_TOOL.name]);
       expect(JSON.stringify(request.messages)).toContain("[U1] 배포해줘");
 

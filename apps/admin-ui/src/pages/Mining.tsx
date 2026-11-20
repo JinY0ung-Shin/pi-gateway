@@ -75,6 +75,8 @@ interface Overview {
   dailyAt: string | null;
   /** 한 실행이 LLM을 동시에 부르는 수 */
   concurrency: number;
+  /** 실행이 쓰는 모델. null이면 gateway의 기본 모델 */
+  model: string | null;
   labels: Label[];
   recent30: number;
   unlabeled30: number;
@@ -359,6 +361,14 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
       await api("PUT", "/mining/concurrency", { value: nextParallel });
       await props.reload();
     }, "저장했습니다. 다음 실행부터 적용됩니다.");
+  // 고를 수 있는 모델은 채팅 화면과 같다 (티어와 모든 서버의 모델)
+  const { data: llm } = useLoad<{ models: { id: string }[]; defaultModel: string | null }>("/chat/options");
+  const { model } = props.data;
+  const saveModel = (next: string) =>
+    action.run(async () => {
+      await api("PUT", "/mining/model", { model: next || null });
+      await props.reload();
+    }, "저장했습니다. 다음 실행부터 적용됩니다.");
   // 개요를 다시 읽을 때마다 (실행 중에는 3초마다) 이력도 다시 읽는다
   const runs = usePaged<{ items: Run[]; total: number; pageSize: number }>("/mining/runs", props.data);
 
@@ -406,6 +416,19 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
         <span class="muted small-text">
           1–{MAX_CONCURRENCY}. 세션 읽기·배정·대표 흐름을 이 수만큼 한꺼번에 합니다. 사용자 대화와 같은 LLM 서버를 쓰므로 서버가 받을 수 있는 만큼만 올립니다. 다음 실행부터 적용됩니다.
         </span>
+      </div>
+      <div class="row wrap">
+        <label for="mining-model">모델</label>
+        <select id="mining-model" value={model ?? ""} disabled={action.busy || !llm} onChange={(e) => void saveModel(e.currentTarget.value)}>
+          <option value="">기본 모델{llm?.defaultModel ? ` (${llm.defaultModel})` : ""}</option>
+          {model && llm && !llm.models.some((m) => m.id === model) && <option value={model}>{model} (LLM 설정에 없음)</option>}
+          {llm?.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id}
+            </option>
+          ))}
+        </select>
+        <span class="muted small-text">작업을 뽑고 프로세스로 분류하는 데 쓰는 모델입니다. 다음 실행부터 적용됩니다.</span>
       </div>
       <details>
         <summary>한 번 실행하면 하는 일</summary>

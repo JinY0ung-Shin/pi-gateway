@@ -11,7 +11,7 @@ const EPISODE_PAGE = 20;
 const DAY_MS = 86_400_000;
 
 /**
- * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수,
+ * 프로세스 마이닝 관리 (docs/process-mining-design.md): 지금 실행의 진행 상황과 실행 이력, "지금 실행"과 중지, 매일 자동 실행 시각, 동시 호출 수, 모델,
  * 프로세스(라벨) 목록과 그 작업(에피소드), 라벨 변경 이력, 사람이 하는 라벨 수정.
  * 실행은 mining 서비스가 한다. gateway는 mining.db에 실행·중지 요청과 설정, 라벨 수정만 쓴다.
  */
@@ -74,6 +74,8 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       next: { sessions: unread, episodes: store.pendingCount() },
       dailyAt: store.dailyAt(),
       concurrency: store.concurrency(),
+      /** 실행이 쓰는 모델. null이면 gateway의 기본 모델 */
+      model: store.model(),
       labels: store.labels().map((l) => {
         const s = stats.get(l.id);
         return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, editedAt: l.editedAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
@@ -118,6 +120,17 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     mining().setConcurrency(value);
     ctx.log.info({ concurrency: value }, "mining concurrency updated");
     return { value };
+  });
+
+  /** model: 모델 id나 티어, 또는 null (gateway의 기본 모델을 따른다) */
+  app.put<{ Body: { model?: unknown } | null }>("/mining/model", async (req) => {
+    const model = req.body?.model;
+    if (model !== null && (typeof model !== "string" || !ctx.llm.list().some((m) => m.id === model))) {
+      throw new PlatformError(400, "invalid_model", "model must be one of the configured models or tiers, or null");
+    }
+    mining().setModel(model);
+    ctx.log.info({ model }, "mining model updated");
+    return { model };
   });
 
   app.put<{ Body: { dailyAt?: unknown } | null }>("/mining/schedule", async (req) => {

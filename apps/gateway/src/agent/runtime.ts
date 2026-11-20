@@ -547,21 +547,23 @@ export async function testLlmModel(server: LlmServer, modelId: string, timeoutMs
 }
 
 /**
- * 저장된 설정의 기본 모델 하나만 등록한 runtime (gateway 밖에서 도는 mining용). 설정이 없으면 undefined.
+ * 저장된 설정의 모델 하나만 등록한 runtime (gateway 밖에서 도는 mining용). name(모델 id나 티어)을 주지 않으면 기본 모델이다.
+ * 설정이 없거나 그 모델이 없으면 undefined.
  * DB는 읽기만 한다 — createModelRuntime과 달리 migrate를 돌리지 않으므로 읽기 전용 연결을 넘길 수 있다.
  */
-export async function openDefaultModel(db: Db): Promise<{ runtime: ModelRuntime; model: Model<Api>; config: LlmModelConfig } | undefined> {
+export async function openModel(db: Db, name?: string): Promise<{ runtime: ModelRuntime; model: Model<Api> } | undefined> {
   process.env.PI_OFFLINE ??= "1";
   const row = db.prepare("SELECT settings_json FROM llm_settings WHERE id = 1").get() as { settings_json: string } | undefined;
   if (!row) return undefined;
   const settings = LlmSettings.parse(JSON.parse(row.settings_json));
-  const id = settings.tiers[settings.defaultModel as Tier] ?? settings.defaultModel;
+  name ??= settings.defaultModel;
+  const id = settings.tiers[name as Tier] ?? name;
   const server = settings.servers.find((s) => s.models.some((m) => m.id === id));
   const config = server?.models.find((m) => m.id === id);
   if (!server || !config) return undefined;
   const runtime = await createRuntime();
   await register(runtime, { ...server, models: [config] });
-  return { runtime, model: runtime.getModel(server.id, id)!, config };
+  return { runtime, model: runtime.getModel(server.id, id)! };
 }
 
 /** System One 서버에 짧은 choice 질문을 보낸다. 세션과 같은 pi 경로를 쓰되, 저장하기 전 설정도 시험할 수 있도록 따로 만든 runtime에 등록한다. */

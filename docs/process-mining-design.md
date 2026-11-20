@@ -244,7 +244,7 @@ LLM이 만든 문자열은 화면에서 글자 그대로 그린다 (HTML이나 M
 
 | 항목 | 내용 |
 |---|---|
-| 전송 | 기본 모델의 서버로 보낸다. 서버가 여러 대면, 그 세션을 처리하지 않은 사내 서버가 대화를 받는다 |
+| 전송 | 마이닝 화면에서 고른 모델(고르지 않았으면 기본 모델)의 서버로 보낸다. 서버가 여러 대면, 그 세션을 처리하지 않은 사내 서버가 대화를 받는다 |
 | 기록의 가림 범위 | `sandbox_env` 값은 도구 결과에서만 가려진다. 사용자 메시지와 도구 인자는 원문 그대로 JSONL에 있다 |
 | 비밀 | 5.2의 마스킹을 입력과 출력 양쪽에 건다. 로그에는 원문을 찍지 않는다 |
 | 격리 | 전용 compose 서비스로 돌린다 (10절). 비밀 없음, `edge` 네트워크만, `/data` 읽기 전용. gateway는 결과 볼륨에 실행 요청, 자동 실행 시각, 라벨 수정만 쓴다 |
@@ -264,7 +264,7 @@ LLM이 만든 문자열은 화면에서 글자 그대로 그린다 (HTML이나 M
 - **코드**: `apps/gateway/src/mining/`에 별도 진입점 둘. `service.ts`는 늘 떠서 10초마다 요청과 자동 실행 시각을 보고, 실행할 때마다 `main.ts`를 자식 프로세스로 띄운다. pi runtime은 실행하는 동안만 메모리에 있고, 실행이 죽어도 서비스는 남아 그 실행을 "실패"로 닫는다. gateway 프로세스는 `store.ts`와 `labels.ts`의 문자열 검사만 쓴다.
 - **gateway가 실행을 직접 띄우지 않는 이유**: gateway에는 컨테이너를 만들 권한이 없고, 대화 분석을 비밀을 가진 프로세스 안에서 돌리지 않는다. 그래서 gateway는 `runs`에 요청 행만 쓰고 mining 서비스가 가져간다.
 - **`gateway.db` 열기**: `new Database(path, { readonly: true, fileMustExist: true })`로 직접 열고 SELECT만 쓴다. `openDatabase`, `SessionStore`, `createModelRuntime`은 쓰지 않는다. 이들은 쓰기로 열거나 `migrate`를 돌려서, 새 이미지의 miner가 아직 옛 버전인 gateway의 DB를 바꿀 수 있다.
-- **LLM**: `llm_settings`의 JSON을 읽어 기본 모델(티어면 가리키는 모델)의 서버를 등록한다. `runtime.ts`의 `createRuntime`·`register`를 export해서 `testLlmModel`과 같은 방식으로 쓴다.
+- **LLM**: `llm_settings`의 JSON을 읽어 마이닝 화면에서 고른 모델(고르지 않았으면 기본 모델. 티어면 가리키는 모델)의 서버를 등록한다. 출력 한도는 그 모델의 maxTokens다. `runtime.ts`의 `createRuntime`·`register`를 export해서 `testLlmModel`과 같은 방식으로 쓴다.
 - **compose**: 같은 이미지를 쓰는 `mining` 서비스를 늘 띄운다. gateway도 `mining-data`를 쓰기로 mount한다 (둘 다 uid 10001).
 
 ```yaml

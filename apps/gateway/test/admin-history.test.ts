@@ -30,7 +30,7 @@ describe("admin mining", () => {
   it("requests a run, sets the daily time, and shows processes with their work by user", async () => {
     // 관리자 로그인이 있어야 한다
     expect((await fetch(`${h.url}/admin/api/mining`)).status).toBe(401);
-    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, next: { sessions: 0, episodes: 0 }, dailyAt: null, concurrency: 1, labels: [], recent30: 0, unlabeled30: 0 });
+    expect((await h.admin("GET", "/mining")).json).toEqual({ active: null, last: null, next: { sessions: 0, episodes: 0 }, dailyAt: null, concurrency: 1, model: null, labels: [], recent30: 0, unlabeled30: 0 });
     expect((await h.admin("GET", "/mining/runs")).json).toEqual({ items: [], total: 0, pageSize: 10 });
 
     // mining 서비스가 하는 일은 같은 파일을 연 store로 흉내 낸다
@@ -50,6 +50,14 @@ describe("admin mining", () => {
     expect((await h.admin("PUT", "/mining/concurrency", { value: 0 })).json.error.code).toBe("invalid_concurrency");
     expect((await h.admin("PUT", "/mining/concurrency", { value: 4 })).json).toEqual({ value: 4 });
     expect(store.concurrency()).toBe(4);
+
+    // 모델: 설정된 모델이나 티어만 고를 수 있고, null이면 기본 모델로 돌아간다
+    expect((await h.admin("PUT", "/mining/model", { model: "no-such-model" })).json.error.code).toBe("invalid_model");
+    expect((await h.admin("PUT", "/mining/model", { model: "think-model" })).json).toEqual({ model: "think-model" });
+    expect(store.model()).toBe("think-model");
+    expect((await h.admin("GET", "/mining")).json.model).toBe("think-model");
+    expect((await h.admin("PUT", "/mining/model", { model: null })).json).toEqual({ model: null });
+    expect(store.model()).toBeNull();
 
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "25:00" })).json.error.code).toBe("invalid_schedule");
     expect((await h.admin("PUT", "/mining/schedule", { dailyAt: "18:00" })).json).toEqual({ dailyAt: "18:00" });
