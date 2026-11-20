@@ -1,10 +1,26 @@
 # pi-gateway
 
+## What this is: the team's harness
+
+pi-gateway is where a team's agent harness lives: what an agent knows and what it can do — sessions and the
+sandbox, tools and MCP, skills and plugins, prompts, long-term memory, and the policies over them.
+A client (a BFF such as Noah) owns the conversation with people: the chat, the screens, who talks to whom.
+When a capability could live on either side, that is the test.
+
+Decided 2026-11-20, not built yet — these count as requested, not speculative:
+- One login path, OIDC, shared with the clients (a bundled Keycloak first; a corporate IdP by changing the issuer).
+- A client states per request whose memory a run may open and with which access; pi enforces it.
+- The team's wiki moves here next to each user's memory: its history, its schema and policy checks, and a
+  draft → commit pair where a commit needs a person's token.
+
 ## Principle: nothing left to take away
 
 A good product is not one with nothing left to add, but one with nothing left to take away.
 This repo exists to shed weight; that is why it is built on pi.
 If it grows heavy again, it has lost its reason to exist.
+
+The principle decides how a harness capability is built — the smallest thing that does the job, nothing in
+advance — not whether one the team needs belongs here.
 
 ## Rules
 
