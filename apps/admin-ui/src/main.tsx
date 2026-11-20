@@ -8,6 +8,7 @@ import { HistoryPage } from "./pages/History";
 import { LlmPage } from "./pages/Llm";
 import { Login } from "./pages/Login";
 import { McpPage } from "./pages/Mcp";
+import { MemoryPage } from "./pages/Memory";
 import { MiningPage } from "./pages/Mining";
 import { PluginsPage } from "./pages/Plugins";
 import { PromptsPage } from "./pages/Prompts";
@@ -33,6 +34,7 @@ const PAGES: { id: string; group: string; label: string; desc: string; view: (ar
   { id: "timing", group: "운영", label: "실행 시간", desc: "최근 턴의 trace로 본 시간 통계: 턴 시간과 추이, 시간이 쓰인 곳, 모델 응답 속도, 느린 단계와 턴", view: () => <TimingPage /> },
   { id: "chat", group: "운영", label: "채팅 테스트", desc: "운영과 같은 도구·MCP·skill 구성으로 대화해 봅니다", view: () => <ChatPage /> },
   { id: "history", group: "운영", label: "대화 기록", desc: "서버에 저장된 세션의 대화·시스템 프롬프트와 보관 기간", view: (arg) => <HistoryPage focus={arg} /> },
+  { id: "memory", group: "운영", label: "장기 메모리", desc: "사용자별 장기 메모리(wiki)의 사용량과 노트 (읽기 전용)", view: (arg) => <MemoryPage focus={arg} /> },
   { id: "mining", group: "운영", label: "프로세스 마이닝", desc: "대화 기록에서 뽑은 작업과 프로세스(작업 유형): 실행과 이력, 프로세스 수정, 사용자별 작업", view: () => <MiningPage /> },
   { id: "requests", group: "운영", label: "요청", desc: "agent가 request_admin으로 남긴 요청 (패키지 설치, 막힌 도메인, 없는 도구 등). 처리하면 지웁니다", view: () => <RequestsPage /> },
 ];

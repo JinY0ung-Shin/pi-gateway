@@ -80,7 +80,7 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
       prompt: store.prompt(),
       labels: store.labels().map((l) => {
         const s = stats.get(l.id);
-        return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, editedAt: l.editedAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
+        return { id: l.id, name: l.name, criteria: l.criteria, createdAt: l.createdAt, flow: l.flow, total: l.count, recent7: s?.recent7 ?? 0, recent30: s?.recent30 ?? 0, users: s?.users.size ?? 0 };
       }),
       /** 최근 30일에 끝난 에피소드 수와, 그중 라벨이 없는 것 */
       recent30: recent.length,
@@ -110,7 +110,7 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
 
   app.post("/mining/run", async () => request("manual"));
 
-  /** 있는 프로세스의 이름만 지금 모델과 추가 프롬프트로 다시 짓는 실행 (사람이 고친 것은 빼고) */
+  /** 있는 프로세스의 이름만 지금 모델과 추가 프롬프트로 다시 짓는 실행 */
   app.post("/mining/rename", async () => request("rename"));
 
   app.post("/mining/run/stop", async () => {
@@ -212,7 +212,7 @@ export function registerMiningRoutes(app: FastifyInstance, ctx: AdminContext): v
     return edit("mining label renamed", (store) => {
       const label = labelOf(store, req.params.id);
       const at = new Date().toISOString();
-      store.renameLabel(label.id, name, criteria, at);
+      store.renameLabel(label.id, name, criteria);
       store.revise({ at, runId: null, labelId: label.id, kind: "refined", name, before: `${label.name} — ${label.criteria}`, after: `${name} — ${criteria}` });
       return { label: label.id };
     });

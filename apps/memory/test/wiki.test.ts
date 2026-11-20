@@ -105,14 +105,14 @@ describe("쓰기와 hash", () => {
     await store.delete("alice", "deep/er/a.md", a.hash);
     expect(readdirSync(join(ownerRoot("alice"), "deep"))).toEqual(["b.md"]);
     await store.delete("alice", "deep/b.md", b.hash);
-    expect(readdirSync(ownerRoot("alice"))).toEqual([]);
+    expect(readdirSync(ownerRoot("alice"))).toEqual([".owner"]);
   });
 
   it("쓰다가 죽어 남은 임시 파일은 다음 쓰기 때 지운다", async () => {
     mkdirSync(ownerRoot("alice"), { recursive: true });
     writeFileSync(join(ownerRoot("alice"), ".0123456789abcdef.tmp"), "half written");
     await store.write("alice", "a.md", "x");
-    expect(readdirSync(ownerRoot("alice"))).toEqual(["a.md"]);
+    expect(readdirSync(ownerRoot("alice"))).toEqual([".owner", "a.md"]);
   });
 
   it("노트 크기 한도(512KiB)까지 받고, 넘으면 거절한다", async () => {

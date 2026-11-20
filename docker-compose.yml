@@ -219,6 +219,8 @@ services:
       SANDBOXD_URL: http://sandboxd:7070
       SANDBOXD_JWT_SECRET_FILE: /run/secrets/sandboxd_jwt_secret
       BROKER_JWT_SECRET_FILE: /run/secrets/broker_jwt_secret
+      # 관리 화면이 사용자별 장기 메모리를 보여 줄 때 memory 서비스를 부르는 키
+      MEMORY_API_KEY_FILE: /run/secrets/memory_api_key
       JAEGER_HOST: jaeger
       # 세션
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-300}
@@ -247,6 +249,8 @@ services:
         target: sandboxd_jwt_secret
       - source: gw_broker_jwt_secret
         target: broker_jwt_secret
+      - source: gw_memory_api_key
+        target: memory_api_key
     volumes:
       - gateway-data:/data
       # 관리 화면의 프로세스 마이닝: mining.db를 읽고, 실행 요청·자동 실행 시각·라벨 수정을 쓴다
@@ -333,6 +337,8 @@ secrets:
     file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/sandboxd_jwt_secret
   gw_broker_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/broker_jwt_secret
+  gw_memory_api_key:
+    file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/gateway/memory_api_key
   # sandboxd (uid 1000)
   sbx_sandboxd_jwt_secret:
     file: ${PI_GATEWAY_SECRETS:-${PI_GATEWAY_HOME}/secrets}/sandboxd/sandboxd_jwt_secret

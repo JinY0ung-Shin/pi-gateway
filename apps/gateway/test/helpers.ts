@@ -95,6 +95,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     LOG_LEVEL: "silent",
     BROKER_URL: broker.url,
     BROKER_JWT_SECRET: BROKER_SECRET,
+    MEMORY_API_KEY: "m".repeat(40),
     ...(options.env ?? {}),
   };
   const config = loadConfig(env);

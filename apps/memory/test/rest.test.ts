@@ -132,4 +132,24 @@ describe("프로그램용 API (/wiki/<owner>)", () => {
     expect((await call("PUT", "/wiki/alice/note", { path: "pwn.md", content: "x" }, {})).status).toBe(401);
     expect((await call("GET", "/wiki/alice/note?path=pwn.md")).status).toBe(404);
   });
+
+  it("모든 wiki의 주인과 사용량을 준다; 주인이 적히지 않은 wiki는 owner가 null이다", async () => {
+    await call("PUT", "/wiki/listed-owner/note", { path: "a.md", content: "12345" });
+    await call("PUT", "/wiki/listed-owner/note", { path: "dir/b.md", content: "678" });
+    // 볼륨에 직접 놓인 wiki, 그리고 다른 사람을 가리키는 주인 파일
+    mkdirSync(join(dataDir, "wikis", "u-direct"), { recursive: true });
+    writeFileSync(join(dataDir, "wikis", "u-direct", "n.md"), "x");
+    mkdirSync(join(dataDir, "wikis", userKey("mislabeled-owner")), { recursive: true });
+    writeFileSync(join(dataDir, "wikis", userKey("mislabeled-owner"), ".owner"), "listed-owner");
+
+    const { status, json } = await call("GET", "/wikis");
+    expect(status).toBe(200);
+    const of = (key: string) => json.wikis.find((w: { key: string }) => w.key === key);
+    expect(of(userKey("listed-owner"))).toEqual({ key: userKey("listed-owner"), owner: "listed-owner", notes: 2, bytes: 8 });
+    expect(of("u-direct")).toEqual({ key: "u-direct", owner: null, notes: 1, bytes: 1 });
+    expect(of(userKey("mislabeled-owner"))).toEqual({ key: userKey("mislabeled-owner"), owner: null, notes: 0, bytes: 0 });
+    // 주인 파일은 노트가 아니다
+    expect((await call("GET", "/wiki/listed-owner/notes")).json.notes.map((n: { path: string }) => n.path)).toEqual(["a.md", "dir/b.md"]);
+    expect((await call("GET", "/wikis", undefined, {})).status).toBe(401);
+  });
 });

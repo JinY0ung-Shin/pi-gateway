@@ -1,8 +1,8 @@
 import { isUtf8 } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { searchTerms, userKey } from "@pi-gateway/shared";
+import { isValidUserId, searchTerms, userKey } from "@pi-gateway/shared";
 import { type SearchResult, searchNotes } from "./search.js";
 
 /**
@@ -59,6 +59,15 @@ export interface NoteEntry {
   bytes: number;
 }
 
+export interface WikiEntry {
+  /** wiki 폴더 이름 (`u-<hash>`) */
+  key: string;
+  /** 주인 id. 주인이 적히기 전에 만들어졌거나 볼륨에 직접 놓인 wiki는 null이다 (다음 쓰기 때 적힌다). */
+  owner: string | null;
+  notes: number;
+  bytes: number;
+}
+
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 /** 없는 파일은 null로 본다. 그 밖의 실패는 그대로 던진다. */
@@ -66,6 +75,12 @@ const missingAsNull = (err: NodeJS.ErrnoException) => {
   if (err.code === "ENOENT") return null;
   throw err;
 };
+
+/**
+ * wiki 맨 위에 주인 id를 적어 두는 파일. 폴더 이름은 id의 hash라서 이것이 없으면 누구의 wiki인지 알 수 없다 (`wikis`).
+ * 점으로 시작해서 노트가 될 수 없고, 목록·검색·사용량에 들지 않는다.
+ */
+const OWNER_FILE = ".owner";
 
 /** 쓰는 동안만 있는 임시 파일 (wiki 맨 위에 둔다) */
 const TMP_NAME = /^\.[0-9a-f]{16}\.tmp$/;
@@ -329,6 +344,9 @@ export class WikiStore {
     const abs = join(root, rel);
     try {
       const made = await mkdir(dirname(abs), { recursive: true, mode: 0o700 });
+      await writeFile(join(root, OWNER_FILE), owner, { flag: "wx", mode: 0o600 }).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "EEXIST") throw err;
+      });
       await atomicWrite(root, abs, bytes);
       // "저장했다"고 답한 노트가 남도록, 새 이름이 생긴 디렉토리(노트의 폴더와 새로 만든 폴더들의 부모)를 디스크에 내린다.
       const top = made ? dirname(made) : dirname(abs);
@@ -417,6 +435,26 @@ export class WikiStore {
       // "지웠다"고 답한 wiki가 전원이 나가도 되살아나지 않게 한다. wiki가 하나도 없었으면 내릴 디렉토리도 없다.
       await syncDir(join(this.dataDir, "wikis")).catch(missingAsNull);
     });
+  }
+
+  /** 이 서비스에 있는 모든 wiki와 그 사용량 (관리 화면의 사용자 목록). 열 때마다 센다. */
+  async wikis(): Promise<WikiEntry[]> {
+    const base = join(this.dataDir, "wikis");
+    const wikis: WikiEntry[] = [];
+    for (const entry of (await readdir(base, { withFileTypes: true }).catch(missingAsNull)) ?? []) {
+      if (!entry.isDirectory()) continue;
+      const root = join(base, entry.name);
+      const owner = (await readFile(join(root, OWNER_FILE), "utf8").catch(missingAsNull)) ?? "";
+      const notes = await sized(await walk(root, ""));
+      wikis.push({
+        key: entry.name,
+        // 손으로 놓은 파일이 다른 사람을 가리키면 믿지 않는다.
+        owner: isValidUserId(owner) && userKey(owner) === entry.name ? owner : null,
+        notes: notes.length,
+        bytes: notes.reduce((sum, n) => sum + n.bytes, 0),
+      });
+    }
+    return wikis;
   }
 
   async search(owner: string, query: string, limit?: number, prefix?: string): Promise<SearchResult> {

@@ -8,6 +8,7 @@ const base = {
   API_KEY: "service-key-0123456789",
   SANDBOXD_JWT_SECRET: "x".repeat(40),
   BROKER_JWT_SECRET: "y".repeat(40),
+  MEMORY_API_KEY: "z".repeat(40),
 };
 
 describe("gateway config", () => {

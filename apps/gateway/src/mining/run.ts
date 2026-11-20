@@ -154,7 +154,7 @@ export async function run(deps: {
   };
 
   if (deps.rename) {
-    await rename(store, labeling, new Date(now()).toISOString(), runId, tick("rename"));
+    await rename(store, labeling, new Date(now()).toISOString(), log, runId, tick("rename"));
     return result();
   }
 

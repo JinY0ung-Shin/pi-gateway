@@ -260,13 +260,12 @@ interface Review {
 /**
  * 근거가 새로 쌓인 라벨을 다시 본다: 그대로 두거나, 이름·기준을 고치거나, 서로 다른 작업이 섞였으면 나눈다.
  * 고치거나 나눈 라벨의 에피소드는 배정 전으로 돌아가, 이어지는 배정이 새 기준으로 다시 붙인다. 바꾼 라벨 수를 돌려준다.
- * 사람이 고친 라벨은 보지 않는다.
  */
 export async function review(store: MiningStore, caller: Caller, since: string, at: string, runId: number | null = null, tick?: Tick): Promise<number> {
   const evidence = (l: Label) => l.count - l.reviewedCount + l.near;
   const due = store
     .labels()
-    .filter((l) => !l.editedAt && (l.count - l.reviewedCount >= REVIEW_GROWTH || l.near >= REVIEW_NEAR))
+    .filter((l) => l.count - l.reviewedCount >= REVIEW_GROWTH || l.near >= REVIEW_NEAR)
     .sort((a, b) => evidence(b) - evidence(a) || a.id - b.id)
     .slice(0, REVIEW_MAX);
   let changed = 0;
@@ -324,12 +323,13 @@ export async function review(store: MiningStore, caller: Caller, since: string, 
 
 // ── 이름 다시 짓기 (사람이 요청한 실행) ──────────────────────────────
 
-const RENAME_PROMPT = `You are given one task label. Write its name again.
+const RENAME_PROMPT = `You are given one task label. Write its name again so that it follows the naming rules.
 
-- name: a short noun phrase in Korean, at most 40 characters, for the task that the criteria describe. It must tell the label apart from the other labels.
-- The criteria stay as they are, so the name must still mean the same task.
-- If the current name is already the right one, give it back unchanged.
-- Plain text only: no line breaks, links or markup.`;
+- The naming rules are whatever the operator's instructions at the end of this prompt say about label names. They come before the default below. If the current name does not follow them, change it, even when it is otherwise a good name.
+- Default, where the operator gives no rule: a short noun phrase in Korean, at most 40 characters.
+- The name is for the task that the criteria describe, and must tell the label apart from the other labels. The criteria stay as they are, so the name must still mean the same task.
+- Give the current name back unchanged only if it already follows every rule.
+- Always: plain text on one line, at most ${NAME_CHARS} characters, no links, and none of the characters \` < > [ ] | # *. A name that breaks this is thrown away.`;
 
 const RENAME_TOOL: Tool = {
   name: "rename_label",
@@ -339,10 +339,10 @@ const RENAME_TOOL: Tool = {
 
 /**
  * 라벨의 이름만 다시 짓는다 (추가 프롬프트를 바꾼 뒤, 이미 있는 라벨에도 적용하려고). 기준과 배정은 그대로다. 바꾼 라벨 수를 돌려준다.
- * 다른 라벨의 지금 이름을 보여 주려고 차례로 한다. 사람이 고친 라벨은 보지 않는다.
+ * 다른 라벨의 지금 이름을 보여 주려고 차례로 한다.
  */
-export async function rename(store: MiningStore, caller: Caller, at: string, runId: number | null = null, tick?: Tick): Promise<number> {
-  const due = store.labels().filter((l) => !l.editedAt);
+export async function rename(store: MiningStore, caller: Caller, at: string, log: Logger, runId: number | null = null, tick?: Tick): Promise<number> {
+  const due = store.labels();
   let changed = 0;
   for (const [done, label] of due.entries()) {
     tick?.(done, due.length);
@@ -350,8 +350,14 @@ export async function rename(store: MiningStore, caller: Caller, at: string, run
     const input = [`Label to rename:\n${labelLine(label)}`, others.length > 0 ? `Other labels:\n${others.map(labelLine).join("\n")}` : ""].filter(Boolean).join("\n\n");
     const out = await caller.call<{ name: string }>(RENAME_TOOL, RENAME_PROMPT, input, { label: label.id });
     if (caller.stopped) return changed;
-    const name = out && labelText(out.name, NAME_CHARS);
-    if (!name || name === label.name) continue;
+    if (!out) continue;
+    const name = labelText(out.name, NAME_CHARS);
+    if (!name) {
+      // 이름은 찍지 않는다 (모델이 쓴 글이다)
+      log.warn({ stage: "rename", label: label.id, chars: out.name.length }, "new name is too long or has markup; kept the old one");
+      continue;
+    }
+    if (name === label.name) continue;
     store.atomic(() => {
       store.renameLabel(label.id, name, label.criteria);
       store.revise({ at, runId, labelId: label.id, kind: "refined", name, before: described(label), after: described({ name, criteria: label.criteria }) });

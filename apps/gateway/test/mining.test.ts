@@ -500,7 +500,7 @@ describe("mining: labels", () => {
     });
     await run({ targets: noSessions(alive), store, llm, log, now: () => NOW });
     expect(llm.calls).toEqual(["review_label", ...Array(15).fill("assign_label"), "write_flow"]);
-    expect(store.labels()).toMatchObject([{ id: label, name: "서비스 배포와 롤백", count: 15, reviewedCount: 10, near: 0, editedAt: null }]);
+    expect(store.labels()).toMatchObject([{ id: label, name: "서비스 배포와 롤백", count: 15, reviewedCount: 10, near: 0 }]);
     expect(store.revisions(10)).toMatchObject([
       { runId: null, labelId: label, kind: "refined", before: "배포 — 배포하는 작업", after: "서비스 배포와 롤백 — 서비스를 운영에 올리거나 되돌리는 작업", reason: "롤백도 같은 절차로 한다" },
     ]);
@@ -551,13 +551,14 @@ describe("mining: labels", () => {
     ]);
   });
 
-  it("renames the labels in a rename run, leaving the criteria, the assignments and edited labels alone", async () => {
+  it("renames the labels in a rename run, leaving the criteria and the assignments alone", async () => {
     const store = newStore();
     const alive = new Set(["a", "b", "c"]);
     const deploy = store.createLabel("배포", "배포하는 작업", [seed(store, "a", "서비스 배포")], at);
     const cleanup = store.createLabel("정리", "오래된 파일을 지우는 작업", [seed(store, "b", "로그 정리")], at);
+    // 사람이 고친 라벨도 다시 짓는다
     const edited = store.createLabel("점검", "상태를 살피는 작업", [seed(store, "c", "서버 점검")], at);
-    store.renameLabel(edited, "정기 점검", "사람이 정한 기준", at);
+    store.renameLabel(edited, "정기 점검", "사람이 정한 기준");
 
     const progress: string[] = [];
     const llm = scripted({
@@ -565,31 +566,24 @@ describe("mining: labels", () => {
         // 다른 라벨은 그때의 이름으로 보인다
         if (user.startsWith(`Label to rename:\nL${deploy}:`)) return { name: "Service deployment" };
         expect(user).toContain(`L${deploy}: Service deployment — 배포하는 작업`);
+        if (user.startsWith(`Label to rename:\nL${edited}:`)) return { name: "Health check" };
         // 쓸 수 없는 이름은 받지 않는다
         return { name: "[cleanup](http://evil)" };
       },
     });
     const result = await run({ targets: noSessions(alive), store, llm, log, now: () => NOW, runId: 3, rename: true, onProgress: (p) => progress.push(`${p.stage} ${p.done}/${p.total}`) });
     expect(result).toMatchObject({ status: "completed", processed: 0, remaining: 0 });
-    expect(llm.calls).toEqual(["rename_label", "rename_label"]);
+    expect(llm.calls).toEqual(["rename_label", "rename_label", "rename_label"]);
     expect(new Set(progress.map((p) => p.split(" ")[0]))).toEqual(new Set(["rename"]));
     expect(store.labels()).toMatchObject([
-      { id: deploy, name: "Service deployment", criteria: "배포하는 작업", count: 1, editedAt: null },
+      { id: deploy, name: "Service deployment", criteria: "배포하는 작업", count: 1 },
       { id: cleanup, name: "정리", count: 1 },
-      { id: edited, name: "정기 점검", criteria: "사람이 정한 기준" },
+      { id: edited, name: "Health check", criteria: "사람이 정한 기준", count: 1 },
     ]);
-    expect(store.revisions(10)).toMatchObject([{ runId: 3, labelId: deploy, kind: "refined", name: "Service deployment", before: "배포 — 배포하는 작업", after: "Service deployment — 배포하는 작업" }]);
-  });
-
-  it("does not review a label a person has edited", async () => {
-    const store = newStore();
-    const members = Array.from({ length: 12 }, (_, i) => seed(store, `m${i}`, `배포 ${i}`));
-    const label = store.createLabel("배포", "배포하는 작업", members, at);
-    store.renameLabel(label, "운영 배포", "사람이 정한 기준", at);
-    const llm = scripted({});
-    expect(await review(store, new Caller(llm, NOW + 1, () => NOW, log), "2026-10-20T00:00:00.000Z", at)).toBe(0);
-    expect(llm.calls).toEqual([]);
-    expect(store.labels()).toMatchObject([{ name: "운영 배포", criteria: "사람이 정한 기준", editedAt: at }]);
+    expect(store.revisions(10)).toMatchObject([
+      { runId: 3, labelId: edited, kind: "refined", name: "Health check", before: "정기 점검 — 사람이 정한 기준", after: "Health check — 사람이 정한 기준" },
+      { runId: 3, labelId: deploy, kind: "refined", name: "Service deployment", before: "배포 — 배포하는 작업", after: "Service deployment — 배포하는 작업" },
+    ]);
   });
 
   it("merges a new label into the existing one it duplicates, and ignores an answer that names unknown labels", async () => {

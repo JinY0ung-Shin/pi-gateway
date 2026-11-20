@@ -32,7 +32,7 @@ install -d -o 0 -g 0 -m 0700 "$SECRETS"
 #   sandboxd (uid 1000) : $SECRETS/sandboxd/*
 #   broker   (root)     : $SECRETS/broker/*
 #   memory   (uid 10002): $SECRETS/memory/*
-# 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret)은 같은 값의 사본이다.
+# 두 서비스가 같이 쓰는 값(sandboxd_jwt_secret, broker_jwt_secret, memory_api_key)은 같은 값의 사본이다.
 GW_UID=10001; SBX_UID=1000; MEM_UID=10002
 install -d -o 0 -g 0 -m 0700 "$SECRETS/gateway" "$SECRETS/sandboxd" "$SECRETS/broker" "$SECRETS/memory"
 
@@ -56,7 +56,7 @@ put() {
 secret() {
   local name="$1" gen="$2"
   shift 2
-  local value="" dest path owner current
+  local value="" dest path owner current created=""
   for dest in "$@"; do
     path="${dest%%:*}"
     if [ -f "$path" ]; then
@@ -77,9 +77,12 @@ secret() {
     else
       put "$value" "$path" "$owner"
       echo "create $path"
-      case "$SHOW_NEW" in *" $name "*) shown+="  $name: $value"$'\n' ;; esac
+      created=1
     fi
   done
+  if [ -n "$created" ]; then
+    case "$SHOW_NEW" in *" $name "*) shown+="  $name: $value"$'\n' ;; esac
+  fi
 }
 # 입력을 화면에 보이지 않게 받는다. 비우면(또는 입력이 없으면) 빈 값
 ask_git_token() {
@@ -93,8 +96,9 @@ G="$SECRETS/gateway"; X="$SECRETS/sandboxd"; B="$SECRETS/broker"; M="$SECRETS/me
 secret sandboxd_jwt_secret "rand 48" "$G/sandboxd_jwt_secret:$GW_UID" "$X/sandboxd_jwt_secret:$SBX_UID"
 secret broker_jwt_secret   "rand 48" "$G/broker_jwt_secret:$GW_UID"   "$B/broker_jwt_secret:0"
 secret broker_kek          "rand 32" "$B/broker_kek:0"
-# memory 서비스를 부르는 키. agent가 메모리를 쓰게 하려면 관리 화면 MCP 페이지에서 이 값을 넣는다 (docs/OPERATIONS.md "장기 메모리")
-secret memory_api_key      "rand 32" "$M/api_key:$MEM_UID"
+# memory 서비스를 부르는 키. gateway는 관리 화면에서 메모리를 보여 줄 때 쓴다.
+# agent가 메모리를 쓰게 하려면 관리 화면 MCP 페이지에서 이 값을 넣는다 (docs/OPERATIONS.md "장기 메모리")
+secret memory_api_key      "rand 32" "$M/api_key:$MEM_UID" "$G/memory_api_key:$GW_UID"
 secret admin_api_key       "rand 32" "$G/admin_api_key:$GW_UID"
 secret api_key             "rand 32" "$G/api_key:$GW_UID"
 # 사용자별 키는 운영자가 채운다: {"alice": "<32자 이상 키>"} (빈 파일 = 쓰지 않음)

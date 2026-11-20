@@ -82,6 +82,7 @@ const MIGRATIONS = [
    ALTER TABLE runs ADD COLUMN progress_at TEXT;
    ALTER TABLE runs ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE runs ADD COLUMN working TEXT`,
+  `ALTER TABLE labels DROP COLUMN edited_at`,
 ];
 
 /** 실행이 보는 세션: 마지막 활동이 이 기간 안이고, 그 뒤 이만큼은 쉬었어야 한다 (진행 중인 대화를 읽지 않게) */
@@ -212,8 +213,6 @@ export interface Label {
   reviewedCount: number;
   /** 가깝지만 분명히 맞지는 않아 미분류로 남은 에피소드 수 */
   near: number;
-  /** 사람이 이름·기준을 고친 때. 고친 라벨은 자동 검토가 바꾸지 않는다 */
-  editedAt: string | null;
 }
 
 /** 라벨에 일어난 변경 하나. 라벨이 없어진 뒤에도 읽을 수 있게 그때의 이름을 같이 둔다. */
@@ -387,12 +386,12 @@ export class MiningStore {
   labels(): Label[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, criteria, created_at, flow, flow_count, reviewed_count, edited_at,
+        `SELECT id, name, criteria, created_at, flow, flow_count, reviewed_count,
            (SELECT COUNT(*) FROM episodes e WHERE e.label_id = labels.id) AS count,
            (SELECT COUNT(*) FROM episodes e WHERE e.near_label_id = labels.id) AS near
          FROM labels WHERE merged_into IS NULL ORDER BY id`,
       )
-      .all() as { id: number; name: string; criteria: string; created_at: string; flow: string | null; flow_count: number; reviewed_count: number; edited_at: string | null; count: number; near: number }[];
+      .all() as { id: number; name: string; criteria: string; created_at: string; flow: string | null; flow_count: number; reviewed_count: number; count: number; near: number }[];
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -403,7 +402,6 @@ export class MiningStore {
       count: r.count,
       reviewedCount: r.reviewed_count,
       near: r.near,
-      editedAt: r.edited_at,
     }));
   }
 
@@ -454,9 +452,8 @@ export class MiningStore {
       .immediate();
   }
 
-  /** editedAt: 사람이 고친 때 (자동 검토가 고칠 때는 주지 않는다) */
-  renameLabel(id: number, name: string, criteria: string, editedAt?: string): void {
-    this.db.prepare("UPDATE labels SET name = ?, criteria = ?, edited_at = COALESCE(?, edited_at) WHERE id = ?").run(name, criteria, editedAt ?? null, id);
+  renameLabel(id: number, name: string, criteria: string): void {
+    this.db.prepare("UPDATE labels SET name = ?, criteria = ? WHERE id = ?").run(name, criteria, id);
   }
 
   /** 라벨을 없앤다. 그 에피소드는 배정 전으로 돌아가 다음 실행이 다시 붙여 본다. */

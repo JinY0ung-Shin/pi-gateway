@@ -6,6 +6,7 @@ import { HASH_PATTERN, WikiError, type WikiErrorCode, type WikiStore } from "./w
 
 /**
  * 프로그램용 API (`/wiki/<owner>/…`, JSON). 같은 스택의 BFF가 자기가 허락한 주인의 wiki를 다룬다.
+ * `/wikis`는 모든 wiki의 주인과 사용량이다 (gateway 관리 화면의 목록).
  * MCP 도구(tools.ts)는 모델이 읽는 글을 gateway가 자르는 크기 아래로 나눠 주지만, 프로그램은 전부를 받아야 한다:
  * 전체 목록, 노트 전문, 긴 노트의 통째 교체, wiki 전체 삭제. 저장소와 규칙(경로, hash, 한도)은 같다.
  */
@@ -47,6 +48,8 @@ export function registerWikiRoutes(app: FastifyInstance, store: WikiStore, log: 
       return reply.code(500).send(errorBody("internal", "the memory store failed"));
     }
   };
+
+  app.get("/wikis", async () => ({ wikis: await store.wikis() }));
 
   app.get("/wiki/:owner/notes", route(async (owner, req) => ({ notes: await store.list(owner, ListQuery.parse(req.query).prefix) })));
 

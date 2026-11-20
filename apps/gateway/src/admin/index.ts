@@ -8,6 +8,7 @@ import { registerChatRoutes } from "./routes-chat.js";
 import { registerHistoryRoutes } from "./routes-history.js";
 import { registerLlmRoutes } from "./routes-llm.js";
 import { registerMcpRoutes } from "./routes-mcp.js";
+import { registerMemoryRoutes } from "./routes-memory.js";
 import { registerMiningRoutes } from "./routes-mining.js";
 import { registerPluginRoutes } from "./routes-plugins.js";
 import { registerPromptRoutes } from "./routes-prompts.js";
@@ -97,4 +98,5 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   registerHistoryRoutes(api, ctx);
   registerMiningRoutes(api, ctx);
   registerRequestRoutes(api, ctx);
+  registerMemoryRoutes(api, ctx);
 }

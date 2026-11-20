@@ -56,8 +56,6 @@ interface Label {
   name: string;
   criteria: string;
   createdAt: string;
-  /** 사람이 이름·기준을 고친 때 */
-  editedAt: string | null;
   flow: string[] | null;
   total: number;
   recent7: number;
@@ -547,10 +545,8 @@ function LabelSection(props: { data: Overview; busy: boolean; reload: () => Prom
   const sorted = [...labels].sort((a, b) => b.recent30 - a.recent30 || a.id - b.id);
   const most = Math.max(unlabeled30, ...labels.map((l) => l.recent30));
   const action = useAction();
-  /** 이름을 다시 지을 프로세스 수: 사람이 고친 것은 건드리지 않는다 */
-  const auto = labels.filter((l) => !l.editedAt).length;
   const rename = () =>
-    confirm(`사람이 고치지 않은 프로세스 ${auto}개의 이름을 지금 모델과 추가 프롬프트로 다시 지을까요? 기준과 작업 분류는 그대로이고, 바뀐 이름은 변경 이력에 남습니다.`) &&
+    confirm(`프로세스 ${labels.length}개의 이름을 지금 모델과 추가 프롬프트로 다시 지을까요? 기준과 작업 분류는 그대로이고, 바뀐 이름은 변경 이력에 남습니다.`) &&
     void action.run(async () => {
       await api("POST", "/mining/rename");
       await props.reload();
@@ -561,7 +557,7 @@ function LabelSection(props: { data: Overview; busy: boolean; reload: () => Prom
       actions={
         <>
           <span class="muted small-text">최근 30일 작업이 많은 순 · 줄을 누르면 기준·대표 흐름·작업이 열립니다</span>
-          <button disabled={action.busy || props.busy || auto === 0} onClick={rename}>
+          <button disabled={action.busy || props.busy || labels.length === 0} onClick={rename}>
             이름 다시 짓기
           </button>
         </>
@@ -584,9 +580,7 @@ function LabelSection(props: { data: Overview; busy: boolean; reload: () => Prom
           {labels.length === 0 && <EmptyRow cols={8}>아직 없습니다. 미분류 작업이 20건 이상 쌓이면 실행할 때 찾습니다.</EmptyRow>}
           {sorted.map((l) => (
             <tr key={l.id} {...rowAction(() => props.onOpen(l.id))}>
-              <td>
-                {l.name} {l.editedAt && <Badge title="사람이 이름·기준을 고쳤습니다. 자동 검토가 바꾸지 않습니다">사람이 고침</Badge>}
-              </td>
+              <td>{l.name}</td>
               <td class="clip muted" title={l.criteria}>
                 {l.criteria}
               </td>
@@ -646,7 +640,6 @@ function LabelModal(props: { label: Label; others: Label[]; refresh: unknown; ru
       {props.running && <Notice tone="info">실행 중에는 고칠 수 없습니다.</Notice>}
       <p class="muted small-text">
         최근 30일 {label.recent30.toLocaleString()}건 · 7일 {label.recent7.toLocaleString()}건 · 전체 {label.total.toLocaleString()}건 · 사용자 {label.users}명 · {formatTime(label.createdAt)}에 생김
-        {label.editedAt && ` · 사람이 ${formatTime(label.editedAt)}에 고쳐, 자동 검토가 이름·기준을 바꾸지 않습니다`}
       </p>
       <label class="field">
         <span>이름</span>

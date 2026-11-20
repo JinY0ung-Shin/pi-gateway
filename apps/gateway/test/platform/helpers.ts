@@ -41,6 +41,7 @@ export function makeConfig(options: { dataDir: string; pluginsDir: string; env?:
   const env: Record<string, string | undefined> = {
     AUTH_DISABLED: "1",
     SANDBOXD_JWT_SECRET: "s".repeat(40),
+    MEMORY_API_KEY: "m".repeat(40),
     ADMIN_API_KEY: ADMIN_KEY,
     DATA_DIR: options.dataDir,
     PLUGINS_DIR: options.pluginsDir,

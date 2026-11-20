@@ -32,6 +32,11 @@ export interface GatewayConfig {
     adminUrl: string;
     jwtSecret: Uint8Array;
   };
+  /** 사용자별 장기 메모리 서비스. 관리 화면이 wiki를 보여 줄 때 그 프로그램용 API를 부른다. */
+  memory: {
+    url: string;
+    apiKey: string;
+  };
   sessions: {
     idleSeconds: number;
     maxConcurrentTurns: number;
@@ -111,6 +116,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const brokerSecret = readSecret(env, "BROKER_JWT_SECRET");
   if (!brokerSecret) throw new Error("BROKER_JWT_SECRET (or _FILE) is required");
 
+  const memoryKey = readSecret(env, "MEMORY_API_KEY");
+  if (!memoryKey) throw new Error("MEMORY_API_KEY (or _FILE) is required");
+
   return {
     host: env.HOST || "0.0.0.0",
     port: envInt(env, "PORT", 8080),
@@ -128,6 +136,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
       adminUrl: (env.BROKER_ADMIN_URL || "http://mcp-broker:7081").replace(/\/+$/, ""),
       jwtSecret: jwtSecretBytes(brokerSecret),
     },
+    memory: { url: (env.MEMORY_URL || "http://memory:7090").replace(/\/+$/, ""), apiKey: memoryKey },
     sessions: {
       idleSeconds: envInt(env, "SESSION_IDLE_SECONDS", 300),
       maxConcurrentTurns: envInt(env, "MAX_CONCURRENT_TURNS", 48),

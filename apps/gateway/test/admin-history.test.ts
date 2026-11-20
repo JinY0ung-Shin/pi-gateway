@@ -106,9 +106,7 @@ describe("admin mining", () => {
     expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "[x](http://evil)", criteria: "기준" })).json.error.code).toBe("invalid_label");
     expect((await h.admin("PUT", "/mining/labels/999", { name: "이름", criteria: "기준" })).json.error.code).toBe("label_not_found");
     expect((await h.admin("PUT", `/mining/labels/${label}`, { name: "운영 배포", criteria: "새 기준" })).status).toBe(200);
-    // 사람이 고친 라벨은 표시해 두어 자동 검토가 바꾸지 않는다
     expect(store.labels()[0]).toMatchObject({ name: "운영 배포", criteria: "새 기준" });
-    expect(store.labels()[0]!.editedAt).not.toBeNull();
 
     // 실행 중에는 고치지 못한다
     const run = store.startRun(at)!;
