@@ -103,18 +103,18 @@ const STATUS: Record<Run["status"], { text: string; tone: "blue" | "green" | "gr
 /** 실행이 지나가는 큰 단계. 둘째 단계는 한 실행에서 세 번까지 돈다. */
 const PHASES: { label: string; stages: Stage[] }[] = [
   { label: "세션 읽기", stages: ["extract"] },
-  { label: "프로세스에 붙이고 찾기", stages: ["assign", "discover", "merge"] },
+  { label: "작업 분류, 새 프로세스 찾기", stages: ["assign", "discover", "merge"] },
   { label: "프로세스 검토", stages: ["review", "reassign"] },
   { label: "대표 흐름 쓰기", stages: ["flows"] },
 ];
 /** 지금 하는 일과, 셀 것이 있으면 그 단위 */
 const STAGE: Record<Stage, { text: string; unit?: string }> = {
   extract: { text: "세션을 읽어 작업을 뽑는 중", unit: "세션" },
-  assign: { text: "작업을 프로세스에 붙이는 중", unit: "작업" },
+  assign: { text: "작업을 프로세스로 분류하는 중", unit: "작업" },
   discover: { text: "미분류 작업에서 새 프로세스를 찾는 중" },
   merge: { text: "새 프로세스가 기존 것과 겹치는지 보는 중" },
   review: { text: "근거가 쌓인 프로세스를 다시 검토하는 중", unit: "프로세스" },
-  reassign: { text: "바뀐 기준으로 작업을 다시 붙이는 중", unit: "작업" },
+  reassign: { text: "바뀐 기준으로 작업을 다시 분류하는 중", unit: "작업" },
   flows: { text: "대표 흐름을 쓰는 중", unit: "프로세스" },
 };
 const phaseOf = (stage: Stage | null) => PHASES.findIndex((p) => stage !== null && p.stages.includes(stage));
@@ -378,7 +378,7 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
         <p>
           {next.sessions + next.episodes === 0
             ? "읽을 새 세션은 없습니다 (마지막 활동 뒤 30분 넘게 쉰 세션만 읽습니다)."
-            : `지금 실행하면 세션 ${next.sessions.toLocaleString()}개를 읽고, 뽑아 둔 작업 ${next.episodes.toLocaleString()}건과 새로 뽑는 작업을 프로세스에 붙입니다.`}
+            : `지금 실행하면 세션 ${next.sessions.toLocaleString()}개를 읽고, 뽑아 둔 작업 ${next.episodes.toLocaleString()}건과 새로 뽑는 작업을 프로세스로 분류합니다.`}
           {props.data.unlabeled30 >= 20 && ` 실행할 때마다 ${UNLABELED} ${props.data.unlabeled30.toLocaleString()}건에서 무작위로 60건씩 3번 뽑아 새 프로세스를 찾습니다.`}
         </p>
       )}
@@ -410,7 +410,7 @@ function RunSection(props: { data: Overview; active: Overview["active"] | undefi
       <details>
         <summary>한 번 실행하면 하는 일</summary>
         <p class="muted small-text">
-          마지막 활동이 30일 안이고 30분 넘게 쉰 세션 중 새 내용이 있는 것을 읽어 작업을 뽑고, 프로세스에 붙이고, 새 프로세스를 찾고, 근거가 쌓인 프로세스를 다시 검토해 고치거나 나눕니다.
+          마지막 활동이 30일 안이고 30분 넘게 쉰 세션 중 새 내용이 있는 것을 읽어 작업을 뽑고, 프로세스로 분류하고, 새 프로세스를 찾고, 근거가 쌓인 프로세스를 다시 검토해 고치거나 나눕니다.
           길어야 3시간 돌고, 못 읽은 세션은 다음 실행이 이어 갑니다.
         </p>
       </details>
@@ -538,7 +538,7 @@ function LabelModal(props: { label: Label; others: Label[]; refresh: unknown; ru
     action.run(async () => {
       await api("PUT", `/mining/labels/${label.id}`, { name, criteria });
       await props.reload();
-    }, "저장했습니다. 다음 실행부터 이 기준으로 작업을 붙이고, 자동 검토는 이 프로세스의 이름·기준을 바꾸지 않습니다.");
+    }, "저장했습니다. 다음 실행부터 이 기준으로 작업을 분류하고, 자동 검토는 이 프로세스의 이름·기준을 바꾸지 않습니다.");
   /** 합치거나 지우면 이 프로세스가 없어지므로 창을 닫는다. */
   const remove = async (request: () => Promise<unknown>) => {
     const done = await action.run(async () => {
@@ -562,7 +562,7 @@ function LabelModal(props: { label: Label; others: Label[]; refresh: unknown; ru
         <input value={name} maxLength={60} disabled={locked} onInput={(e) => setName(e.currentTarget.value)} />
       </label>
       <label class="field">
-        <span>기준 (어떤 작업이 여기에 드는지. 실행할 때 모델이 이 글을 보고 작업을 붙입니다)</span>
+        <span>기준 (어떤 작업이 여기에 드는지. 실행할 때 모델이 이 글을 보고 작업을 분류합니다)</span>
         <textarea rows={3} value={criteria} maxLength={300} disabled={locked} onInput={(e) => setCriteria(e.currentTarget.value)} />
       </label>
       <div class="row wrap">
@@ -590,7 +590,7 @@ function LabelModal(props: { label: Label; others: Label[]; refresh: unknown; ru
           class="danger"
           disabled={locked}
           onClick={() =>
-            confirm(`"${label.name}"을(를) 지울까요? 작업 ${label.total}건은 다음 실행이 다른 프로세스에 다시 붙여 봅니다.`) &&
+            confirm(`"${label.name}"을(를) 지울까요? 작업 ${label.total}건은 다음 실행이 다른 프로세스로 다시 분류해 봅니다.`) &&
             void remove(() => api("DELETE", `/mining/labels/${label.id}`))
           }
         >
