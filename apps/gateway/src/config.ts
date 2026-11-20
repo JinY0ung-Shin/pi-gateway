@@ -131,7 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     sessions: {
       idleSeconds: envInt(env, "SESSION_IDLE_SECONDS", 300),
       maxConcurrentTurns: envInt(env, "MAX_CONCURRENT_TURNS", 48),
-      maxConcurrentTurnsPerUser: envInt(env, "MAX_CONCURRENT_TURNS_PER_USER", 3),
+      maxConcurrentTurnsPerUser: envInt(env, "MAX_CONCURRENT_TURNS_PER_USER", 6),
       queueTimeoutSeconds: envInt(env, "TURN_QUEUE_TIMEOUT_SECONDS", 120),
       nonStreamTimeoutSeconds: envInt(env, "NON_STREAM_TIMEOUT_SECONDS", 600),
     },
