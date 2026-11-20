@@ -139,7 +139,7 @@ describe("admin history", () => {
     expect(list.status).toBe(200);
     expect(list.json.items[0]).toMatchObject({ id: sid, user: "alice", turn: 2 });
     // 한 페이지씩 준다: 전체 수는 따로 세고, 끝을 넘긴 페이지는 비어 있다
-    expect(list.json).toMatchObject({ total: list.json.items.length, pageSize: 50 });
+    expect(list.json).toMatchObject({ total: list.json.items.length, pageSize: 20 });
     expect((await h.admin("GET", "/history?user=alice&page=2")).json).toMatchObject({ items: [], total: list.json.total });
     expect((await h.admin("GET", "/history?user=nobody")).json).toMatchObject({ items: [], total: 0 });
 

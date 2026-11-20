@@ -5,7 +5,7 @@ import type { AdminContext } from "./context.js";
 import { pageOf, PlatformError } from "./errors.js";
 import { sessionTraces, traceStats } from "./traces.js";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
 const MAX_RETENTION_DAYS = 3650;
 
 /** 서버에 저장된 대화 기록 보기(읽기 전용)와 보관 기간. 보관 기간이 지난 세션은 SessionHub가 지운다. */
