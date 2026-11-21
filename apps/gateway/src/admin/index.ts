@@ -62,7 +62,7 @@ async function registerApi(api: FastifyInstance, ctx: AdminContext): Promise<voi
   api.addHook("onRequest", async (req) => {
     ctx.auth.requireEnabled();
     if (req.routeOptions.url === "/admin/api/login") return;
-    const via = ctx.auth.authenticate(req);
+    const via = await ctx.auth.authenticate(req);
     if (!via) throw new PlatformError(401, "unauthorized", "admin login required");
     if (via === "cookie" && isMutating(req.method) && req.headers[CSRF_HEADER] !== "1") {
       throw new PlatformError(403, "csrf", "missing X-Admin-Request: 1 header");

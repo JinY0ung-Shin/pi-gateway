@@ -5,5 +5,5 @@ import { AdminAuth } from "./auth.js";
 export type AdminContext = AdminDeps & { auth: AdminAuth };
 
 export function createAdminContext(deps: AdminDeps): AdminContext {
-  return { ...deps, auth: new AdminAuth(deps.db, deps.config) };
+  return { ...deps, auth: new AdminAuth(deps.db, deps.config, (message) => deps.log.warn(message)) };
 }

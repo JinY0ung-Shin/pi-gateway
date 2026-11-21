@@ -131,6 +131,17 @@ location / {
 }
 ```
 
+**발급처(OIDC)로 관리 API에 들어오기.** `OIDC_ISSUER`와 `OIDC_JWKS_URL`을 둘 다 넣으면 (하나만 넣으면 시작하지 않는다):
+
+- 관리 API가 발급처의 access token을 받는다 (`Authorization: Bearer <token>`). gateway가 서명(RS256, `OIDC_JWKS_URL`의 키), `iss`(= `OIDC_ISSUER`), `aud`(`pi`가 있어야 한다), 만료를 직접 확인하고, 토큰에 관리자 역할(`realm_access.roles`의 `admin`)과 팀원 그룹(`groups`의 `teammates`)이 둘 다 있어야 통과시킨다 — Keycloak의 클레임 모양이다.
+- 관리자 키로 하는 화면 로그인(`POST /admin/api/login`)과 그 세션 쿠키는 꺼진다. 프로그램이 쓰는 `Authorization: Bearer <관리자 키>`는 그대로다.
+- `OIDC_ISSUER`는 토큰의 `iss`와 글자 그대로 같아야 한다 (브라우저가 보는 주소). `OIDC_JWKS_URL`은 내부망 주소여도 된다. 키를 받지 못하면 gateway 로그에 경고가 남고 사람의 토큰은 모두 401이다.
+- 발급처(Keycloak)에 필요한 설정: access token의 `aud`에 `pi`를 넣는 audience mapper, `groups` claim을 **경로 없이**(`teammates`, "Full group path" 끔) 넣는 group membership mapper. 하나라도 없으면 모든 토큰이 401이다.
+- 발급처를 켜도 `ADMIN_API_KEY`는 있어야 한다 (비어 있으면 관리 API 전체가 꺼진다). 키가 JWT 모양(점 두 개로 나뉜 세 토막)이면 시작하지 않는다.
+- 발급처에서 계정을 정지해도 이미 발급된 토큰은 만료될 때까지(보통 5분) 서명이 유효하다.
+- gateway에는 아직 브라우저 로그인 화면이 없다. 토큰을 받아 실어 보내는 앞단(Noah의 `/admin` 중계)이 있어야 사람이 관리 화면을 쓸 수 있다. 앞단 없이 단독으로 쓰는 설치에는 발급처를 설정하지 않는다.
+- `/v1`은 바뀌지 않는다 (키).
+
 ### 3.5 중지·재시작·업데이트
 
 ```bash

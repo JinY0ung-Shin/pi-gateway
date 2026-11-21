@@ -147,15 +147,15 @@ describe("admin auth hardening", () => {
     expect((await status(adminHeaders, "10.9.9.9")).statusCode).toBe(200);
   });
 
-  it("실패 기록은 주소 수 상한(10,000)을 넘으면 가장 오래된 것부터 지운다", () => {
+  it("실패 기록은 주소 수 상한(10,000)을 넘으면 가장 오래된 것부터 지운다", async () => {
     const config = makeConfig({ dataDir: tempDir("auth-data"), pluginsDir: tempDir("auth-plugins") });
     const auth = new AdminAuth(openDatabase(":memory:"), config);
     const req = (ip: string) => ({ ip, headers: { authorization: "Bearer bad" } }) as unknown as FastifyRequest;
-    for (let i = 0; i < 6; i++) auth.authenticate(req("1.1.1.1"));
-    expect(() => auth.authenticate(req("1.1.1.1"))).toThrow(expect.objectContaining({ status: 429 }));
-    for (let i = 0; i < 10_000; i++) auth.authenticate(req(`10.0.${i >> 8}.${i & 255}`));
+    for (let i = 0; i < 6; i++) await auth.authenticate(req("1.1.1.1"));
+    await expect(auth.authenticate(req("1.1.1.1"))).rejects.toMatchObject({ status: 429 });
+    for (let i = 0; i < 10_000; i++) await auth.authenticate(req(`10.0.${i >> 8}.${i & 255}`));
     // 가장 오래된 1.1.1.1이 밀려나 잠금도 풀렸다
-    expect(auth.authenticate(req("1.1.1.1"))).toBeNull();
+    expect(await auth.authenticate(req("1.1.1.1"))).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { bearerToken } from "@pi-gateway/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { looksLikeJwt, OidcVerifier } from "../auth/oidc.js";
 import type { GatewayConfig } from "../config.js";
 import { type Db, migrate } from "../db.js";
 import { PlatformError } from "./errors.js";
@@ -24,7 +25,7 @@ const MIGRATIONS = [
    );`,
 ] as const;
 
-type AdminVia = "cookie" | "bearer";
+type AdminVia = "cookie" | "bearer" | "token";
 
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest();
 
@@ -77,15 +78,22 @@ interface FailureRecord {
  * - 로그인과 Bearer 실패는 주소별로 센다. 5번을 넘게 실패하면 15분 동안 잠그고 429와 Retry-After를 준다.
  *   주소는 req.ip이므로 프록시 뒤에서는 TRUST_PROXY를 설정해야 사용자별로 나뉜다.
  * - ADMIN_API_KEY가 없으면 관리 API 전체를 끈다.
+ * - 발급처(`auth.oidc`)가 설정된 설치: 사람은 발급처의 access token으로 들어온다
+ *   (`Authorization: Bearer <token>`, 관리자 역할이면서 승인된 팀원이어야 한다 — 검증은 auth/oidc.ts).
+ *   관리자 키로 하는 화면 로그인과 그 세션 쿠키는 꺼진다. 프로그램용 Bearer 키는 그대로다.
+ *   토큰은 추측해서 맞힐 수 있는 것이 아니므로 실패를 세지 않고, 주소 잠금과도 무관하다
+ *   (그렇지 않으면 만료된 토큰 몇 번에 중계 서버의 주소가 잠겨 모든 관리자가 막힌다).
  */
 export class AdminAuth {
   readonly #db: Db;
   readonly #apiKey: string | undefined;
   /** 주소 → 실패 기록. Map의 삽입 순서를 LRU 순서로 쓴다 (최근 실패가 뒤). */
   readonly #failures = new Map<string, FailureRecord>();
-  constructor(db: Db, config: Pick<GatewayConfig, "auth">) {
+  readonly #oidc: OidcVerifier | null;
+  constructor(db: Db, config: Pick<GatewayConfig, "auth">, warn?: (message: string) => void) {
     this.#db = db;
     this.#apiKey = config.auth.adminApiKey;
+    this.#oidc = config.auth.oidc ? new OidcVerifier(config.auth.oidc, fetch, Date.now, warn) : null;
     migrate(db, "admin", MIGRATIONS);
   }
 
@@ -101,9 +109,13 @@ export class AdminAuth {
    * 요청이 인증됐으면 방법을, 아니면 null을 돌려준다.
    * Bearer 시도는 로그인과 같이 실패를 세고, 잠긴 주소에서는 맞는 키여도 429를 던진다.
    */
-  authenticate(req: FastifyRequest): AdminVia | null {
+  async authenticate(req: FastifyRequest): Promise<AdminVia | null> {
     if (!this.enabled) return null;
     const token = bearerToken(req.headers.authorization);
+    if (token !== null && this.#oidc && looksLikeJwt(token)) {
+      const identity = await this.#oidc.verify(token);
+      return identity?.admin && identity.teammate ? "token" : null;
+    }
     if (token !== null) {
       this.#throwIfLocked(req.ip);
       if (!safeEqual(token, this.#apiKey!)) {
@@ -113,11 +125,14 @@ export class AdminAuth {
       this.#failures.delete(req.ip);
       return "bearer";
     }
+    // 발급처가 있는 설치에서는 키로 만든 화면 세션을 받지 않는다.
+    if (this.#oidc) return null;
     return this.#hasSession(req) ? "cookie" : null;
   }
 
   login(req: FastifyRequest, reply: FastifyReply, apiKey: unknown): void {
     this.requireEnabled();
+    if (this.#oidc) throw new PlatformError(403, "key_login_disabled", "this install logs people in through its identity provider");
     const ip = req.ip;
     const now = Date.now();
     this.#throwIfLocked(ip);

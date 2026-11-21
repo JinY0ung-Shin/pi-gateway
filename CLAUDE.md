@@ -13,6 +13,21 @@ Decided 2026-11-20, not built yet — these count as requested, not speculative:
 - The team's wiki moves here next to each user's memory: its history, its schema and policy checks, and a
   draft → commit pair where a commit needs a person's token.
 
+Decided 2026-11-21, not built yet:
+- pi is also run on its own, so the screens a person needs for their own harness live here, once: their
+  memory (read, edit, history, restore) and, after it moves, the team's wiki. A client does not build a second
+  copy; Noah relays these screens under its own address, as it does the admin panel.
+- So every teammate logs in here, not only admins. The token decides: the admin role opens the admin panel,
+  the token's user opens only that user's memory, the approved-teammate group opens the team's wiki. pi checks
+  the person's token itself, also on a relayed request — a client's word is not enough for a screen.
+- An install with no issuer configured keeps the admin-key login, for now. One way per install: an issuer
+  set means OIDC only.
+
+Built 2026-11-21 (`apps/gateway/src/auth/oidc.ts`, docs/OPERATIONS.md §3.4): with `OIDC_ISSUER` +
+`OIDC_JWKS_URL` the admin API takes a person's access token (admin role and teammates group, checked here)
+and the key's screen login is off; a program's `Bearer <admin key>` stays. Not built: a browser login of
+pi's own (a client must carry the token), the per-person screens, tokens on `/v1`.
+
 ## Principle: nothing left to take away
 
 A good product is not one with nothing left to add, but one with nothing left to take away.

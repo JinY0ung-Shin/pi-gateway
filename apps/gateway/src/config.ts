@@ -1,5 +1,6 @@
 import { envInt, jwtSecretBytes, readSecret } from "@pi-gateway/shared";
 import { z } from "zod";
+import { looksLikeJwt } from "./auth/oidc.js";
 
 /** gateway 설정. 모든 값은 환경변수에서 읽는다 (비밀값은 `NAME_FILE`도 지원). */
 
@@ -21,6 +22,11 @@ export interface GatewayConfig {
     adminApiKey: string | undefined;
     /** 키가 하나도 없을 때 인증 없이 허용할지 (개발용) */
     disabled: boolean;
+    /**
+     * 발급처(OIDC). 설정하면 관리 API가 사람의 access token을 받고, 관리자 키로 하는 화면 로그인은 꺼진다
+     * (프로그램이 쓰는 `Authorization: Bearer <ADMIN_API_KEY>`는 그대로다).
+     */
+    oidc: { issuer: string; jwksUrl: string } | undefined;
   };
   sandboxd: {
     url: string;
@@ -104,6 +110,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const apiKey = readSecret(env, "API_KEY");
   const adminApiKey = readSecret(env, "ADMIN_API_KEY");
   const disabled = env.AUTH_DISABLED === "1";
+  const oidcIssuer = env.OIDC_ISSUER?.trim() || "";
+  const oidcJwksUrl = env.OIDC_JWKS_URL?.trim() || "";
+  // 둘 중 하나만 있으면 "발급처가 있는 줄 알았는데 키 로그인으로 뜨는" 일이 생기므로 시작을 막는다.
+  if (Boolean(oidcIssuer) !== Boolean(oidcJwksUrl)) throw new Error("Set both OIDC_ISSUER and OIDC_JWKS_URL, or neither");
+  if (oidcJwksUrl && !(URL.canParse(oidcJwksUrl) && /^https?:$/.test(new URL(oidcJwksUrl).protocol))) {
+    throw new Error("OIDC_JWKS_URL must be an http(s) URL");
+  }
+  // 관리 API는 JWT 모양의 Bearer 값을 토큰으로만 본다. 키가 그 모양이면 프로그램용 키가 조용히 막힌다.
+  if (oidcIssuer && adminApiKey && looksLikeJwt(adminApiKey)) {
+    throw new Error("ADMIN_API_KEY must not have the shape of a JWT (three dot-separated parts) when OIDC_ISSUER is set");
+  }
   if (!apiKey && Object.keys(userApiKeys).length === 0 && !disabled) {
     throw new Error("Set API_KEY or USER_API_KEYS (or AUTH_DISABLED=1 for local development)");
   }
@@ -126,7 +143,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     dataDir: env.DATA_DIR || "/data",
     pluginsDir: env.PLUGINS_DIR || "/opt/plugins",
     pluginGitToken: readSecret(env, "PLUGIN_GIT_TOKEN") || undefined,
-    auth: { apiKey, userApiKeys, adminApiKey, disabled },
+    auth: { apiKey, userApiKeys, adminApiKey, disabled, oidc: oidcIssuer ? { issuer: oidcIssuer, jwksUrl: oidcJwksUrl } : undefined },
     sandboxd: {
       url: (env.SANDBOXD_URL || "http://sandboxd:7070").replace(/\/+$/, ""),
       jwtSecret: jwtSecretBytes(sandboxdSecret),
